@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LeadGen Studio — موتور تولید لید کسب‌وکارهای محلی از گوگل‌مپ</title>
+<meta name="description" content="برنامه فارسی و متن‌باز برای جست‌وجوی تمامی مشاغل در گوگل‌مپ و استخراج نام کسب‌وکار، نشانی، تلفن، سایت، شبکه‌های اجتماعی و لوکیشن دقیق (lat/lon) همراه با امتیازدهی لید، کمپین outreach و خروجی Excel/CSV/JSON.">
+<meta name="theme-color" content="#0b1020">
+<meta property="og:title" content="LeadGen Studio — لید کسب‌وکارهای محلی از گوگل‌مپ">
+<meta property="og:description" content="جاروی تمامی مشاغل یک شهر + لوکیشن دقیق + ایمیل و شبکه اجتماعی + امتیازدهی و کمپین آماده ارسال. دموی زنده این‌جا، بدون نصب.">
+<meta property="og:type" content="website">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="sitetop">
+  <div class="brand">
+    <img src="favicon.svg" alt="" width="30" height="30" class="logo">
+    <div>
+      <h1>LeadGen Studio</h1>
+      <p class="tag">لید کسب‌وکارهای محلی از گوگل‌مپ — نسخهٔ وب ثابت (GitHub Pages)</p>
+    </div>
+  </div>
+  <nav class="sitenav" aria-label="ناوبری">
+    <a href="#features">امکانات</a>
+    <a href="#how">گردش کار</a>
+    <a href="#demo">دموی زنده</a>
+    <a href="#install">نصب</a>
+    <a href="#usage">CLI و API</a>
+    <a href="#compliance">مقررات</a>
+    <a href="https://github.com/rahmaniho/Skill" target="_blank" rel="noopener">مخزن ↗</a>
+  </nav>
+</header>
+
+<main class="site">
+
+  <!-- ═══ قهرمان ═══════════════════════════════════════════════════════ -->
+  <section class="hero" id="top">
+    <span class="eyebrow">فارسی • بدون وابستگی بیرونی • موتور داکر واقعی + حالت دمو</span>
+    <h1>تمامی مشاغل یک شهر را پیدا کن؛<br>نام، نشانی، تلفن، سایت، شبکه اجتماعی و <span style="color:var(--accent)">لوکیشن دقیق</span> را بگیر.</h1>
+    <p class="lead">
+      LeadGen Studio روی اسکیل <code>google-maps-scraper</code> ساخته شده: کلیدواژه‌های فارسی/انگلیسی می‌سازد،
+      job را داخل داکر اجرا می‌کند، CSV خام ۳۴ ستونی را پاک‌سازی و غنی می‌کند (ایمیل، اینستاگرام/فیسبوک/لینکدین،
+      مختصات lat/lon و پلاس‌کد)، به هر کسب‌وکار امتیاز «داغ/گرم/سرد» می‌دهد، متن کمپین آماده ارسال می‌نویسد و
+      خروجی Excel/CSV/JSON فارسی تحویل می‌دهد — با داشبورد وب و CLI.
+    </p>
+    <div class="hero-cta">
+      <a class="primary" href="#demo">🔎 دموی زنده را ببین</a>
+      <a class="ghost" href="#install">🚀 نصب در ۳ دستور</a>
+      <a class="ghost" href="https://github.com/rahmaniho/Skill" target="_blank" rel="noopener">⭐ ستاره روی GitHub</a>
+      <a class="ghost" href="https://github.com/rahmaniho/Skill/archive/refs/heads/main.zip">⬇ دریافت ZIP</a>
+    </div>
+    <div class="hero-stats" id="heroStats">
+      <div class="hstat"><b id="stNiches">۹۱</b><span>صنف آماده در کاتالوگ</span></div>
+      <div class="hstat"><b id="stGroups">۱۳</b><span>گروه شغلی (جاروی تمامی مشاغل)</span></div>
+      <div class="hstat"><b id="stCities">۷۰</b><span>شهر با مختصات داخلی (آفلاین)</span></div>
+      <div class="hstat"><b id="stCols">۳۴</b><span>ستون خام موتور + فیلدهای محاسبه‌شده</span></div>
+      <div class="hstat"><b id="stPresets">۴</b><span>پیش‌تنظیم ستون خروجی</span></div>
+      <div class="hstat"><b id="stDeps">۰</b><span>وابستگی پایتون (فقط کتابخانه استاندارد)</span></div>
+    </div>
+  </section>
+
+  <!-- ═══ امکانات ══════════════════════════════════════════════════════ -->
+  <section id="features">
+    <div class="section-head">
+      <span class="eyebrow">امکانات</span>
+      <h2>هشت قابلیتی که این برنامه را از یک اسکراپر ساده جدا می‌کند</h2>
+      <p>همه‌چیز فارسی، همه‌چیز محلی: داده‌ها روی دستگاه خودتان می‌ماند و هیچ سرویس ابری یا کلید API پولی لازم نیست.</p>
+    </div>
+    <div class="features">
+      <article class="feature">
+        <div class="ico">🧭</div>
+        <h3>جست‌وجوی تمامی مشاغل</h3>
+        <p>یک جاروی چندصنفی روی کل شهر: ۹۱ صنف در ۱۳ گروه، نوبت‌دهی گردشی تا نتیجه تک‌صنفی نشود، یکتاسازی بین صنف‌ها و تگ «صنف منبع» روی هر ردیف.</p>
+        <ul><li><code>--all-niches</code> یا کلید «تمامی مشاغل» در داشبورد</li><li>فیلتر گروه: «سلامت و پزشکی، غذا و نوشیدنی»</li><li>jobهای متوالی + هشدار (نه توقف) برای اجراهای بزرگ</li></ul>
+      </article>
+      <article class="feature">
+        <div class="ico">📍</div>
+        <h3>لوکیشن دقیق</h3>
+        <p>مختصات <code>lat/lon</code> هر کسب‌وکار، پلاس‌کد، رشتهٔ «لوکیشن دقیق» و لینک مستقیم نقشه — هم در جدول، هم در خروجی، هم روی نقشه پراکندگی.</p>
+        <ul><li>لینک مکان گوگل یا <code>maps/search/?api=1&amp;query=lat,lon</code></li><li>پیش‌تنظیم ستون <code>location</code> برای کار میدانی</li><li>کاشی‌بندی شبکه (grid) برای پوشش کل شهر</li></ul>
+      </article>
+      <article class="feature">
+        <div class="ico">✉️</div>
+        <h3>غنی‌سازی ایمیل و شبکه اجتماعی</h3>
+        <p>واکشی سایت هر کسب‌وکار (موازی، با کش)، استخراج <code>mailto:</code> و ایمیل‌های متنی، پاک‌سازی دامنه‌های junk، و پیدا کردن اینستاگرام/فیسبوک/لینکدین از صفحه و صفحات تماس/درباره ما.</p>
+        <ul><li>پوشش معمول ۴۰–۷۰٪ بدون هیچ هزینه توکن</li><li>تشخیص سیگنال: سازنده سایت آماده، بدون آنالیتیکس، رزرو آنلاین</li><li>نرمال‌سازی تلفن ایران و تفکیک موبایل/ثابت</li></ul>
+      </article>
+      <article class="feature">
+        <div class="ico">🎯</div>
+        <h3>امتیازدهی هوشمند لید</h3>
+        <p>پنج پروفایل فروش (طراحی سایت، بازاریابی، تأمین B2B، استخدام، عمومی) با پنج عامل وزنی: شکاف دیجیتال، دسترس‌پذیری، اعتبار، فعالیت و تناسب با صنف.</p>
+        <ul><li>بخش‌بندی داغ 🔥 / گرم 🌤 / سرد ❄️ با آستانهٔ هر پروفایل</li><li>شناسایی ۹ شکاف دیجیتال و انتخاب «زاویه فروش»</li><li>breakdown امتیاز برای هر لید ذخیره می‌شود</li></ul>
+      </article>
+      <article class="feature">
+        <div class="ico">💬</div>
+        <h3>کمپین آماده ارسال</h3>
+        <p>برای هر لید: دنباله ۳ لمسی ایمیل (روز ۰/۳/۸)، واتس‌اپ، پیامک ≤۲۸۰ نویسه، دایرکت ۲ قدمی اینستاگرام و سناریوی ۶ مرحله‌ای تماس تلفنی — شخصی‌سازی‌شده با نام کسب‌وکار، صنف، شهر و شکاف شناسایی‌شده.</p>
+        <ul><li>لینک <code>mailto:</code> و <code>wa.me</code> یک‌کلیکی</li><li>امضا و «لغو دریافت» در هر متن (CAN-SPAM)</li><li>نسخه انگلیسی برای بازارهای خارج از ایران</li></ul>
+      </article>
+      <article class="feature">
+        <div class="ico">📊</div>
+        <h3>خروجی و داشبورد</h3>
+        <p>Excel چندبرگی (لیدها، داغ‌ها، خلاصه، شکاف‌ها، قیف، بینش‌ها، کمپین) با RTL و فیلتر خودکار — نوشته‌شده بدون هیچ کتابخانه‌ای — به‌همراه CSV با BOM و JSON.</p>
+        <ul><li>۴ پیش‌تنظیم ستون: <code>lead</code> / <code>contact</code> / <code>location</code> / <code>all</code></li><li>داشبورد وب: اجرا، کاوش لید، آنالیتیکس، کمپین، import</li><li>SQLite محلی برای پیگیری وضعیت هر لید (CRM سبک)</li></ul>
+      </article>
+      <article class="feature">
+        <div class="ico">🐳</div>
+        <h3>موتور واقعی یا دمو</h3>
+        <p>با داکر، همان قرارداد اسکیل کیت: <code>POST /api/v1/jobs</code>، نظرسنجی <code>Status</code>، دانلود CSV. بدون داکر، موتور شبیه‌ساز داخلی همان ۳۴ ستون را با داده قطعی می‌سازد تا کل پایپ‌لاین قابل تست و نمایش باشد.</p>
+        <ul><li>API فقط روی <code>127.0.0.1</code> — بدون احراز هویت، بدون شبکه عمومی</li><li>پشتیبانی از پروکسی <code>socks5/http/https</code> برای اجرای سنگین</li><li><code>./run.sh doctor</code> سلامت محیط را گزارش می‌دهد</li></ul>
+      </article>
+      <article class="feature">
+        <div class="ico">🧪</div>
+        <h3>قابل اتکا و تست‌شده</h3>
+        <p>۶۴ تست واحد روی پایپ‌لاین، غنی‌سازی، امتیازدهی، خروجی و API — فقط با کتابخانه استاندارد پایتون ۳.۱۱+، بدون نصب پکیج.</p>
+        <ul><li><code>python3 -m unittest discover -s tests</code></li><li>migration خودکار ستون‌های تازه در SQLite</li><li>حالت دمو برای CI و مرور سریع بدون اینترنت</li></ul>
+      </article>
+    </div>
+  </section>
+
+  <!-- ═══ گردش کار ═════════════════════════════════════════════════════ -->
+  <section id="how">
+    <div class="section-head">
+      <span class="eyebrow">گردش کار</span>
+      <h2>از کلیدواژه تا فایل خروجی، در ۹ گام</h2>
+      <p>هر گام قابل تنظیم است؛ پیشرفت اجرا زنده در داشبورد نمایش داده می‌شود.</p>
+    </div>
+    <div class="steps">
+      <div class="step"><b>انتخاب صنف و شهر</b>کاتالوگ ۹۱ صنفی یا متن آزاد؛ نزدیک‌ترین صنف با تطبیق فارسی/انگلیسی پیدا می‌شود.<code>niches.find_niche()</code></div>
+      <div class="step"><b>ساخت کلیدواژه</b>مکان همیشه داخل کلیدواژه است (قاعده اسکیل): «دندانپزشکی در تهران».<code>build_keywords()</code></div>
+      <div class="step"><b>مختصات و کاشی‌بندی</b>۷۰ شهر داخلی؛ برای پوشش کامل، شبکه n×n با radius و zoom محاسبه‌شده.<code>geo.grid_cells()</code></div>
+      <div class="step"><b>اجرای job</b>یک job در هر لحظه؛ <code>lat/lon</code> رشته، <code>max_time</code> ثانیه، <code>depth</code> و <code>email=true</code>.<code>POST /api/v1/jobs</code></div>
+      <div class="step"><b>نظرسنجی و دانلود</b>وضعیت <code>working → ok|failed</code>؛ سپس CSV خام ۳۴ ستونی.<code>GET /jobs/{id}/download</code></div>
+      <div class="step"><b>یکتاسازی و پاک‌سازی</b>حذف تکراری بر اساس <code>place_id/cid/link</code>، نرمال‌سازی تلفن و ایمیل، تفکیک <code>place_status</code>.<code>geo.dedupe()</code></div>
+      <div class="step"><b>غنی‌سازی</b>ایمیل و شبکه اجتماعی از سایت‌ها (موازی + کش) و لوکیشن دقیق/پلاس‌کد.<code>enrich.enrich_rows()</code></div>
+      <div class="step"><b>امتیاز و بخش‌بندی</b>پروفایل فروش، شکاف‌ها، زاویه، کانال پیشنهادی و داغ/گرم/سرد.<code>scoring.score_all()</code></div>
+      <div class="step"><b>ذخیره و خروجی</b>SQLite + Excel/CSV/JSON + متن کمپین؛ سپس <code>DELETE /jobs/{id}</code> برای آزادسازی دیسک.<code>exports.export_run()</code></div>
+    </div>
+  </section>
+
+  <!-- ═══ دموی زنده ════════════════════════════════════════════════════ -->
+  <section id="demo">
+    <div class="section-head">
+      <span class="eyebrow">دموی زنده — کاملاً در مرورگر شما</span>
+      <h2>کاوشگر لید با داده نمونه</h2>
+      <p>این صفحه یک برنامه پایتون ندارد؛ همه‌چیز از یک فایل JSON ثابت خوانده می‌شود تا دقیقاً ببینید خروجی برنامه چه شکلی است.</p>
+    </div>
+
+    <div class="notice" id="demoNotice">
+      <b>⚠ داده مصنوعی:</b> در حال بارگذاری <code>data/sample.json</code>…
+    </div>
+
+    <div class="grid three" id="demoKpis" aria-live="polite"></div>
+
+    <div class="grid two">
+      <div class="card">
+        <div class="card-head"><h2>📡 پوشش اطلاعات تماس</h2><small id="covHint">—</small></div>
+        <div class="chart" id="coverageChart"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>🌡 بخش‌بندی لیدها</h2><small id="segHint">—</small></div>
+        <div class="donut-wrap">
+          <div id="segmentDonut"></div>
+          <div class="legend" id="segmentLegend"></div>
+        </div>
+        <div class="chart" id="scoreChart" style="margin-top:.9rem"></div>
+      </div>
+    </div>
+
+    <div class="grid two">
+      <div class="card">
+        <div class="card-head"><h2>🕳 شکاف‌های دیجیتال (فرصت فروش)</h2><small>درصد لیدهایی که این شکاف را دارند</small></div>
+        <div class="chart" id="gapsChart"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>📮 کانال پیشنهادی و صنف‌ها</h2><small>توزیع نمونه</small></div>
+        <div class="chart" id="channelChart"></div>
+        <div class="chart" id="nicheChart" style="margin-top:.8rem"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>💡 بینش‌های خودکار</h2><small>تولیدشده از همان داده</small></div>
+      <div id="insights"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>🗺 نقشه لوکیشن دقیق</h2>
+        <div class="pills">
+          <span class="pill"><i style="width:9px;height:9px;border-radius:50%;background:var(--hot);display:inline-block"></i> داغ</span>
+          <span class="pill"><i style="width:9px;height:9px;border-radius:50%;background:var(--warm);display:inline-block"></i> گرم</span>
+          <span class="pill">محدوده: <b id="mapBBox">—</b></span>
+        </div>
+      </div>
+      <div class="scatter" id="scatter" role="img" aria-label="پراکندگی مکانی لیدها"></div>
+      <p class="hint">هر نقطه یک کسب‌وکار است با مختصات واقعی lat/lon خروجی؛ کلیک کنید تا پرونده لید باز شود. در نصب اصلی، همان نقطه‌ها روی نقشه داشبورد و در ستون «لینک نقشه» فایل خروجی می‌آیند.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>🔎 کاوشگر لیدها</h2>
+        <div class="stat-strip" id="demoCount">—</div>
+      </div>
+      <div class="filters">
+        <input type="text" id="q" placeholder="جست‌وجو در نام، نشانی، دامنه، ایمیل، پلاس‌کد…" aria-label="جست‌وجو">
+        <select id="fSegment" aria-label="بخش"><option value="">همه بخش‌ها</option></select>
+        <select id="fNiche" aria-label="صنف"><option value="">همه اصناف</option></select>
+        <select id="fChannel" aria-label="کانال"><option value="">همه کانال‌ها</option></select>
+        <select id="fGap" aria-label="شکاف"><option value="">همه شکاف‌ها</option></select>
+        <select id="sortBy" aria-label="مرتب‌سازی">
+          <option value="score">امتیاز ↓</option>
+          <option value="reviews">تعداد نظر ↓</option>
+          <option value="rating">امتیاز گوگل ↓</option>
+          <option value="completeness">کامل بودن اطلاعات ↓</option>
+          <option value="title">نام (الفبا)</option>
+        </select>
+        <input type="number" id="minScore" min="0" max="100" value="0" style="max-width:104px" aria-label="حداقل امتیاز">
+      </div>
+      <div class="bulk">
+        <label class="switch"><input type="checkbox" id="onlyReachable"> فقط قابل تماس (ایمیل/تلفن/شبکه)</label>
+        <label class="switch"><input type="checkbox" id="onlyNoSite"> فقط بدون وب‌سایت</label>
+        <label for="preset" style="margin-inline-start:auto">پیش‌تنظیم ستون‌های خروجی:</label>
+        <select id="preset" style="max-width:190px" aria-label="پیش‌تنظیم ستون‌ها"></select>
+        <button class="ghost" id="btnCsv">⬇ CSV همین نما</button>
+        <button class="ghost" id="btnJson">⬇ JSON</button>
+        <button class="ghost" id="btnReset">↺ پاک‌سازی فیلترها</button>
+      </div>
+      <div class="table-wrap">
+        <table class="table" id="leadsTable">
+          <thead><tr>
+            <th>نام کسب‌وکار</th><th>صنف</th><th>شهر/نشانی</th><th>تلفن</th><th>ایمیل</th>
+            <th>سایت</th><th>شبکه</th><th>لوکیشن</th><th>⭐</th><th>نظر</th><th>امتیاز</th><th>کانال</th>
+          </tr></thead>
+          <tbody id="leadsBody"></tbody>
+        </table>
+      </div>
+      <div class="pager" id="pager"></div>
+      <p class="hint" id="presetHint"></p>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>🧾 ستون‌های هر پیش‌تنظیم</h2><small>همان چیزی که در فایل Excel/CSV شما می‌آید</small></div>
+      <div id="presetTable"></div>
+    </div>
+  </section>
+
+  <!-- ═══ نصب ══════════════════════════════════════════════════════════ -->
+  <section id="install">
+    <div class="section-head">
+      <span class="eyebrow">نصب</span>
+      <h2>در سه دستور روی دستگاه خودتان</h2>
+      <p>نیاز به پایتون ۳.۱۱+ و داکر. هیچ پکیج پایپ لازم نیست (فقط کتابخانه استاندارد).</p>
+    </div>
+    <div class="grid two">
+      <div class="card">
+        <h3>۱) موتور اسکراپ (داکر)</h3>
+        <div class="codewrap">
+          <button class="copybtn" data-copy="git clone https://github.com/rahmaniho/Skill.git && cd Skill&#10;cp .env.example .env&#10;docker compose up -d">کپی</button>
+<pre class="code"><span class="c"># مخزن را بگیرید و موتور را بالا بیاورید</span>
+git clone https://github.com/rahmaniho/Skill.git &amp;&amp; <span class="k">cd</span> Skill
+cp .env.example .env
+docker compose up -d          <span class="c"># gosom/google-maps-scraper روی 127.0.0.1:8080</span>
+curl -s http://localhost:8080/api/v1/jobs   <span class="c"># بررسی سلامت موتور</span></pre>
+        </div>
+        <p class="hint">پورت فقط به <code>127.0.0.1</code> بایند می‌شود؛ API موتور احراز هویت ندارد و نباید عمومی شود.</p>
+      </div>
+      <div class="card">
+        <h3>۲) داشبورد وب</h3>
+        <div class="codewrap">
+          <button class="copybtn" data-copy="./run.sh serve&#10;# یا: python3 -m leadgen.server --host 0.0.0.0 --port 8000">کپی</button>
+<pre class="code"><span class="k">./run.sh</span> serve        <span class="c"># http://localhost:8000</span>
+<span class="c"># یا مستقیم:</span>
+python3 -m leadgen.server --host 0.0.0.0 --port 8000
+
+<span class="k">./run.sh</span> doctor      <span class="c"># سلامت محیط: داکر، اصناف، شهرها</span>
+<span class="k">./run.sh</span> demo        <span class="c"># اجرای نمونه بدون داکر (موتور دمو)</span>
+<span class="k">./run.sh</span> test        <span class="c"># ۶۴ تست واحد</span></pre>
+        </div>
+        <p class="hint">اگر داکر در دسترس نباشد، برنامه به‌صورت خودکار به موتور دمو می‌رود تا پایپ‌لاین کامل قابل آزمایش باشد.</p>
+      </div>
+    </div>
+    <div class="card">
+      <h3>۳) متغیرهای <code>.env</code></h3>
+      <table class="docs-table">
+        <thead><tr><th>متغیر</th><th>پیش‌فرض</th><th>توضیح</th></tr></thead>
+        <tbody>
+          <tr><td><code>SCRAPER_BASE_URL</code></td><td><code>http://localhost:8080</code></td><td>آدرس موتور اسکراپ (داکر)</td></tr>
+          <tr><td><code>SCRAPER_PORT</code></td><td><code>8080</code></td><td>پورت نگاشت‌شده در compose</td></tr>
+          <tr><td><code>SCRAPER_API_KEY</code></td><td>—</td><td>در صورت فعال بودن، به‌صورت <code>X-API-Key</code> فرستاده می‌شود</td></tr>
+          <tr><td><code>ENGINE_MODE</code></td><td><code>auto</code></td><td><code>auto</code> | <code>docker</code> | <code>demo</code></td></tr>
+          <tr><td><code>PROXIES</code></td><td>—</td><td>فهرست پروکسی با کاما: <code>socks5://user:pass@host:port</code></td></tr>
+          <tr><td><code>ENRICH_WORKERS</code></td><td><code>8</code></td><td>تعداد رشته‌های موازی برای غنی‌سازی سایت‌ها</td></tr>
+          <tr><td><code>LEADGEN_HOST</code> / <code>LEADGEN_PORT</code></td><td><code>127.0.0.1</code> / <code>8000</code></td><td>میزبان و پورت داشبورد</td></tr>
+          <tr><td><code>LEADGEN_DATA_DIR</code></td><td><code>data/</code></td><td>مسیر پایگاه‌داده و خروجی‌ها (در <code>.gitignore</code>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ═══ CLI و API ════════════════════════════════════════════════════ -->
+  <section id="usage">
+    <div class="section-head">
+      <span class="eyebrow">استفاده</span>
+      <h2>CLI، API و پیش‌تنظیم ستون‌ها</h2>
+      <p>هر کاری که در داشبورد ممکن است، با خط فرمان و HTTP هم ممکن است.</p>
+    </div>
+    <div class="grid two">
+      <div class="card">
+        <h3>🏃 اجرای تک‌صنفی</h3>
+<pre class="code">python3 -m leadgen.cli run <span class="k">"دندانپزشکی"</span> --city <span class="k">"تهران"</span> \
+  --lang fa --profile web_design --socials \
+  --export xlsx --cols contact
+
+<span class="c"># پوشش کل شهر با کاشی ۳×۳</span>
+python3 -m leadgen.cli run <span class="k">"رستوران"</span> --city <span class="k">"دبی"</span> --grid 3 --lang fa</pre>
+        <h3 style="margin-top:1rem">🧭 جاروی تمامی مشاغل</h3>
+<pre class="code">python3 -m leadgen.cli run --all-niches --city <span class="k">"تهران"</span> \
+  --max-niches 12 --keywords-per-niche 2 --keywords-per-job 8 \
+  --cols contact --limit 400
+
+<span class="c"># فقط گروه‌های مشخص</span>
+python3 -m leadgen.cli run --all-niches --city <span class="k">"مشهد"</span> \
+  --groups <span class="k">"سلامت و پزشکی,غذا و نوشیدنی"</span> --engine demo</pre>
+        <h3 style="margin-top:1rem">🧰 دستورهای دیگر</h3>
+<pre class="code">python3 -m leadgen.cli niches            <span class="c"># ۹۱ صنف در ۱۳ گروه</span>
+python3 -m leadgen.cli cities            <span class="c"># ۷۰ شهر آفلاین</span>
+python3 -m leadgen.cli profiles          <span class="c"># پروفایل‌های امتیازدهی</span>
+python3 -m leadgen.cli runs              <span class="c"># فهرست اجراها</span>
+python3 -m leadgen.cli leads &lt;run_id&gt; --segment hot
+python3 -m leadgen.cli export &lt;run_id&gt; --fmt xlsx --cols all
+python3 -m leadgen.cli campaign &lt;run_id&gt; --channel whatsapp
+python3 -m leadgen.cli score-file leads.csv --profile marketing
+python3 -m leadgen.cli rescore &lt;run_id&gt; --profile recruitment</pre>
+      </div>
+      <div class="card">
+        <h3>🔌 API محلی</h3>
+        <table class="docs-table">
+          <thead><tr><th>مسیر</th><th>کاربرد</th></tr></thead>
+          <tbody>
+            <tr><td><code>GET /api/health</code></td><td>وضعیت موتور (docker/demo) و نسخه</td></tr>
+            <tr><td><code>GET /api/catalog</code></td><td>اصناف، گروه‌ها، شهرها، پروفایل‌ها، کانال‌ها، پیش‌تنظیم ستون‌ها</td></tr>
+            <tr><td><code>POST /api/runs</code></td><td>شروع اجرا (تک‌صنفی یا <code>all_niches</code>)</td></tr>
+            <tr><td><code>GET /api/runs/{id}/progress</code></td><td>پیشرفت زنده + لاگ مرحله‌ها</td></tr>
+            <tr><td><code>GET /api/runs/{id}/leads</code></td><td>لیدها با فیلتر/جست‌وجو/صفحه‌بندی</td></tr>
+            <tr><td><code>GET /api/runs/{id}/analytics</code></td><td>پوشش، بخش‌ها، قیف، بینش‌ها، نقشه</td></tr>
+            <tr><td><code>GET /api/runs/{id}/campaign</code></td><td>متن کمپین همه کانال‌ها</td></tr>
+            <tr><td><code>GET /api/runs/{id}/export?fmt=xlsx&amp;cols=contact</code></td><td>دانلود فایل</td></tr>
+            <tr><td><code>POST /api/runs/{id}/rescore</code></td><td>امتیازدهی مجدد با پروفایل دیگر</td></tr>
+            <tr><td><code>GET /api/leads/{id}</code></td><td>پرونده کامل لید + breakdown امتیاز</td></tr>
+            <tr><td><code>POST /api/import</code></td><td>وارد کردن CSV/JSON موجود (multipart)</td></tr>
+            <tr><td><code>POST /api/niches/find</code> · <code>POST /api/geocode</code></td><td>تطبیق صنف و مختصات‌یابی شهر</td></tr>
+            <tr><td><code>DELETE /api/runs/{id}</code></td><td>حذف اجرا و لیدهایش</td></tr>
+          </tbody>
+        </table>
+        <h3 style="margin-top:1rem">🧾 پیش‌تنظیم ستون‌ها (<code>--cols</code> / <code>?cols=</code>)</h3>
+        <table class="docs-table">
+          <tbody>
+            <tr><td><code>lead</code></td><td>۸ فیلد اصلی اسکیل + امتیاز/بخش/کانال — پیش‌فرض</td></tr>
+            <tr><td><code>contact</code></td><td>کارت تماس کامل: نام، صنف منبع، نشانی، تلفن، ایمیل‌ها، سایت، IG/FB/LinkedIn، <b>لوکیشن دقیق، lat، lon، لینک نقشه، پلاس‌کد</b>، امتیاز و زاویه فروش</td></tr>
+            <tr><td><code>location</code></td><td>سبک و میدانی: نام، تماس و همه فیلدهای مکانی</td></tr>
+            <tr><td><code>all</code></td><td>همه ۳۴ ستون خام موتور + همه فیلدهای محاسبه‌شده</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ مقررات ═══════════════════════════════════════════════════════ -->
+  <section id="compliance">
+    <div class="section-head">
+      <span class="eyebrow">مسئولیت و مقررات</span>
+      <h2>قبل از استفاده بخوانید</h2>
+      <p>این ابزار برای ساخت فهرست leads است، نه برای انبوه‌سازی داده شخصی یا فروش داده خام.</p>
+    </div>
+    <div class="compliance-grid">
+      <div class="card"><h3>⚖️ شرایط استفاده گوگل</h3><p style="color:var(--muted);font-size:.86rem;margin:0">اسکراپ گوگل‌مپ با شرایط استفادهٔ گوگل سازگار نیست. خروجی را «فهرست اولیه» بدانید و پیش از تماس، اطلاعات را از منابع رسمی راستی‌آزمایی کنید. داده خام را نفروشید.</p></div>
+      <div class="card"><h3>🔒 حریم شخصی و قانون</h3><p style="color:var(--muted);font-size:.86rem;margin:0">GDPR، CCPA، CAN-SPAM و مقررات ارتباطات ایران: مبنای قانونی، هویت فرستنده و امکان انصراف لازم است. به همین دلیل هر متن کمپین امضا و «لغو دریافت» دارد.</p></div>
+      <div class="card"><h3>🏠 فقط شبکه محلی</h3><p style="color:var(--muted);font-size:.86rem;margin:0">API موتور اسکراپ احراز هویت ندارد و در compose فقط به <code>127.0.0.1</code> بایند می‌شود. داشبورد را بدون پروکسی امن روی اینترنت عمومی نگذارید.</p></div>
+      <div class="card"><h3>🚦 هشدار، نه توقف</h3><p style="color:var(--muted);font-size:.86rem;margin:0">اجراهای بزرگ (جاروی چندصنفی یا grid) یک هشدار کوتاه دربارهٔ محدودیت نرخ IP و پیشنهاد پروکسی می‌دهند اما متوقف نمی‌شوند؛ تصمیم با شماست.</p></div>
+      <div class="card"><h3>🧾 داده محلی</h3><p style="color:var(--muted);font-size:.86rem;margin:0">همه‌چیز در <code>data/</code> روی دستگاه شماست و در <code>.gitignore</code> قرار دارد؛ هیچ داده‌ای به سرویس بیرونی فرستاده نمی‌شود جز سایت خود کسب‌وکارها برای یافتن ایمیل/شبکه اجتماعی.</p></div>
+      <div class="card"><h3>📄 منابع</h3><p style="color:var(--muted);font-size:.86rem;margin:0">موتور: <a href="https://github.com/gosom/google-maps-scraper" target="_blank" rel="noopener">gosom/google-maps-scraper</a> · الگو و قواعد: <a href="https://github.com/mahanaicoach/google-maps-scraper-kit" target="_blank" rel="noopener">google-maps-scraper-kit</a> · کد این برنامه: <a href="https://github.com/rahmaniho/Skill" target="_blank" rel="noopener">rahmaniho/Skill</a></p></div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site">
+  <div class="wrap">
+    <div>
+      <b style="color:var(--text)">LeadGen Studio</b> — موتور تولید لید کسب‌وکارهای محلی، فارسی و متن‌باز.<br>
+      ساخته‌شده روی اسکیل <code>google-maps-scraper</code> با کتابخانه استاندارد پایتون (بدون وابستگی).
+    </div>
+    <div>
+      <a href="https://github.com/rahmaniho/Skill" target="_blank" rel="noopener">مخزن GitHub</a> ·
+      <a href="https://github.com/rahmaniho/Skill/issues" target="_blank" rel="noopener">گزارش اشکال</a> ·
+      <a href="#demo">دموی زنده</a> ·
+      <a href="#install">نصب</a><br>
+      <span id="footMeta">—</span>
+    </div>
+  </div>
+</footer>
+
+<!-- ═══ کشوی پرونده لید ════════════════════════════════════════════════ -->
+<aside class="drawer" id="drawer" hidden aria-label="پرونده لید">
+  <div class="drawer-head">
+    <h3 id="drawerTitle">—</h3>
+    <button class="icon" id="drawerClose" aria-label="بستن">✕</button>
+  </div>
+  <div class="drawer-body" id="drawerBody"></div>
+</aside>
+<div class="scrim" id="scrim" hidden></div>
+<div class="tip" id="tip" role="status"></div>
+<div class="toast-wrap" id="toasts"></div>
+
+<script src="app.js" defer></script>
+</body>
+</html>

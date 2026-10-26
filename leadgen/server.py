@@ -210,6 +210,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({
                 "niches": niches.all_niches(),
                 "groups": niches.GROUPS,
+                "column_presets": [{"id": key, "fa": value["fa"], "note": value["note"],
+                                    "columns": [fa for _, fa in value["columns"]]}
+                                   for key, value in exports.COLUMN_PRESETS.items()],
                 "cities": geo.known_cities(),
                 "profiles": scoring.profile_list(),
                 "channels": [{"id": c, "fa": campaign.CHANNEL_FA[c]} for c in campaign.CHANNELS],
@@ -408,6 +411,8 @@ class Handler(BaseHTTPRequestHandler):
         for row in rows:
             row["gaps_fa"] = [scoring.GAP_FA.get(g, g) for g in (row.get("gaps") or [])]
             row["channel_fa"] = campaign.CHANNEL_FA.get(row.get("channel"), row.get("channel"))
+            if not row.get("maps_link"):
+                row["maps_link"] = enrich.maps_link(row)
         return self._json({
             "leads": rows,
             "count": len(rows),
@@ -428,6 +433,7 @@ class Handler(BaseHTTPRequestHandler):
             rows = [r for r in rows if r.get("status") == status]
         fmt = (query.get("fmt") or "xlsx").lower()
         full = query.get("full") in ("1", "true", "yes")
+        preset = query.get("cols") or query.get("preset") or "lead"
         for row in rows:
             row["gaps_fa"] = [scoring.GAP_FA.get(g, g) for g in (row.get("gaps") or [])]
 
@@ -467,14 +473,14 @@ class Handler(BaseHTTPRequestHandler):
                                       "channel_fa": campaign.CHANNEL_FA.get(channel, channel),
                                       "to": message.get("to", ""), "subject": message.get("subject", ""),
                                       "body": message.get("text") or message.get("body", "")})
-            sheets = exports.build_workbook(rows, pack, run, campaign_rows, full=full)
+            sheets = exports.build_workbook(rows, pack, run, campaign_rows, full=full, preset=preset)
             body = exports.xlsx_bytes(sheets)
             name = f"leads-{run_id}.xlsx"
             return self._send(200, body,
                               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                               {"Content-Disposition": f'attachment; filename="{name}"'})
 
-        body = exports.csv_bytes(rows, full=full)
+        body = exports.csv_bytes(rows, full=full, preset=preset)
         name = f"leads-{run_id}.csv"
         return self._send(200, body, "text/csv; charset=utf-8", {
             "Content-Disposition": f'attachment; filename="{name}"'})

@@ -667,6 +667,31 @@ def find_niche(query: str) -> Niche:
     return custom_niche(query)
 
 
+def sweep_plan(groups: list[str] | None = None, limit: int = 12,
+               exclude_ids: list[str] | None = None) -> list[Niche]:
+    """برنامه «جاروی تمامی مشاغل»: فهرست اصنافی که باید پشت‌سرهم جست‌وجو شوند.
+
+    groups  → فقط این دسته‌ها (مثلاً ["سلامت و پزشکی", "غذا و نوشیدنی"])؛ خالی = همه دسته‌ها
+    limit   → سقف تعداد صنف (هر صنف = چند کلیدواژه = یک job) تا اجرا از کنترل خارج نشود
+    از هر دسته به‌طور چرخشی برمی‌داریم تا خروجی فقط یک دسته نباشد (تنوع بازار).
+    """
+    exclude = set(exclude_ids or [])
+    pool = [n for n in CATALOG if n.id not in exclude and (not groups or n.group in groups)]
+    if not pool:
+        pool = [n for n in CATALOG if n.id not in exclude]
+
+    by_group: dict[str, list[Niche]] = {}
+    for niche in pool:
+        by_group.setdefault(niche.group, []).append(niche)
+
+    plan: list[Niche] = []
+    while len(plan) < (limit or len(pool)) and any(by_group.values()):
+        for group in sorted(by_group):
+            if by_group[group] and len(plan) < (limit or len(pool)):
+                plan.append(by_group[group].pop(0))
+    return plan
+
+
 def expand_keywords(niche: Niche, city: str, lang: str = "en", limit: int = 6,
                     with_neighborhoods: bool = False, city_key: str | None = None) -> list[str]:
     """کلیدواژه‌های نهایی برای job — مکان داخل هر عبارت bake می‌شود (مطابق اسکیل کیت).

@@ -44,15 +44,98 @@ EXPORT_COLUMNS: list[tuple[str, str]] = [
     ("note", "یادداشت"),
 ]
 
-FULL_COLUMNS = EXPORT_COLUMNS + [
-    ("domain", "دامنه"),
-    ("completeness", "کامل بودن اطلاعات ٪"),
+# ستون‌های مکان (لوکیشن دقیق) که در پیش‌تنظیم «کارت تماس کامل» می‌آیند
+LOCATION_COLUMNS: list[tuple[str, str]] = [
+    ("location", "لوکیشن دقیق (lat, lon)"),
     ("latitude", "عرض جغرافیایی"),
     ("longitude", "طول جغرافیایی"),
+    ("maps_link", "لینک نقشه گوگل"),
+    ("plus_code", "پلاس کد"),
+]
+
+FULL_COLUMNS = EXPORT_COLUMNS + LOCATION_COLUMNS + [
+    ("domain", "دامنه"),
+    ("completeness", "کامل بودن اطلاعات ٪"),
     ("place_id", "شناسه مکان"),
     ("profile", "پروفایل امتیازدهی"),
     ("input_id", "کلیدواژه منبع"),
+    ("niche_fa", "صنف منبع"),
+    ("place_status", "وضعیت مکان در گوگل"),
 ]
+
+# پیش‌تنظیم ستون‌ها: کاربر انتخاب می‌کند خروجی چه شکلی باشد
+COLUMN_PRESETS: dict[str, dict] = {
+    "lead": {
+        "fa": "لید (پیش‌فرض)",
+        "note": "۸ فیلد اصلی اسکیل + غنی‌سازی + امتیاز لید",
+        "columns": EXPORT_COLUMNS,
+    },
+    "contact": {
+        "fa": "کارت تماس کامل + لوکیشن دقیق",
+        "note": "نام، صنف، نشانی، تلفن، ایمیل، سایت، شبکه‌های اجتماعی، lat/lon، لینک نقشه، پلاس کد",
+        "columns": [
+            ("title", "نام کسب‌وکار"),
+            ("niche_fa", "صنف منبع"),
+            ("category", "دسته گوگل"),
+            ("city", "شهر"),
+            ("address", "نشانی کامل"),
+            ("phone", "تلفن"),
+            ("email_primary", "ایمیل"),
+            ("emails", "همه ایمیل‌ها"),
+            ("website", "آدرس سایت"),
+            ("instagram", "اینستاگرام"),
+            ("facebook", "فیسبوک"),
+            ("linkedin", "لینکدین"),
+            ("location", "لوکیشن دقیق (lat, lon)"),
+            ("latitude", "عرض جغرافیایی"),
+            ("longitude", "طول جغرافیایی"),
+            ("maps_link", "لینک نقشه گوگل"),
+            ("plus_code", "پلاس کد"),
+            ("rating", "امتیاز گوگل"),
+            ("reviews", "تعداد نظر"),
+            ("completeness", "کامل بودن اطلاعات ٪"),
+            ("score", "امتیاز لید (۰-۱۰۰)"),
+            ("segment_fa", "بخش"),
+            ("channel_fa", "کانال پیشنهادی"),
+            ("pitch", "زاویه پیشنهاد"),
+            ("gaps_fa", "شکاف‌های دیجیتال"),
+            ("tags", "برچسب‌ها"),
+            ("status_fa", "وضعیت پیگیری"),
+            ("note", "یادداشت"),
+        ],
+    },
+    "location": {
+        "fa": "فقط مکان و تماس (سبک)",
+        "note": "نام، تلفن، سایت، نشانی، لوکیشن دقیق، lat/lon، پلاس‌کد و لینک نقشه — "
+                "مناسب کار میدانی و ویزیت حضوری",
+        # ستون‌های مکانی از LOCATION_COLUMNS گرفته می‌شوند تا با بقیه پیش‌تنظیم‌ها هم‌گام بمانند
+        "columns": [
+            ("title", "نام کسب‌وکار"),
+            ("category", "دسته"),
+            ("phone", "تلفن"),
+            ("email_primary", "ایمیل"),
+            ("website", "آدرس سایت"),
+            ("instagram", "اینستاگرام"),
+            ("facebook", "فیسبوک"),
+            ("linkedin", "لینکدین"),
+            ("address", "نشانی"),
+            ("city", "شهر"),
+        ] + LOCATION_COLUMNS,
+    },
+    "all": {
+        "fa": "همه ستون‌ها (خام + محاسباتی)",
+        "note": "۳۴ ستون خام موتور + همه فیلدهای غنی‌سازی و امتیازدهی",
+        "columns": FULL_COLUMNS,
+    },
+}
+
+
+def columns_for(preset: str | None, full: bool = False) -> list[tuple[str, str]]:
+    """ستون‌های خروجی بر اساس پیش‌تنظیم انتخابی (یا `full` برای همه ستون‌ها)."""
+    if full:
+        return FULL_COLUMNS
+    chosen = COLUMN_PRESETS.get((preset or "lead").lower())
+    return chosen["columns"] if chosen else EXPORT_COLUMNS
 
 SUMMARY_COLUMNS: list[tuple[str, str]] = [
     ("id", "شناسه اجرا"),
@@ -100,16 +183,17 @@ def _value(row: dict, key: str) -> str:
     return str(value)
 
 
-def rows_for_export(rows: list[dict], full: bool = False) -> list[dict]:
-    cols = FULL_COLUMNS if full else EXPORT_COLUMNS
+def rows_for_export(rows: list[dict], full: bool = False, preset: str | None = None) -> list[dict]:
+    cols = columns_for(preset, full=full)
     return [{fa: _value(r, key) for key, fa in cols} for r in rows]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CSV
 # ─────────────────────────────────────────────────────────────────────────────
-def write_csv(path: Path, rows: list[dict], full: bool = False) -> Path:
-    data = rows_for_export(rows, full=full)
+def write_csv(path: Path, rows: list[dict], full: bool = False,
+              preset: str | None = None) -> Path:
+    data = rows_for_export(rows, full=full, preset=preset)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", newline="", encoding="utf-8-sig") as fh:
         if not data:
@@ -121,9 +205,9 @@ def write_csv(path: Path, rows: list[dict], full: bool = False) -> Path:
     return path
 
 
-def csv_bytes(rows: list[dict], full: bool = False) -> bytes:
+def csv_bytes(rows: list[dict], full: bool = False, preset: str | None = None) -> bytes:
     buffer = io.StringIO()
-    data = rows_for_export(rows, full=full)
+    data = rows_for_export(rows, full=full, preset=preset)
     if data:
         writer = csv.DictWriter(buffer, fieldnames=list(data[0].keys()))
         writer.writeheader()
@@ -306,9 +390,10 @@ def xlsx_bytes(sheets: dict[str, tuple[list[str], list[list[str]]]]) -> bytes:
 # بسته خروجی کامل یک اجرا
 # ─────────────────────────────────────────────────────────────────────────────
 def build_workbook(rows: list[dict], analytics: dict | None, run: dict | None,
-                   campaign_rows: list[dict] | None = None, full: bool = False) -> dict:
+                   campaign_rows: list[dict] | None = None, full: bool = False,
+                   preset: str | None = None) -> dict:
     """برگه‌های یک فایل xlsx کامل: لیدها، داغ‌ها، خلاصه/تحلیل، کمپین."""
-    cols = FULL_COLUMNS if full else EXPORT_COLUMNS
+    cols = columns_for(preset, full=full)
     headers = [fa for _, fa in cols]
     body = [[_value(r, key) for key, _ in cols] for r in rows]
     sheets: dict[str, tuple[list[str], list[list[str]]]] = {"لیدها": (headers, body)}
@@ -362,15 +447,16 @@ def build_workbook(rows: list[dict], analytics: dict | None, run: dict | None,
 
 def export_run(path: Path, rows: list[dict], analytics: dict | None = None,
                run: dict | None = None, fmt: str = "csv", full: bool = False,
-               campaign_rows: list[dict] | None = None) -> Path:
+               campaign_rows: list[dict] | None = None, preset: str | None = None) -> Path:
     fmt = (fmt or "csv").lower().lstrip(".")
     if fmt in ("xlsx", "excel"):
         return write_xlsx(path.with_suffix(".xlsx"),
-                          build_workbook(rows, analytics, run, campaign_rows, full=full))
+                          build_workbook(rows, analytics, run, campaign_rows,
+                                         full=full, preset=preset))
     if fmt == "json":
         return write_json(path.with_suffix(".json"),
                           {"run": run, "analytics": analytics, "leads": rows})
-    return write_csv(path.with_suffix(".csv"), rows, full=full)
+    return write_csv(path.with_suffix(".csv"), rows, full=full, preset=preset)
 
 
 def safe_filename(text: str) -> str:

@@ -56,6 +56,13 @@ class ScrapeRequest:
     campaign_channel: str = "email"
     keep_full_columns: bool = False
     limit: int = 0                   # ۰ = همه
+    # «جست‌وجوی تمامی مشاغل» — جاروی چندصنفی یک شهر
+    all_niches: bool = False
+    niche_groups: list = field(default_factory=list)
+    max_niches: int = 12
+    keywords_per_niche: int = 2
+    keywords_per_job: int = 8
+    cols: str = "lead"               # پیش‌تنظیم ستون‌های خروجی: lead|contact|location|all
     run_id: str = ""                 # اگر server از قبل شناسه ساخته، همان را ادامه می‌دهیم
 
     @classmethod
@@ -68,7 +75,10 @@ class ScrapeRequest:
                     clean[int_key] = int(clean[int_key])
                 except (TypeError, ValueError):
                     clean.pop(int_key)
-        for bool_key in ("fast_mode", "emails", "deep_emails", "socials", "signals", "keep_full_columns"):
+        if isinstance(clean.get("niche_groups"), str):
+            clean["niche_groups"] = [g.strip() for g in clean["niche_groups"].split(",") if g.strip()]
+        for bool_key in ("fast_mode", "emails", "deep_emails", "socials", "signals",
+                         "keep_full_columns", "all_niches"):
             if bool_key in clean and clean[bool_key] is not None:
                 clean[bool_key] = bool(clean[bool_key])
         return cls(**clean)
@@ -203,101 +213,164 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
             )
         country = city.get("country") or ""
 
-        # ── ۲) کلیدواژه‌ها ───────────────────────────────────────────────────
-        keywords = build_keywords(request, niche, city)
-        if not keywords:
-            raise EngineError("هیچ کلیدواژه‌ای ساخته نشد.")
+        # ── ۲) کلیدواژه‌ها و نقشه jobها ───────────────────────────────────────
+        place_fa = city.get("label_local") or city["label"]
+        place_en = city.get("label") or place_fa
+        place = place_fa if request.lang.startswith("fa") else place_en
+        is_fa = request.lang.startswith("fa")
+
+        sweep_niches: list[niches.Niche] = []
+        keyword_niche: dict[str, niches.Niche] = {}
+
+        if request.all_niches:
+            # «جست‌وجوی تمامی مشاغل»: چند صنف پشت‌سرهم، با یکتاسازی بین همه صنف‌ها
+            sweep_niches = niches.sweep_plan(groups=request.niche_groups, limit=request.max_niches)
+            if not sweep_niches:
+                raise EngineError("هیچ صنفی برای جارو پیدا نشد.")
+            if request.grid and request.grid > 1:
+                warnings.append("حالت شبکه با «همه مشاغل» ترکیب نشد (تعداد jobها ضرب می‌شد و "
+                                "احتمال rate-limit بالا می‌رفت)؛ جاروی مرکزی انجام شد.")
+                request.grid = 0
+            keywords = []
+            for sweep_niche in sweep_niches:
+                for term in niches.expand_keywords(sweep_niche, place, lang=request.lang,
+                                                   limit=max(1, request.keywords_per_niche)):
+                    if term not in keyword_niche:
+                        keyword_niche[term] = sweep_niche
+                        keywords.append(term)
+            primary_niche = sweep_niches[0]
+            niche_label = f"همه مشاغل ({len(sweep_niches)} صنف)"
+            warnings.append(
+                f"حالت «همه مشاغل»: {len(sweep_niches)} صنف × تا {request.keywords_per_niche} کلیدواژه "
+                f"= {len(keywords)} کلیدواژه. jobها پشت‌سرهم اجرا می‌شوند (هر بار یکی) تا گوگل "
+                f"شما را محدود نکند؛ برای حجم بالاتر پراکسی بگذارید. اجرا ادامه دارد…"
+            )
+        else:
+            keywords = build_keywords(request, niche, city)
+            if not keywords:
+                raise EngineError("هیچ کلیدواژه‌ای ساخته نشد.")
+            for term in keywords:
+                keyword_niche[term] = niche
+            primary_niche = niche
+            niche_label = niche.fa
         warnings.extend(large_job_warning(request, keywords))
 
-        radius = request.radius or niche.radius
-        depth = request.depth or niche.depth
+        radius = request.radius or primary_niche.radius
+        depth = request.depth or primary_niche.depth
 
         run_meta.update({
-            "niche_id": niche.id, "niche_fa": niche.fa, "city": city["label"],
-            "city_key": city.get("key"), "country": country,
+            "niche_id": primary_niche.id, "niche_fa": niche_label,
+            "city": place_fa, "city_key": city.get("key"), "country": country,
             "lat": city["lat"], "lon": city["lon"], "keywords": keywords,
             "radius": radius, "depth": depth,
         })
         storage.update_run(run_id, **run_meta)
 
         # ── ۳) jobها ────────────────────────────────────────────────────────
-        base_body = {
-            "name": f"leadgen-{niche.id}",
-            "keywords": keywords,
-            "lang": "fa" if request.lang.startswith("fa") else "en",
-            "zoom": request.zoom,
-            "lat": str(city["lat"]),
-            "lon": str(city["lon"]),
-            "fast_mode": request.fast_mode,
-            "radius": radius,
-            "depth": depth,
-            "email": bool(request.emails),
-            "max_time": request.max_time,
-            # فیلدهای داخلی که فقط موتور دمو می‌خواند (موتور واقعی نادیده می‌گیرد)
-            "_niche": niche,
-            "city_label": city["label_local"] if request.lang.startswith("fa") else city["label"],
-            "city_key": city.get("key") or "",
-            "country": country,
-            "bbox": city["bbox"],
-            "lang_fa": request.lang.startswith("fa"),
-        }
+        cells = geo.grid_cells(city["bbox"], request.grid) if request.grid and request.grid > 1 else []
+        chunk_size = max(1, request.keywords_per_job)
+        if request.all_niches and len(keywords) > chunk_size:
+            chunks = [keywords[i:i + chunk_size] for i in range(0, len(keywords), chunk_size)]
+        else:
+            # اسکیل کیت: همه کلیدواژه‌ها در یک job (به‌جای شلیک jobهای زیاد)
+            chunks = [keywords]
 
+        def make_body(term_list: list[str], name: str, cell: dict | None = None) -> dict:
+            body = {
+                "name": name,
+                "keywords": term_list,
+                "lang": "fa" if is_fa else "en",
+                "zoom": request.zoom,
+                "lat": str(city["lat"]),          # قرارداد اسکیل: رشته
+                "lon": str(city["lon"]),
+                "fast_mode": request.fast_mode,
+                "radius": radius,
+                "depth": depth,
+                "email": bool(request.emails),     # پیش‌فرض اسکیل: روشن
+                "max_time": request.max_time,      # ثانیه
+                # فیلدهای داخلی که فقط موتور دمو می‌خواند (موتور واقعی نادیده می‌گیرد)
+                "_niche": keyword_niche.get(term_list[0], primary_niche) if term_list else primary_niche,
+                "_keyword_niches": {t: keyword_niche[t].id for t in term_list if t in keyword_niche},
+                "city_label": place_fa if is_fa else place_en,
+                "city_key": city.get("key") or "",
+                "country": country,
+                "bbox": city["bbox"],
+                "lang_fa": is_fa,
+            }
+            if cell:
+                body.update(cell)                 # lat/lon/radius/zoom همان کاشی
+            return body
+
+        specs: list[dict] = []
+        for chunk_index, chunk in enumerate(chunks, start=1):
+            if cells:
+                for tile_index, cell in enumerate(cells, start=1):
+                    specs.append(make_body(chunk, f"leadgen-c{chunk_index}-t{tile_index}", cell))
+            else:
+                specs.append(make_body(chunk, f"leadgen-c{chunk_index}"))
+
+        total_specs = max(1, len(specs))
         rows: list[dict] = []
         job_ids: list[str] = []
-        cells = geo.grid_cells(city["bbox"], request.grid) if request.grid and request.grid > 1 else []
 
-        def on_job_progress(payload: dict) -> None:
-            """پیشرفت موتور را به بازه ۸٪ تا ۷۰٪ نقشه می‌کند."""
+        def on_job_progress(payload: dict, spec_index: int) -> None:
+            """پیشرفت موتور را به بازه ۸٪ تا ۷۰٪ کل اجرا نقشه می‌کند."""
             event = dict(payload)
             percent = event.get("percent")
             if isinstance(percent, (int, float)):
-                event["percent"] = int(8 + 62 * float(percent) / 100)
+                event["percent"] = int(8 + 62 * (spec_index - 1 + float(percent) / 100) / total_specs)
+            if total_specs > 1:
+                event["message"] = f"[job {spec_index}/{total_specs}] {event.get('message', '')}"
             _progress(on_progress, run_id, event)
 
-        if not cells:
-            _progress(on_progress, run_id, {"stage": "job", "status": "working", "percent": 8,
-                                             "message": f"اجرای job با {len(keywords)} کلیدواژه "
-                                                        f"@ {city['lat']},{city['lon']}"})
-            job_id, raw_rows = engine.run_job(base_body, on_job_progress)
+        mode = "grid" if cells else ("sweep" if request.all_niches else "job")
+        label = (f"حالت شبکه {request.grid}×{request.grid} — {len(cells)} کاشی"
+                 if cells else
+                 (f"جاروی تمامی مشاغل — {len(sweep_niches)} صنف، {len(specs)} job"
+                  if request.all_niches else
+                  f"اجرای job با {len(keywords)} کلیدواژه"))
+        _progress(on_progress, run_id, {"stage": mode, "status": "working", "percent": 8,
+                                        "message": f"{label} @ {city['lat']},{city['lon']}"})
+
+        for index, spec in enumerate(specs, start=1):
+            try:
+                job_id, spec_rows = engine.run_job(
+                    spec, lambda payload, i=index: on_job_progress(payload, i))
+            except Exception as exc:
+                # شکست یک job در حالت چندjob ≠ شکست کل اجرا
+                if total_specs == 1:
+                    raise
+                warnings.append(f"job {index}/{total_specs} رد شد: {str(exc).strip()[:160]}")
+                continue
             job_ids.append(job_id)
-            rows = raw_rows
-        else:
-            _progress(on_progress, run_id, {"stage": "grid", "status": "working", "percent": 8,
-                                             "message": f"حالت شبکه {request.grid}×{request.grid}: "
-                                                        f"{len(cells)} job پشت‌سرهم"})
-            for index, cell in enumerate(cells, start=1):
-                cell_body = dict(base_body, **cell)
-                cell_body["name"] = f"leadgen-{niche.id}-tile{index}"
+            rows = geo.dedupe(rows + spec_rows)
+            _progress(on_progress, run_id, {
+                "stage": mode, "status": "working",
+                "percent": int(8 + 62 * index / total_specs),
+                "message": (f"job {index}/{total_specs}: +{len(spec_rows)} ردیف "
+                            f"(یکتا: {len(rows)}) — {', '.join(spec['keywords'][:2])}"
+                            + ("…" if len(spec["keywords"]) > 2 else "")),
+            })
 
-                def cell_progress(payload: dict, index=index) -> None:
-                    payload = dict(payload)
-                    payload["_cell_frac"] = 1.0
-                    payload["percent"] = int(100 * (index - 1 + (payload.get("percent") or 0) / 100) / len(cells))
-                    payload["message"] = f"کاشی {index}/{len(cells)} — " + str(payload.get("message", ""))
-                    on_job_progress(payload)
-
-                try:
-                    job_id, cell_rows = engine.run_job(cell_body, cell_progress)
-                except Exception as exc:  # یک کاشی شکست خورد ≠ کل اجرا شکست خورد
-                    warnings.append(f"کاشی {index}/{len(cells)} رد شد: {str(exc).strip()[:160]}")
-                    continue
-                job_ids.append(job_id)
-                before = len(rows)
-                rows = geo.dedupe(rows + cell_rows)
-                _progress(on_progress, run_id, {"stage": "grid", "status": "working",
-                                                 "percent": int(8 + 62 * index / len(cells)),
-                                                 "message": f"کاشی {index}/{len(cells)}: +{len(cell_rows)} ردیف "
-                                                            f"(یکتا: {len(rows)})"})
-            if not rows:
-                raise EngineError("همه کاشی‌ها خالی/ناموفق بودند. احتمالاً rate-limit — صبر کنید یا پراکسی اضافه کنید.")
+        if not rows:
+            raise EngineError(
+                "همه jobها خالی/ناموفق بودند. احتمالاً IP موقتاً محدود شده — چند دقیقه صبر کنید، "
+                "depth را کم کنید یا پراکسی اضافه کنید."
+            )
+        if cells:
             kept = [r for r in rows if geo.in_bbox(r, city["bbox"])]
             dropped = len(rows) - len(kept)
             if dropped:
                 warnings.append(f"{dropped} ردیف بیرون از محدوده شهر حذف شد.")
             rows = kept
 
-        if request.limit and len(rows) > request.limit:
-            rows = rows[:request.limit]
+        # سقف نهایی بعد از امتیازدهی اعمال می‌شود تا «بهترین‌ها» بمانند نه «اولین‌ها».
+        # اینجا فقط یک سقف محافظه‌کارانه می‌گذاریم تا هزینه غنی‌سازی منفجر نشود.
+        pre_cap = max(request.limit * 3, 600) if request.limit else 0
+        if pre_cap and len(rows) > pre_cap:
+            warnings.append(f"{len(rows) - pre_cap} ردیف برای کنترل هزینه غنی‌سازی موقتاً کنار "
+                            f"گذاشته شد؛ سقف نهایی ({request.limit}) بعد از امتیازدهی اعمال می‌شود.")
+            rows = rows[:pre_cap]
 
         # ── ۴) پاک‌سازی ─────────────────────────────────────────────────────
         before = len(rows)
@@ -308,8 +381,11 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                                          "message": f"پاک‌سازی: {len(rows)} ردیف منحصر به فرد"})
 
         for row in rows:
-            row.setdefault("city", city.get("label_local") or city["label"])
+            row.setdefault("city", place_fa)
             row.setdefault("input_id", row.get("input_id") or (keywords[0] if keywords else ""))
+            source = keyword_niche.get(str(row.get("input_id") or "")) or primary_niche
+            row["niche_id"] = source.id
+            row["niche_fa"] = source.fa
 
         # ── ۵) غنی‌سازی ─────────────────────────────────────────────────────
         allow_network = engine.live if request.enrich_live is None else bool(request.enrich_live)
@@ -335,6 +411,8 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                                                     + str(scoring.PROFILES.get(request.profile, {}).get("fa", request.profile))
                                                     + "»"})
         rows = scoring.score_all(rows, profile=request.profile, niche=niche)
+        if request.limit and len(rows) > request.limit:
+            rows = rows[:request.limit]           # rows مرتب‌شده بر اساس امتیاز است
 
         # ── ۷) ذخیره ────────────────────────────────────────────────────────
         storage.save_leads(run_id, rows)
@@ -372,12 +450,14 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                 "body": message.get("text") or message.get("body", ""),
             })
 
-        slug = (f"{niche.id}-{(city.get('key') or exports.safe_filename(city['label']))}-{run_id}")
+        slug_niche = "all-trades" if request.all_niches else primary_niche.id
+        slug = (f"{slug_niche}-{(city.get('key') or exports.safe_filename(city['label']))}-{run_id}")
         paths = []
         main_fmt = request.export_fmt or "xlsx"
+        preset = request.cols if not request.keep_full_columns else "all"
         if main_fmt in ("xlsx", "excel"):
             sheets = exports.build_workbook(saved_rows, stats_pack, run_full, campaign_rows,
-                                            full=request.keep_full_columns)
+                                            full=request.keep_full_columns, preset=preset)
             paths.append(exports.write_xlsx(exports.default_path(slug, "xlsx"), sheets))
         elif main_fmt == "json":
             paths.append(exports.write_json(
@@ -385,10 +465,11 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                 {"run": run_full, "analytics": stats_pack, "leads": saved_rows}))
         else:
             paths.append(exports.write_csv(exports.default_path(slug, "csv"), saved_rows,
-                                           full=request.keep_full_columns))
+                                           full=request.keep_full_columns, preset=preset))
         # همیشه یک CSV ساده هم کنارش (سازگار با گوگل‌شیت)
         if main_fmt != "csv":
-            paths.append(exports.write_csv(exports.default_path(slug + "-leads", "csv"), saved_rows))
+            paths.append(exports.write_csv(exports.default_path(slug + "-leads", "csv"),
+                                           saved_rows, preset="contact"))
         # فایل کمپین آماده ارسال
         if campaign_rows:
             paths.append(exports.write_csv(
@@ -411,12 +492,14 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                 "hot": seg["hot"]["count"], "warm": seg["warm"]["count"], "cold": seg["cold"]["count"],
                 "coverage": cov,
                 "enrichment": enrich_stats,
-                "jobs": job_ids,
+                "job_ids": job_ids,
                 "engine": engine.name,
                 "live": engine.live,
                 "city": city["label_local"],
                 "niche": niche.fa,
                 "keywords": keywords,
+                "sweep_niches": [n.fa for n in sweep_niches],
+                "jobs": len(job_ids),
             },
         )
 

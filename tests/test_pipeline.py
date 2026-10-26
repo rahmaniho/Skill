@@ -140,7 +140,8 @@ class EnrichTests(unittest.TestCase):
             "title": "  کلینیک   پارسا ", "phone": "0912 111 0000",
             "emails": "INFO@Parsa.ir, info@parsa.ir", "website": "https://www.parsa.ir/",
             "review_rating": "4.6", "review_count": "128", "status": "ok",
-            "instagram": "parsa",
+            "instagram": "parsa", "address": "خیابان ولیعصر، تهران",
+            "latitude": "35.700123", "longitude": "51.400456",
         })
         self.assertEqual(row["title"], "کلینیک پارسا")
         self.assertEqual(row["phone"], "+989121110000")
@@ -149,10 +150,30 @@ class EnrichTests(unittest.TestCase):
         self.assertEqual(row["rating"], 4.6)
         self.assertEqual(row["reviews"], 128)
         self.assertTrue(row["has_website"] and row["has_email"] and row["has_phone"])
-        self.assertEqual(row["contact_channels"], 4)
+        self.assertEqual(row["contact_channels"], 6)     # سایت، ایمیل، تلفن، شبکه، لوکیشن، نشانی
         self.assertEqual(row["completeness"], 100)
         self.assertEqual(row["place_status"], "ok")      # ستون خام موتور جدا می‌شود
         self.assertNotIn("status", row)
+        self.assertEqual(row["location"], "35.700123, 51.400456")
+        self.assertTrue(row["has_location"])
+
+    def test_maps_link_prefers_place_link_then_coordinates(self):
+        with_link = enrich.normalize_row({"title": "A", "link": "https://maps.google.com/?q=x"})
+        self.assertEqual(with_link["maps_link"], "https://maps.google.com/?q=x")
+
+        with_coords = enrich.normalize_row({"title": "B", "latitude": "35.7", "longitude": "51.4"})
+        self.assertEqual(with_coords["maps_link"],
+                         "https://www.google.com/maps/search/?api=1&query=35.700000,51.400000")
+
+        only_address = enrich.normalize_row({"title": "کافه", "address": "تهران"})
+        self.assertIn("google.com/maps", only_address["maps_link"])
+        self.assertFalse(enrich.normalize_row({"title": ""})["maps_link"])
+
+    def test_incomplete_row_scores_below_100(self):
+        row = enrich.normalize_row({"title": "C", "phone": "+989120000000"})
+        self.assertEqual(row["contact_channels"], 1)      # فقط تلفن؛ نه سایت/ایمیل/شبکه/لوکیشن/نشانی
+        self.assertLess(row["completeness"], 40)
+        self.assertFalse(row["has_location"])
 
     def test_enrich_offline_does_not_hit_network(self):
         rows = [{"title": "A", "website": "https://invalid.example", "emails": "",

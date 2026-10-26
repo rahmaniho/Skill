@@ -23,7 +23,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Callable, Protocol
 
-from . import config
+from . import config, niches
 from .geo import NEIGHBORHOODS
 
 ProgressFn = Callable[[dict], None]
@@ -259,6 +259,10 @@ class DemoEngine:
         lat0, lon0 = float(body["lat"]), float(body["lon"])
         bbox = body.get("bbox") or [lat0 - .1, lat0 + .1, lon0 - .1, lon0 + .1]
         niche = body.get("_niche")
+        # در jobهای چندصنفی (جاروی «تمامی مشاغل») هر کلیدواژه صنف خودش را دارد
+        per_keyword = (body.get("_keyword_niches") or {}).get(keyword)
+        if per_keyword:
+            niche = niches.get(per_keyword) or niche
         category = getattr(niche, "fa" if lang_fa else "en", keyword.split(" in ")[0].title())
 
         hoods = list(NEIGHBORHOODS.get(city_key, []))

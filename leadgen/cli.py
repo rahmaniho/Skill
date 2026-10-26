@@ -41,6 +41,11 @@ def _table(rows: list[list[str]], headers: list[str]) -> str:
 
 # ── دستور: run ───────────────────────────────────────────────────────────────
 def cmd_run(args: argparse.Namespace) -> int:
+    if args.all_niches and not args.niche:
+        args.niche = ""                      # صنف از فهرست جارو می‌آید
+    elif not args.niche and not args.keyword:
+        print("✗ صنف را بنویسید یا --all-niches را برای جست‌وجوی تمامی مشاغل بگذارید.", file=sys.stderr)
+        return 2
     request = pipeline.ScrapeRequest(
         niche_query=args.niche,
         city_query=args.city,
@@ -63,6 +68,12 @@ def cmd_run(args: argparse.Namespace) -> int:
         export_fmt=args.export,
         keep_full_columns=args.full,
         limit=args.limit or 0,
+        cols=args.cols,
+        all_niches=args.all_niches,
+        niche_groups=[g.strip() for g in (args.groups or "").split(",") if g.strip()],
+        max_niches=args.max_niches,
+        keywords_per_niche=args.keywords_per_niche,
+        keywords_per_job=args.keywords_per_job,
     )
 
     def on_progress(payload: dict) -> None:
@@ -73,8 +84,15 @@ def cmd_run(args: argparse.Namespace) -> int:
         if payload.get("stage") in ("done", "failed"):
             print()
 
-    print(f"▶ صنف: «{args.niche}»  شهر: «{args.city or f'{args.lat},{args.lon}'}»  "
-          f"پروفایل: {args.profile}  شبکه‌های اجتماعی: {'بله' if args.socials else 'خیر'}")
+    if args.all_niches:
+        groups = f" — دسته‌ها: {args.groups}" if args.groups else " (همه دسته‌ها)"
+        print(f"▶ جست‌وجوی تمامی مشاغل: تا {args.max_niches} صنف × {args.keywords_per_niche} کلیدواژه"
+              f"{groups}")
+    else:
+        print(f"▶ صنف: «{args.niche}»", end="")
+    print(f"  شهر: «{args.city or f'{args.lat},{args.lon}'}»  "
+          f"پروفایل: {args.profile}  شبکه‌های اجتماعی: {'بله' if args.socials else 'خیر'}"
+          f"  ستون‌ها: {args.cols}")
     if not args.no_email:
         print("ℹ استخراج ایمیل روشن است (سایت هر کسب‌وکار بازدید می‌شود؛ کمی کندتر). "
               "برای اجرای سریع: --no-email")
@@ -192,13 +210,14 @@ def cmd_export(args: argparse.Namespace) -> int:
     out = Path(args.out) if args.out else exports.default_path(f"{args.run}-{args.fmt}", args.fmt)
     fmt = args.fmt
     if fmt in ("xlsx", "excel"):
-        sheets = exports.build_workbook(rows, run.get("analytics"), run, full=args.full)
+        sheets = exports.build_workbook(rows, run.get("analytics"), run, full=args.full,
+                                        preset=args.cols)
         path = exports.write_xlsx(out.with_suffix(".xlsx"), sheets)
     elif fmt == "json":
         path = exports.write_json(out.with_suffix(".json"),
                                   {"run": run, "analytics": run.get("analytics"), "leads": rows})
     else:
-        path = exports.write_csv(out.with_suffix(".csv"), rows, full=args.full)
+        path = exports.write_csv(out.with_suffix(".csv"), rows, full=args.full, preset=args.cols)
     print(f"✓ {len(rows)} لید → {path}")
     return 0
 
@@ -322,7 +341,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_run = sub.add_parser("run", help="اجرای اسکراپ کامل و تولید خروجی")
-    p_run.add_argument("niche", help='صنف یا عبارت آزاد، مثال: "دندانپزشکی" یا "plumbers"')
+    p_run.add_argument("niche", nargs="?", default="",
+                       help='صنف یا عبارت آزاد، مثال: "دندانپزشکی" یا "plumbers" '
+                            '(با --all-niches اختیاری است)')
     p_run.add_argument("--city", help='شهر، مثال: "تهران" یا "Denver, CO"')
     p_run.add_argument("--lat"); p_run.add_argument("--lon")
     p_run.add_argument("--keyword", action="append", help="کلیدواژه دستی (تکرارپذیر)")
@@ -340,7 +361,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--profile", default="generic", choices=list(scoring.PROFILES))
     p_run.add_argument("--engine", default=None, choices=["auto", "docker", "demo"])
     p_run.add_argument("--export", default="xlsx", choices=["csv", "json", "xlsx"])
+    p_run.add_argument("--cols", default="lead", choices=list(exports.COLUMN_PRESETS),
+                       help="پیش‌تنظیم ستون‌های خروجی: lead | contact (کارت تماس کامل + لوکیشن دقیق) "
+                            "| location (فقط مکان و تماس) | all (همه ستون‌ها)")
     p_run.add_argument("--full", action="store_true", help="همه ستون‌های خام در خروجی")
+    p_run.add_argument("--all-niches", action="store_true",
+                       help="جست‌وجوی تمامی مشاغل: جاروی چندصنفی یک شهر با یکتاسازی بین صنف‌ها")
+    p_run.add_argument("--groups", help='محدود کردن جارو به دسته‌ها، با کاما: "سلامت و پزشکی,غذا و نوشیدنی"')
+    p_run.add_argument("--max-niches", type=int, default=12, help="سقف تعداد صنف در حالت جارو (پیش‌فرض ۱۲)")
+    p_run.add_argument("--keywords-per-niche", type=int, default=2, help="کلیدواژه به ازای هر صنف در جارو")
+    p_run.add_argument("--keywords-per-job", type=int, default=8, help="کلیدواژه در هر job (جارو)")
     p_run.add_argument("--limit", type=int, default=0)
     p_run.add_argument("--preview", type=int, default=8)
     p_run.add_argument("--quiet", action="store_true")
@@ -375,6 +405,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_export.add_argument("run")
     p_export.add_argument("--fmt", default="xlsx", choices=["csv", "json", "xlsx"])
     p_export.add_argument("--segment", choices=["hot", "warm", "cold"])
+    p_export.add_argument("--cols", default="lead", choices=list(exports.COLUMN_PRESETS),
+                          help="پیش‌تنظیم ستون‌ها (contact = کارت تماس کامل + لوکیشن دقیق)")
     p_export.add_argument("--full", action="store_true")
     p_export.add_argument("--out")
     p_export.set_defaults(func=cmd_export)
