@@ -17,6 +17,7 @@ const ROOT = path.join(__dirname, "..");
 const SMART = path.join(ROOT, "smart");
 const SAMPLE = path.join(ROOT, "site", "data", "sample.json");
 const LIVE = process.env.SMOKE_LIVE || "";
+const STATIC = process.env.SMOKE_STATIC || "";   // مثلاً http://127.0.0.1:8090/app/
 const realFetch = global.fetch;
 
 /* ── DOM ساختگی ─────────────────────────────────────────────────────── */
@@ -184,6 +185,12 @@ global.fetch = async (url, opts) => {
     const text = await res.text();
     return { ok: res.ok, status: res.status, json: async () => (text ? JSON.parse(text) : {}) };
   }
+  if (STATIC) {                                  // نسخهٔ منتشرشدهٔ Pages روی سرور ایستا
+    const res = await realFetch(new URL(u, STATIC).toString());
+    const text = await res.text();
+    API_CALLS.push(u);
+    return { ok: res.ok, status: res.status, json: async () => (text ? JSON.parse(text) : {}) };
+  }
   const file = u.includes("demo-data.json") ? SAMPLE : path.join(SMART, u.replace(/^\.\//, ""));
   if (!fs.existsSync(file)) return { ok: false, status: 404, json: async () => ({}) };
   const text = fs.readFileSync(file, "utf8");
@@ -200,7 +207,7 @@ function check(name, cond, extra = "") {
 }
 
 async function main() {
-  console.log(`\n── smoke smart (${LIVE ? `live: ${LIVE}` : "demo"}) ──`);
+  console.log(`\n── smoke smart (${LIVE ? `live: ${LIVE}` : STATIC ? `static: ${STATIC}` : "demo"}) ──`);
   for (const f of ["campaign.js", "app.js"]) {
     vm.runInThisContext(fs.readFileSync(path.join(SMART, f), "utf8"), { filename: f });
   }
