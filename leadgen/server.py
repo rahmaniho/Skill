@@ -31,9 +31,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import (analytics, campaign, config, engine as engine_mod, enrich, exports,
-               geo, niches, pipeline, scoring, storage)
+               geo, niches, pipeline, scoring, smart, storage)
 
-WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+ROOT_DIR = Path(__file__).resolve().parent.parent
+WEB_DIR = ROOT_DIR / "web"                 # داشبورد حرفه‌ای (کلاسیک)
+SMART_DIR = ROOT_DIR / "smart"             # رابط سادهٔ کاربرپسند (پیش‌فرض روی /)
+DEMO_DATA = ROOT_DIR / "site" / "data" / "sample.json"   # دادهٔ حالت دمو (مشترک با سایت Pages)
 
 # حافظه پیشرفت اجراها (در حال اجرا) — پایگاه‌داده هم وضعیت نهایی را نگه می‌دارد
 _PROGRESS: dict[str, dict] = {}
@@ -192,10 +195,16 @@ class Handler(BaseHTTPRequestHandler):
         path, query = self._path, self._query
         storage.init_db()
 
+        # رابط سادهٔ کاربرپسند (پیش‌فرض) روی / و داشبورد حرفه‌ای روی /studio/
         if path in ("/", "/index.html"):
-            return self._static("index.html")
-        if path.startswith("/assets/") or path in ("/styles.css", "/app.js", "/favicon.svg"):
-            return self._static(path.lstrip("/"))
+            return self._static("index.html", SMART_DIR)
+        if path in ("/styles.css", "/app.js", "/campaign.js", "/favicon.svg", "/demo-data.json") \
+                or path.startswith("/assets/"):
+            return self._static(path.lstrip("/"), SMART_DIR)
+        if path in ("/studio", "/studio/", "/studio/index.html"):
+            return self._static("index.html", WEB_DIR)
+        if path.startswith("/studio/"):
+            return self._static(path[len("/studio/"):], WEB_DIR)
 
         if path == "/api/health":
             return self._json({
@@ -205,6 +214,12 @@ class Handler(BaseHTTPRequestHandler):
                 "config": config.summary(),
                 "db": storage.pipeline_stats(),
             })
+
+        if path == "/api/smart/options":
+            return self._json(smart.options())
+
+        if path == "/api/smart/suggest":
+            return self._json(smart.suggest(query.get("q", ""), limit=int(query.get("limit", 6))))
 
         if path == "/api/catalog":
             return self._json({
@@ -333,6 +348,17 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/import" and method == "POST":
             return self._import_leads()
 
+        if path == "/api/smart/parse" and method == "POST":
+            body = self._read_json()
+            return self._json(smart.parse(
+                text=body.get("text", ""), goal=body.get("goal", "site"),
+                size=body.get("size", "standard"), city=body.get("city", ""),
+                socials=bool(body.get("socials", True)), emails=bool(body.get("emails", True)),
+                engine_mode=body.get("engine_mode") or config.ENGINE_MODE,
+                cols=body.get("cols", "contact"), export_fmt=body.get("export_fmt", "xlsx"),
+                allow_network=bool(body.get("allow_network", False)),
+                lat=str(body.get("lat", "") or ""), lon=str(body.get("lon", "") or "")))
+
         if path == "/api/niches/find" and method == "POST":
             body = self._read_json()
             found = niches.find_niche(body.get("query", ""))
@@ -352,10 +378,15 @@ class Handler(BaseHTTPRequestHandler):
         raise ApiError(f"مسیر/متد پشتیبانی نمی‌شود: {method} {path}", 404)
 
     # ── هندلرها ──────────────────────────────────────────────────────────────
-    def _static(self, rel: str) -> None:
-        target = (WEB_DIR / rel).resolve()
-        if not str(target).startswith(str(WEB_DIR.resolve())) or not target.is_file():
-            raise ApiError("یافت نشد", 404)
+    def _static(self, rel: str, root: Path | None = None) -> None:
+        root = (root or WEB_DIR).resolve()
+        target = (root / rel).resolve()
+        if not str(target).startswith(str(root)) or not target.is_file():
+            # دادهٔ حالت دمو در مخزن یک نسخه بیشتر ندارد (site/data/sample.json)
+            if rel == "demo-data.json" and DEMO_DATA.is_file():
+                target = DEMO_DATA.resolve()
+            else:
+                raise ApiError("یافت نشد", 404)
         body = target.read_bytes()
         self._send(200, body, MIME.get(target.suffix, "application/octet-stream"))
 
@@ -522,8 +553,10 @@ class Handler(BaseHTTPRequestHandler):
     def _start_run(self, body: dict) -> None:
         """اجرا را در یک رشته پس‌زمینه شروع می‌کند و فوراً شناسه را برمی‌گرداند."""
         request = pipeline.ScrapeRequest.from_dict(body)
-        if not (request.niche_query or request.keywords):
-            raise ApiError("«niche_query» (صنف) یا «keywords» لازم است.")
+        # جاروی «تمامی مشاغل» صنف مشخصی ندارد؛ خودش برنامهٔ صنف‌ها را می‌سازد
+        if not (request.niche_query or request.keywords or request.all_niches):
+            raise ApiError("«niche_query» (صنف) یا «keywords» لازم است — "
+                           "یا «all_niches» برای جاروی تمامی مشاغل.")
         if not (request.city_query or (request.lat and request.lon)):
             raise ApiError("«city_query» یا مختصات lat/lon لازم است.")
 

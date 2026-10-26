@@ -43,6 +43,14 @@ jobs:
         run: |
           node --check web/app.js
           node --check site/app.js
+          node --check smart/app.js
+          node --check smart/campaign.js
 
       - name: Static site smoke test (fake DOM)
         run: node scripts/smoke_site.js
+
+      - name: Simple UI smoke test (fake DOM, demo mode)
+        run: node scripts/smoke_smart.js
+
+      - name: Pages copy of the simple UI is in sync
+        run: python scripts/build_pages_app.py --check

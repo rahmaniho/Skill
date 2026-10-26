@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # شروع سریع LeadGen Studio
-#   ./run.sh              → داشبورد وب روی پورت ۸۰۰۰
+#   ./run.sh              → وب‌اپ (رابط ساده روی / و داشبورد حرفه‌ای روی /studio/) روی پورت ۸۰۰۰
 #   ./run.sh demo         → ساخت یک اجرای نمونه فوری (بدون داکر) و چاپ مسیر فایل‌ها
 #   ./run.sh test         → اجرای همه تست‌ها
 #   ./run.sh doctor       → بررسی سلامت محیط (موتور، داکر، پایگاه‌داده)
 #   ./run.sh engine       → بالا آوردن موتور واقعی با داکر (docker compose up -d)
+#   ./run.sh pages        → ساخت دادهٔ نمونه + کپی رابط ساده برای GitHub Pages
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -16,7 +17,9 @@ case "$CMD" in
     if ! command -v python3 >/dev/null 2>&1; then
       echo "✗ python3 پیدا نشد. پایتون ۳٫۹+ نصب کنید." >&2; exit 1
     fi
-    echo "▶ داشبورد: http://localhost:$PORT  (برای توقف: Ctrl+C)"
+    echo "▶ وب‌اپ:      http://localhost:$PORT/         (رابط ساده — یک جمله بنویسید)"
+    echo "▶ داشبورد حرفه‌ای: http://localhost:$PORT/studio/   (همهٔ تنظیمات)"
+    echo "  (برای توقف: Ctrl+C)"
     exec python3 -m leadgen.server --host "${LEADGEN_HOST:-0.0.0.0}" --port "$PORT"
     ;;
   demo)
@@ -44,7 +47,12 @@ case "$CMD" in
     done
     echo "⚠ موتور هنوز پاسخ نمی‌دهد؛ docker compose logs را ببینید." >&2; exit 1
     ;;
+  pages)
+    python3 scripts/build_site_sample.py
+    python3 scripts/build_pages_app.py
+    echo "✓ برای پیش‌نمایش محلی: python3 -m http.server -d site --bind 0.0.0.0 8090"
+    ;;
   *)
-    echo "کاربرد: ./run.sh [serve|demo|test|doctor|engine]" >&2; exit 1
+    echo "کاربرد: ./run.sh [serve|demo|test|doctor|engine|pages]" >&2; exit 1
     ;;
 esac
