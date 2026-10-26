@@ -83,6 +83,34 @@
           <div class="hint">برای جایگزینی، در کادر پایین کلیدواژه دستی بنویسید (هر خط یکی).</div>
           <textarea id="manualKeywords" rows="3" placeholder="کلیدواژه دستی (اختیاری) — هر خط یکی&#10;مثال: ایمپلنت دندان در تهران"></textarea>
         </div>
+
+        <div class="sweep" id="sweepBox">
+          <label class="switch big">
+            <input type="checkbox" id="allNichesChk">
+            <span><b>جست‌وجوی تمامی مشاغل</b> — جاروی چندصنفی کل شهر در یک اجرا</span>
+          </label>
+          <div class="hint">چند صنف پشت‌سرهم جست‌وجو می‌شود (هر بار یک job)، نتیجه بین همه صنف‌ها
+            یکتا می‌شود و روی هر لید برچسب صنف منبع می‌خورد. خروجی: نام، تلفن، ایمیل، سایت،
+            نشانی، <b>لوکیشن دقیق</b> و شبکه‌های اجتماعی.</div>
+          <div id="sweepOptions" hidden>
+            <div class="field">
+              <label>دسته‌ها <small>(خالی = همه ۱۳ دسته)</small></label>
+              <div class="chips" id="sweepGroups"></div>
+            </div>
+            <div class="row">
+              <div class="field half">
+                <label for="maxNiches">تعداد صنف</label>
+                <input id="maxNiches" type="number" min="1" max="91" value="12">
+              </div>
+              <div class="field half">
+                <label for="kwPerNiche">کلیدواژه به ازای هر صنف</label>
+                <input id="kwPerNiche" type="number" min="1" max="6" value="2">
+              </div>
+            </div>
+            <div class="warnbox">⚠ جاروی بزرگ = jobهای زیاد پشت‌سرهم. بدون پراکسی ممکن است IP
+              موقتاً محدود شود. برای شروع، تعداد صنف را پایین نگه دارید.</div>
+          </div>
+        </div>
       </div>
 
       <div class="card">
@@ -150,8 +178,21 @@
             </select>
           </div>
           <div class="field half">
+            <label for="colsSelect">ستون‌های خروجی</label>
+            <select id="colsSelect"></select>
+            <div class="hint" id="colsHint"></div>
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="field half">
             <label for="limitInput">سقف تعداد لید (۰ = همه)</label>
             <input id="limitInput" type="number" min="0" max="5000" value="0">
+          </div>
+          <div class="field half">
+            <label>&nbsp;</label>
+            <div class="hint" style="padding-top:.5rem">پس از امتیازدهی اعمال می‌شود، یعنی
+              <b>بهترین</b> لیدها می‌مانند نه اولین‌ها.</div>
           </div>
         </div>
 

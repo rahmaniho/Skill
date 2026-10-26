@@ -173,8 +173,29 @@ def is_mobile_ir(phone: str) -> bool:
     return digits.startswith("989") and len(digits) == 12
 
 
+def maps_link(row: dict) -> str:
+    """لینک «لوکیشن دقیق» روی گوگل‌مپ.
+
+    اول لینک خود مکان (ستون `link` موتور) که مستقیم به پروفایل کسب‌وکار می‌رود؛
+    اگر نبود، لینک جست‌وجو با مختصات lat/lon؛ و در نهایت نشانی متنی.
+    """
+    link = (row.get("link") or "").strip()
+    if link.startswith("http"):
+        return link
+    try:
+        lat, lon = float(row.get("latitude")), float(row.get("longitude"))
+        return f"https://www.google.com/maps/search/?api=1&query={lat:.6f},{lon:.6f}"
+    except (TypeError, ValueError):
+        pass
+    title = urllib.parse.quote(str(row.get("title") or ""))
+    address = urllib.parse.quote(str(row.get("address") or ""))
+    if title or address:
+        return f"https://www.google.com/maps/search/?api=1&query={title}+{address}".replace("+ ", "+")
+    return ""
+
+
 def normalize_row(row: dict) -> dict:
-    """پاک‌سازی یک ردیف خام: فاصله‌ها، لیست ایمیل‌ها، اعداد، دامنه."""
+    """پاک‌سازی یک ردیف خام: فاصله‌ها، لیست ایمیل‌ها، اعداد، دامنه، لوکیشن دقیق."""
     out = dict(row)
     title = (out.get("title") or "").strip()
     out["title"] = re.sub(r"\s+", " ", title)
@@ -205,6 +226,20 @@ def normalize_row(row: dict) -> dict:
     out["rating"] = to_float(out.get("review_rating"))
     out["reviews"] = to_int(out.get("review_count"))
     out["price_range"] = (out.get("price_range") or "").strip()
+    # ── لوکیشن دقیق ─────────────────────────────────────────────────────────
+    out["latitude"] = str(out.get("latitude") or "").strip()
+    out["longitude"] = str(out.get("longitude") or "").strip()
+    try:
+        out["lat"] = round(float(out["latitude"]), 6)
+        out["lon"] = round(float(out["longitude"]), 6)
+        out["location"] = f"{out['lat']}, {out['lon']}"
+        out["has_location"] = True
+    except (TypeError, ValueError):
+        out["lat"] = out["lon"] = 0.0
+        out["location"] = ""
+        out["has_location"] = False
+    out["plus_code"] = (out.get("plus_code") or "").strip()
+    out["maps_link"] = maps_link(out)
     # ستون خام «status» موتور (وضعیت مکان در گوگل) با «status» پیگیری CRM تداخل نکند
     if "status" in out and str(out.get("status")) not in (
             "new", "contacted", "replied", "qualified", "won", "lost", "unsubscribed"):
@@ -213,8 +248,10 @@ def normalize_row(row: dict) -> dict:
     out["has_email"] = bool(out["email_primary"])
     out["has_phone"] = bool(out["phone"])
     out["has_social"] = any(out.get(k) for k in ("instagram", "facebook", "linkedin"))
-    out["contact_channels"] = sum([out["has_website"], out["has_email"], out["has_phone"], out["has_social"]])
-    out["completeness"] = round(100 * out["contact_channels"] / 4)
+    # کامل بودن اطلاعات: ۶ کانال/فیلد کلیدی (سایت، ایمیل، تلفن، شبکه اجتماعی، لوکیشن، نشانی)
+    out["contact_channels"] = sum([out["has_website"], out["has_email"], out["has_phone"],
+                                   out["has_social"], out["has_location"], bool(out["address"])])
+    out["completeness"] = round(100 * out["contact_channels"] / 6)
     return out
 
 

@@ -107,6 +107,37 @@ function renderCatalog(catalog) {
   $("#cityList").innerHTML = catalog.cities
     .map((c) => `<option value="${esc(c.fa || c.label)}">${esc(c.country)} — ${esc(c.label)}</option>`).join("");
 
+  // پیش‌تنظیم ستون‌های خروجی
+  const presets = catalog.column_presets || [];
+  $("#colsSelect").innerHTML = presets
+    .map((p) => `<option value="${p.id}">${esc(p.fa)}</option>`).join("");
+  $("#colsSelect").value = presets.some((p) => p.id === "contact") ? "contact" : (presets[0] || {}).id;
+  updateColsHint();
+  $("#colsSelect").addEventListener("change", updateColsHint);
+
+  // دسته‌های قابل انتخاب برای «جست‌وجوی تمامی مشاغل»
+  const sweepGroups = $("#sweepGroups");
+  sweepGroups.innerHTML = catalog.groups
+    .map((g) => `<button class="chip" data-sweep-group="${esc(g)}">${esc(g)}</button>`).join("");
+  sweepGroups.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("[data-sweep-group]");
+    if (btn) btn.classList.toggle("active");
+  });
+  $("#allNichesChk").addEventListener("change", (ev) => {
+    $("#sweepOptions").hidden = !ev.target.checked;
+    $("#nicheInput").disabled = ev.target.checked;
+    if (ev.target.checked) {
+      $("#keywordsPreview").innerHTML =
+        `<span class="kw">جاروی ${$("#maxNiches").value || 12} صنف در «${esc($("#cityInput").value || "شهر")}»</span>`;
+      $("#nicheHint").textContent = "در حالت «تمامی مشاغل» صنف از فهرست جارو می‌آید.";
+    } else {
+      $("#nicheInput").disabled = false;
+      previewKeywords();
+    }
+  });
+  ["#maxNiches", "#kwPerNiche"].forEach((sel) =>
+    $(sel).addEventListener("input", () => { if ($("#allNichesChk").checked) $("#allNichesChk").dispatchEvent(new Event("change")); }));
+
   // پروفایل‌ها
   $("#profileSelect").innerHTML = catalog.profiles
     .map((p) => `<option value="${p.id}">${esc(p.fa)}</option>`).join("");
@@ -154,6 +185,14 @@ const FACTOR_FA = {
   activity: "فعالیت", fit: "تناسب صنف",
 };
 const labelFa = (key) => FACTOR_FA[key] || key;
+
+function updateColsHint() {
+  const preset = (state.catalog.column_presets || []).find((p) => p.id === $("#colsSelect").value);
+  if (!preset) return;
+  const cols = preset.columns || [];
+  $("#colsHint").textContent = `${preset.note} — ${cols.length} ستون`;
+  $("#colsHint").title = cols.join(" · ");
+}
 
 function debounce(fn, ms) {
   let timer; return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
@@ -213,7 +252,12 @@ function collectRequest(forceDemo) {
     keep_full_columns: $("#fullChk").checked,
     profile: $("#profileSelect").value,
     export_fmt: $("#exportSelect").value,
+    cols: $("#colsSelect").value,
     limit: Number($("#limitInput").value || 0),
+    all_niches: $("#allNichesChk").checked,
+    niche_groups: $$("#sweepGroups .chip.active").map((c) => c.dataset.sweepGroup),
+    max_niches: Number($("#maxNiches").value || 12),
+    keywords_per_niche: Number($("#kwPerNiche").value || 2),
     engine_mode: forceDemo ? "demo" : $("#engineSelect").value,
     sender: senderFromForm(),
     campaign_channel: "email",
@@ -222,7 +266,9 @@ function collectRequest(forceDemo) {
 
 async function startRun(forceDemo) {
   const req = collectRequest(forceDemo);
-  if (!req.niche_query && !req.keywords.length) { toast("صنف یا کلیدواژه را بنویسید", "err"); return; }
+  if (!req.all_niches && !req.niche_query && !req.keywords.length) {
+    toast("صنف یا کلیدواژه را بنویسید (یا «جست‌وجوی تمامی مشاغل» را روشن کنید)", "err"); return;
+  }
   if (!req.city_query && !(req.lat && req.lon)) { toast("شهر یا مختصات لازم است", "err"); return; }
 
   $("#startBtn").disabled = true; $("#demoBtn").disabled = true;
@@ -388,7 +434,8 @@ function renderLeads(rows) {
         <div class="camp-meta">
           ${r.instagram ? `<a href="https://instagram.com/${esc(r.instagram)}" target="_blank" rel="noopener">IG</a> ` : ""}
           ${r.facebook ? `<a href="${esc(r.facebook)}" target="_blank" rel="noopener">FB</a> ` : ""}
-          ${r.linkedin ? `<a href="${esc(r.linkedin)}" target="_blank" rel="noopener">IN</a>` : ""}
+          ${r.linkedin ? `<a href="${esc(r.linkedin)}" target="_blank" rel="noopener">IN</a> ` : ""}
+          ${r.maps_link ? `<a href="${esc(r.maps_link)}" target="_blank" rel="noopener" title="لوکیشن دقیق روی نقشه">📍 نقشه</a>` : ""}
         </div>
       </td>
       <td>${(r.gaps_fa || []).slice(0, 3).map((g) => `<span class="badge warm">${esc(g)}</span>`).join(" ")}</td>
@@ -437,8 +484,9 @@ $("#nextPage").addEventListener("click", () => { if ((state.page + 1) * state.pa
 $$(".bulk [data-export]").forEach((btn) => btn.addEventListener("click", () => {
   const kind = btn.dataset.export;
   if (!state.currentRun) return toast("اول یک اجرا را انتخاب کنید", "err");
+  const cols = $("#colsSelect") ? $("#colsSelect").value : "contact";
   if (kind === "campaign") return download(`/api/runs/${state.currentRun}/export?what=campaign&channel=${$("#campChannel").value || "email"}`, `campaign-${state.currentRun}.csv`);
-  download(`/api/runs/${state.currentRun}/export?fmt=${kind}`, `leads-${state.currentRun}.${kind === "xlsx" ? "xlsx" : kind}`);
+  download(`/api/runs/${state.currentRun}/export?fmt=${kind}&cols=${cols}`, `leads-${state.currentRun}.${kind === "xlsx" ? "xlsx" : kind}`);
 }));
 
 /* ── کشوی جزئیات ─────────────────────────────────────────────────────────── */
@@ -467,6 +515,10 @@ async function openDrawer(leadId) {
         <dt>فیسبوک</dt><dd>${lead.facebook ? `<a href="${esc(lead.facebook)}" target="_blank" rel="noopener" dir="ltr">پروفایل ↗</a>` : "—"}</dd>
         <dt>لینکدین</dt><dd>${lead.linkedin ? `<a href="${esc(lead.linkedin)}" target="_blank" rel="noopener" dir="ltr">پروفایل ↗</a>` : "—"}</dd>
         <dt>نشانی</dt><dd>${esc(lead.address || "—")}</dd>
+        <dt>لوکیشن دقیق</dt><dd>${lead.location ? `<span class="mono" dir="ltr">${esc(lead.location)}</span>` : "—"}
+          ${lead.maps_link ? ` · <a href="${esc(lead.maps_link)}" target="_blank" rel="noopener">نمایش روی نقشه ↗</a>` : ""}
+          ${lead.plus_code ? `<div class="camp-meta">پلاس کد: <span class="mono" dir="ltr">${esc(lead.plus_code)}</span></div>` : ""}</dd>
+        <dt>صنف منبع</dt><dd>${esc(lead.niche_fa || lead.category || "—")}</dd>
         <dt>صنف</dt><dd>${esc(lead.category || "—")}</dd>
         <dt>امتیاز گوگل</dt><dd>⭐ ${fa(lead.rating || 0)} از ۵ · ${fa(lead.reviews || 0)} نظر</dd>
       </dl>

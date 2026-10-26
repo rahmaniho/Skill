@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "arena/**"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    env:
+      ENGINE_MODE: demo
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Compile check
+        run: python -m compileall -q leadgen scripts
+
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Doctor (demo engine)
+        run: python -m leadgen.cli doctor
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Frontend syntax check
+        run: |
+          node --check web/app.js
+          node --check site/app.js
+
+      - name: Static site smoke test (fake DOM)
+        run: node scripts/smoke_site.js

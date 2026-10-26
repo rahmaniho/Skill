@@ -73,6 +73,11 @@ CREATE TABLE IF NOT EXISTS leads (
     email_primary TEXT,
     website       TEXT,
     domain        TEXT,
+    maps_link     TEXT,
+    plus_code     TEXT,
+    location      TEXT,
+    niche_id      TEXT,
+    niche_fa      TEXT,
     instagram     TEXT,
     facebook      TEXT,
     linkedin      TEXT,
@@ -92,6 +97,7 @@ CREATE TABLE IF NOT EXISTS leads (
     tags          TEXT,
     channel       TEXT,
     pitch         TEXT,
+    score_factors TEXT,
     signals       TEXT,
     input_id      TEXT,
     place_status  TEXT,
@@ -107,9 +113,11 @@ CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status);
 # ستون‌هایی که در جدول leads ذخیره می‌شوند
 LEAD_COLUMNS = [
     "place_id", "title", "category", "city", "address", "phone", "emails", "email_primary",
-    "website", "domain", "instagram", "facebook", "linkedin", "latitude", "longitude",
+    "website", "domain", "maps_link", "plus_code", "location", "niche_id", "niche_fa",
+    "instagram", "facebook", "linkedin", "latitude", "longitude",
     "rating", "reviews", "price_range", "completeness", "has_website", "has_email",
     "has_phone", "has_social", "score", "segment", "gaps", "tags", "channel", "pitch",
+    "score_factors",
     "signals", "input_id", "place_status", "status", "note",
 ]
 
@@ -123,7 +131,9 @@ def _connect() -> sqlite3.Connection:
 
 
 # ستون‌هایی که در پایگاه‌داده ساخته‌شده با نسخه قدیمی وجود ندارند و باید اضافه شوند
-_MIGRATIONS = [("city", "TEXT"), ("input_id", "TEXT"), ("place_status", "TEXT")]
+_MIGRATIONS = [("city", "TEXT"), ("input_id", "TEXT"), ("place_status", "TEXT"),
+               ("maps_link", "TEXT"), ("plus_code", "TEXT"), ("location", "TEXT"),
+               ("niche_id", "TEXT"), ("niche_fa", "TEXT"), ("score_factors", "TEXT")]
 
 
 def init_db() -> None:
@@ -233,7 +243,7 @@ def save_leads(run_id: str, rows: list[dict]) -> int:
             value = row.get(col)
             if col == "status" and value not in LEAD_STATUSES:
                 value = "new"
-            if col in ("gaps", "tags") and isinstance(value, list):
+            if col in ("gaps", "tags", "score_factors") and isinstance(value, list):
                 value = json.dumps(value, ensure_ascii=False)
             elif col == "signals" and isinstance(value, dict):
                 value = json.dumps(value, ensure_ascii=False)
@@ -307,7 +317,7 @@ def _labels() -> tuple[dict, dict, dict]:
 
 def _lead_to_dict(row: sqlite3.Row) -> dict:
     data = dict(row)
-    for key in ("gaps", "tags"):
+    for key in ("gaps", "tags", "score_factors"):
         try:
             data[key] = json.loads(data.get(key) or "[]")
         except json.JSONDecodeError:
@@ -318,6 +328,15 @@ def _lead_to_dict(row: sqlite3.Row) -> dict:
         data["signals"] = {}
     for key in ("has_website", "has_email", "has_phone", "has_social"):
         data[key] = bool(data.get(key))
+    # مختصات عددی (برای نقشه/لوکیشن دقیق) از ستون‌های متنی latitude/longitude
+    for src, dst in (("latitude", "lat"), ("longitude", "lon")):
+        try:
+            data[dst] = round(float(data.get(src)), 6)
+        except (TypeError, ValueError):
+            data[dst] = 0.0
+    data["has_location"] = bool(data["lat"] or data["lon"])
+    if not data.get("location") and data["has_location"]:
+        data["location"] = f"{data['lat']}, {data['lon']}"
     segments_fa, gaps_fa, channels_fa = _labels()
     data["status"] = data.get("status") or "new"
     data["status_fa"] = LEAD_STATUS_FA.get(data["status"], data["status"])
