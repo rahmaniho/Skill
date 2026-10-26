@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LeadGen Studio — پلتفرم لید کسب‌وکارهای محلی</title>
+<link rel="icon" href="/favicon.svg">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo" aria-hidden="true">
+      <svg viewBox="0 0 32 32" width="30" height="30">
+        <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#38bdf8"/><stop offset="100%" stop-color="#6366f1"/>
+        </linearGradient></defs>
+        <circle cx="16" cy="16" r="14" fill="url(#g)" opacity=".18"/>
+        <path d="M16 4c-4.4 0-8 3.6-8 8 0 5.5 8 16 8 16s8-10.5 8-16c0-4.4-3.6-8-8-8Zm0 11a3 3 0 1 1 0-6 3 3 0 0 1 0 6Z" fill="url(#g)"/>
+      </svg>
+    </span>
+    <div>
+      <h1>LeadGen Studio</h1>
+      <p class="tag">لید کسب‌وکارهای محلی — روی اسکیل <code>google-maps-scraper</code></p>
+    </div>
+  </div>
+
+  <div class="engine" id="engineBox" title="وضعیت موتور">
+    <span class="dot" id="engineDot"></span>
+    <div>
+      <strong id="engineName">…</strong>
+      <small id="engineNote">در حال بررسی</small>
+    </div>
+  </div>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-view="new" role="tab">اسکراپ جدید</button>
+    <button class="tab" data-view="runs" role="tab">اجراها</button>
+    <button class="tab" data-view="leads" role="tab">لیدها</button>
+    <button class="tab" data-view="analysis" role="tab">تحلیل</button>
+    <button class="tab" data-view="campaign" role="tab">کمپین</button>
+    <button class="tab" data-view="import" role="tab">ورود داده</button>
+    <button class="tab" data-view="settings" role="tab">راهنما</button>
+  </nav>
+</header>
+
+<main id="main">
+
+  <!-- ═══════════════ اسکراپ جدید ═══════════════ -->
+  <section class="view active" id="view-new">
+    <div class="grid two">
+      <div class="card">
+        <h2>۱) چه کسی را می‌خواهید پیدا کنید؟</h2>
+        <div class="field">
+          <label for="nicheInput">صنف یا عبارت آزاد</label>
+          <input id="nicheInput" list="nicheList" placeholder="مثلاً: دندانپزشکی، رستوران، لوله‌کشی، کارواش، وکیل…" autocomplete="off">
+          <datalist id="nicheList"></datalist>
+          <div class="hint" id="nicheHint">هر صنفی بنویسید — اگر در فهرست نبود، خودش صنف سفارشی می‌سازد.</div>
+          <div class="chips" id="nicheGroups"></div>
+        </div>
+
+        <div class="field">
+          <label for="cityInput">شهر / منطقه</label>
+          <input id="cityInput" list="cityList" placeholder="تهران، مشهد، دبی، Frankfurt، Denver CO…" autocomplete="off">
+          <datalist id="cityList"></datalist>
+          <div class="hint" id="cityHint">۷۰+ شهر داخلی (آفلاین)؛ بقیه با Nominatim یا مختصات دستی.</div>
+        </div>
+
+        <div class="row">
+          <div class="field half">
+            <label for="latInput">lat (اختیاری)</label>
+            <input id="latInput" placeholder="35.6892" inputmode="decimal">
+          </div>
+          <div class="field half">
+            <label for="lonInput">lon (اختیاری)</label>
+            <input id="lonInput" placeholder="51.3890" inputmode="decimal">
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="keywordsPreview">کلیدواژه‌های ارسالی به موتور <small>(مکان داخل هر عبارت)</small></label>
+          <div class="keywords" id="keywordsPreview">—</div>
+          <div class="hint">برای جایگزینی، در کادر پایین کلیدواژه دستی بنویسید (هر خط یکی).</div>
+          <textarea id="manualKeywords" rows="3" placeholder="کلیدواژه دستی (اختیاری) — هر خط یکی&#10;مثال: ایمپلنت دندان در تهران"></textarea>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>۲) چگونه و برای چه هدفی؟</h2>
+        <div class="field">
+          <label for="profileSelect">پروفایل امتیازدهی (هدف کسب‌وکار شما)</label>
+          <select id="profileSelect"></select>
+          <div class="hint" id="profileHint"></div>
+        </div>
+
+        <div class="row">
+          <div class="field half">
+            <label for="depthInput">عمق (تعداد نتایج تقریبی در هر کلیدواژه)</label>
+            <input id="depthInput" type="number" min="1" max="30" value="5">
+          </div>
+          <div class="field half">
+            <label for="gridSelect">پوشش کامل شهر (شبکه)</label>
+            <select id="gridSelect">
+              <option value="0">خاموش — یک جست‌وجوی مرکزی</option>
+              <option value="2">۲×۲ = ۴ کاشی</option>
+              <option value="3">۳×۳ = ۹ کاشی (شکستن سقف ~۱۲۰ نتیجه)</option>
+              <option value="4">۴×۴ = ۱۶ کاشی</option>
+              <option value="5">۵×۵ = ۲۵ کاشی</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="field half">
+            <label for="langSelect">زبان کلیدواژه‌ها</label>
+            <select id="langSelect">
+              <option value="en">انگلیسی (پوشش بهتر در گوگل‌مپ)</option>
+              <option value="fa">فارسی</option>
+            </select>
+          </div>
+          <div class="field half">
+            <label for="engineSelect">موتور</label>
+            <select id="engineSelect">
+              <option value="auto">خودکار (داکر، وگرنه دمو)</option>
+              <option value="docker">فقط موتور واقعی (داکر)</option>
+              <option value="demo">دمو (داده نمونه، بدون داکر)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>غنی‌سازی و خروجی</label>
+          <div class="switches">
+            <label class="switch"><input type="checkbox" id="emailsChk" checked><span>استخراج ایمیل</span></label>
+            <label class="switch"><input type="checkbox" id="deepChk" checked><span>پاس عمیق ایمیل (صفحه تماس/درباره)</span></label>
+            <label class="switch"><input type="checkbox" id="socialsChk" checked><span>اینستاگرام / فیسبوک / لینکدین</span></label>
+            <label class="switch"><input type="checkbox" id="signalsChk" checked><span>سیگنال‌های سایت (رزرو، واتس‌اپ، وردپرس…)</span></label>
+            <label class="switch"><input type="checkbox" id="fastChk"><span>حالت سریع (داده کمتر)</span></label>
+            <label class="switch"><input type="checkbox" id="fullChk"><span>همه ۳۴ ستون خام در فایل</span></label>
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="field half">
+            <label for="exportSelect">قالب خروجی اصلی</label>
+            <select id="exportSelect">
+              <option value="xlsx">اکسل (چند برگی: لیدها، داغ‌ها، خلاصه، قیف، کمپین)</option>
+              <option value="csv">CSV (سازگار با گوگل‌شیت)</option>
+              <option value="json">JSON</option>
+            </select>
+          </div>
+          <div class="field half">
+            <label for="limitInput">سقف تعداد لید (۰ = همه)</label>
+            <input id="limitInput" type="number" min="0" max="5000" value="0">
+          </div>
+        </div>
+
+        <div class="warnbox" id="largeWarn" hidden>
+          ⚠ این یک job بزرگ است. اجرای پشت‌سرهم بدون پراکسی می‌تواند IP شما را موقتاً نزد گوگل
+          محدود کند. برای اجراهای بزرگ/تکراری پراکسی بگذارید (<code>SCRAPER_PROXIES</code>).
+        </div>
+
+        <div class="actions">
+          <button class="primary" id="startBtn">▶ شروع اجرا</button>
+          <button class="ghost" id="demoBtn" title="اجرای سریع با موتور شبیه‌ساز داخلی">⚡ نمونه فوری (دمو)</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" id="progressCard" hidden>
+      <h2>۳) پیشرفت اجرا</h2>
+      <div class="progress"><div class="bar" id="progressBar"></div></div>
+      <div class="progress-text" id="progressText">در صف…</div>
+      <pre class="log" id="progressLog"></pre>
+      <div class="actions" id="progressActions" hidden>
+        <button class="primary" id="openRunBtn">مشاهده لیدها و تحلیل →</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════ اجراها ═══════════════ -->
+  <section class="view" id="view-runs">
+    <div class="card">
+      <div class="card-head">
+        <h2>اجراهای ثبت‌شده</h2>
+        <div class="stat-strip" id="globalStats"></div>
+      </div>
+      <div class="table-wrap">
+        <table class="table" id="runsTable">
+          <thead><tr>
+            <th>شناسه</th><th>صنف</th><th>شهر</th><th>موتور</th><th>لید</th>
+            <th>داغ</th><th>میانگین</th><th>وضعیت</th><th>تاریخ</th><th></th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════ لیدها ═══════════════ -->
+  <section class="view" id="view-leads">
+    <div class="card">
+      <div class="card-head">
+        <h2>لیدها <small id="leadsRunLabel"></small></h2>
+        <select id="leadRunSelect" class="inline"></select>
+      </div>
+
+      <div class="filters">
+        <input id="leadSearch" placeholder="جست‌وجو در نام، نشانی، دامنه، ایمیل…">
+        <select id="segmentFilter">
+          <option value="">همه بخش‌ها</option>
+          <option value="hot">داغ 🔥</option>
+          <option value="warm">گرم ☀️</option>
+          <option value="cold">سرد ❄️</option>
+        </select>
+        <select id="statusFilter"><option value="">همه وضعیت‌ها</option></select>
+        <select id="channelFilter"><option value="">همه کانال‌ها</option></select>
+        <select id="gapFilter"><option value="">همه شکاف‌ها</option></select>
+        <select id="sortSelect">
+          <option value="score">مرتب‌سازی: امتیاز</option>
+          <option value="reviews">تعداد نظر</option>
+          <option value="rating">امتیاز گوگل</option>
+          <option value="completeness">کامل بودن اطلاعات</option>
+          <option value="title">نام</option>
+        </select>
+        <button class="ghost" id="resetFilters">پاک کردن فیلترها</button>
+      </div>
+
+      <div class="bulk">
+        <span id="bulkInfo"></span>
+        <button class="ghost" data-export="xlsx">⬇ اکسل</button>
+        <button class="ghost" data-export="csv">⬇ CSV</button>
+        <button class="ghost" data-export="json">⬇ JSON</button>
+        <button class="ghost" data-export="campaign">⬇ CSV کمپین</button>
+      </div>
+
+      <div class="table-wrap">
+        <table class="table leads" id="leadsTable">
+          <thead><tr>
+            <th>امتیاز</th><th>کسب‌وکار</th><th>تماس</th><th>دیده‌شدن</th>
+            <th>فرصت</th><th>کانال</th><th>وضعیت</th><th></th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <button class="ghost" id="prevPage">→ قبلی</button>
+        <span id="pageInfo"></span>
+        <button class="ghost" id="nextPage">بعدی ←</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════ تحلیل ═══════════════ -->
+  <section class="view" id="view-analysis">
+    <div class="card" id="insightsCard">
+      <h2>بینش‌های اجرایی</h2>
+      <ul class="insights" id="insightsList"></ul>
+    </div>
+
+    <div class="grid three">
+      <div class="card stat-card">
+        <h3>لیدها</h3><div class="big" id="statTotal">—</div><small id="statRun"></small>
+      </div>
+      <div class="card stat-card">
+        <h3>میانگین امتیاز</h3><div class="big" id="statScore">—</div><small>پروفایل: <span id="statProfile"></span></small>
+      </div>
+      <div class="card stat-card">
+        <h3>قابل تماس</h3><div class="big" id="statReachable">—</div><small id="statReachNote"></small>
+      </div>
+    </div>
+
+    <div class="grid two">
+      <div class="card">
+        <h2>قیف لید</h2>
+        <div id="funnelChart"></div>
+      </div>
+      <div class="card">
+        <h2>بخش‌بندی (داغ / گرم / سرد)</h2>
+        <div id="segmentChart"></div>
+        <div class="legend" id="segmentLegend"></div>
+      </div>
+    </div>
+
+    <div class="grid two">
+      <div class="card">
+        <h2>پوشش اطلاعات تماس</h2>
+        <div id="coverageChart"></div>
+      </div>
+      <div class="card">
+        <h2>شکاف‌های دیجیتال (فرصت فروش)</h2>
+        <div id="gapsChart"></div>
+      </div>
+    </div>
+
+    <div class="grid two">
+      <div class="card">
+        <h2>توزیع امتیاز لید</h2>
+        <div id="scoreChart"></div>
+      </div>
+      <div class="card">
+        <h2>توزیع امتیاز گوگل</h2>
+        <div id="ratingChart"></div>
+      </div>
+    </div>
+
+    <div class="grid two">
+      <div class="card">
+        <h2>نقشه پراکندگی (شماتیک، آفلاین)</h2>
+        <div id="mapChart"></div>
+        <div class="hint">اندازه نقطه = تعداد نظر؛ رنگ = بخش لید. بدون کاشی بیرونی، کاملاً محلی.</div>
+      </div>
+      <div class="card">
+        <h2>بهترین کانال تماس</h2>
+        <div id="channelChart"></div>
+        <h2 class="mt">کلیدواژه‌ها</h2>
+        <div id="keywordChart"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════ کمپین ═══════════════ -->
+  <section class="view" id="view-campaign">
+    <div class="grid two">
+      <div class="card">
+        <h2>اطلاعات فرستنده</h2>
+        <div class="row">
+          <div class="field half"><label>نام شما</label><input id="sndName" value="تیم رشد ما"></div>
+          <div class="field half"><label>شرکت</label><input id="sndCompany" value="استودیو دیجیتال"></div>
+        </div>
+        <div class="row">
+          <div class="field half"><label>عنوان شغلی</label><input id="sndRole" value="مشاور رشد کسب‌وکارهای محلی"></div>
+          <div class="field half"><label>تلفن</label><input id="sndPhone" placeholder="+98 912 000 0000"></div>
+        </div>
+        <div class="row">
+          <div class="field half"><label>ایمیل</label><input id="sndEmail" placeholder="you@company.com"></div>
+          <div class="field half"><label>وب‌سایت</label><input id="sndWebsite" placeholder="https://…"></div>
+        </div>
+        <div class="field"><label>پیشنهاد (Call to action)</label>
+          <input id="sndOffer" value="۳۰ دقیقه مشاوره رایگان"></div>
+        <div class="field"><label>نمونه موفقیت (اختیاری)</label>
+          <textarea id="sndCase" rows="2">در پروژه مشابه، مشتری‌های محلی یک کسب‌وکار طی ۶۰ روز ۲٫۳ برابر شد</textarea></div>
+
+        <div class="field">
+          <label>کانال و دامنه</label>
+          <div class="row">
+            <select id="campChannel" class="half"></select>
+            <select id="campSegment" class="half">
+              <option value="">همه بخش‌ها</option>
+              <option value="hot" selected>فقط داغ 🔥</option>
+              <option value="warm">فقط گرم ☀️</option>
+            </select>
+          </div>
+          <div class="row">
+            <input id="campLimit" class="half" type="number" min="1" max="200" value="15">
+            <button class="primary half" id="campGenerate">تولید متن‌ها</button>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="ghost" id="campExport">⬇ خروجی CSV آماده ارسال</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>متن‌های تولیدشده</h2>
+        <div class="compliance" id="campCompliance"></div>
+        <div id="campList" class="camp-list"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════ ورود داده ═══════════════ -->
+  <section class="view" id="view-import">
+    <div class="card">
+      <h2>فهرست موجود خود را هوشمند کنید</h2>
+      <p class="hint">فایل CSV/JSON یا متن چسبانده‌شده را می‌گیرد، ستون‌ها را نرمال می‌کند،
+        امتیاز لید + بخش‌بندی + کانال پیشنهادی + متن کمپین می‌سازد — بدون اسکراپ جدید.</p>
+      <div class="dropzone" id="dropzone">
+        <input type="file" id="importFile" accept=".csv,.json,.txt,.tsv" hidden>
+        <p>📄 فایل را اینجا رها کنید یا <button class="link" id="browseBtn">انتخاب کنید</button></p>
+        <small>ستون‌های پذیرفته: name/نام، phone/تلفن، email/ایمیل، website/سایت، address/آدرس، rating، reviews، instagram</small>
+      </div>
+      <div class="row">
+        <div class="field half"><label>صنف (برای تنظیم امتیازدهی)</label><input id="impNiche" placeholder="دندانپزشکی"></div>
+        <div class="field half"><label>شهر</label><input id="impCity" placeholder="تهران"></div>
+      </div>
+      <div class="field"><label>متن/CSV را مستقیم بچسبانید</label>
+        <textarea id="impText" rows="6" placeholder="نام,تلفن,ایمیل,سایت&#10;کلینیک پارسا,+989120000000,info@parsa.ir,https://parsa.ir"></textarea></div>
+      <div class="actions">
+        <button class="primary" id="importBtn">تحلیل و امتیازدهی</button>
+      </div>
+      <div id="importResult"></div>
+    </div>
+  </section>
+
+  <!-- ═══════════════ راهنما ═══════════════ -->
+  <section class="view" id="view-settings">
+    <div class="grid two">
+      <div class="card">
+        <h2>وضعیت سیستم</h2>
+        <pre class="log" id="doctorBox">در حال بارگذاری…</pre>
+      </div>
+      <div class="card">
+        <h2>چطور داده واقعی بگیریم؟</h2>
+        <ol class="steps">
+          <li><b>داکر</b> را نصب کنید (Docker Desktop).</li>
+          <li>در ریشه مخزن: <code>docker compose up -d</code> — موتور روی <code>localhost:8080</code>.</li>
+          <li>این داشبورد را با <code>python3 -m leadgen.server</code> بالا بیاورید.</li>
+          <li>در تب «اسکراپ جدید» موتور را روی <b>خودکار</b> بگذارید و اجرا کنید.</li>
+        </ol>
+        <h3>اگر داکر ندارید</h3>
+        <p class="hint">برنامه با <b>موتور دمو</b> کامل کار می‌کند: همه مراحل (غنی‌سازی، امتیازدهی،
+          کمپین، خروجی اکسل) با داده نمونه ولی واقع‌نما. برای همین تمام قابلیت‌ها را بدون اینترنت
+          می‌توانید ببینید و تست کنید.</p>
+      </div>
+    </div>
+
+    <div class="grid two">
+      <div class="card">
+        <h2>دستورات سریع (ترمینال)</h2>
+        <pre class="code"># سلامت محیط
+python3 -m leadgen.cli doctor
+
+# فهرست اصناف و یافتن نزدیک‌ترین صنف
+python3 -m leadgen.cli niches
+python3 -m leadgen.cli niches "کارواش"
+
+# اجرای کامل با خروجی اکسل
+python3 -m leadgen.cli run "دندانپزشکی" --city "تهران" --profile web_design --socials
+
+# پوشش کل شهر (۹ کاشی) با کلیدواژه فارسی
+python3 -m leadgen.cli run "رستوران" --city "تهران" --lang fa --grid 3 --depth 5
+
+# امتیازدهی به فهرست موجود خودتان
+python3 -m leadgen.cli score-file my-leads.csv --profile marketing
+
+# تولید متن کمپین واتس‌اپ
+python3 -m leadgen.cli campaign &lt;run-id&gt; --channel whatsapp --out messages.csv</pre>
+      </div>
+      <div class="card">
+        <h2>رعایت قانون و اخلاق</h2>
+        <ul class="notes">
+          <li>ایمیل و تلفن <b>داده شخصی</b> هستند: مبنای قانونی، هویت فرستنده و گزینه «لغو دریافت» را در هر پیام نگه دارید (GDPR / CCPA / CAN-SPAM).</li>
+          <li>اسکراپ گوگل‌مپ با شرایط استفاده گوگل هم‌خوانی ندارد: حجم را متعادل نگه دارید، خروجی را «لیدِ نیازمند تأیید» بدانید و داده خام را نفروشید.</li>
+          <li>از این ابزار برای <b>نظارت بر افراد، اسپم یا آزار</b> استفاده نکنید.</li>
+          <li>موتور کیت هیچ احراز هویتی ندارد؛ روی <code>127.0.0.1</code> بماند. اگر این داشبورد را منتشر می‌کنید، پشت پراکسی احراز هویت بگذارید.</li>
+          <li>خروجی‌ها در <code>data/</code> ذخیره می‌شوند و در <code>.gitignore</code> هستند — هرگز commit نشوند.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- کشوی جزئیات لید -->
+<aside class="drawer" id="drawer" hidden>
+  <div class="drawer-head">
+    <h3 id="drawerTitle">—</h3>
+    <button class="icon" id="drawerClose" aria-label="بستن">✕</button>
+  </div>
+  <div class="drawer-body" id="drawerBody"></div>
+</aside>
+<div class="scrim" id="scrim" hidden></div>
+
+<div class="toast-wrap" id="toasts"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

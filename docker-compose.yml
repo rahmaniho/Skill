@@ -1,0 +1,25 @@
+# موتور اسکراپر گوگل‌مپ (gosom/google-maps-scraper) را محلی اجرا می‌کند.
+# UI و API روی http://localhost:8080 — پورت میزبان از SCRAPER_PORT در .env می‌آید (پیش‌فرض 8080).
+#
+# ⚠ ایمیج هیچ احراز هویتی ندارد؛ مرز امنیتی، بایند شدن به 127.0.0.1 است.
+#   بدون یک پراکسی احراز هویت (Caddy/nginx) هرگز این نگاشت را به 0.0.0.0 تغییر ندهید.
+#
+# شروع:  docker compose up -d     سپس:  python3 -m leadgen.server
+
+services:
+  google-maps-scraper:
+    # نسخه سنجاق‌شده تا اجراها تکرارپذیر باشند (مطابق کیت اصلی)
+    image: gosom/google-maps-scraper:v1.18.1
+    # platform: linux/amd64        # روی Apple Silicon در صورت نیاز باز کنید
+    container_name: gmaps-scraper
+    restart: unless-stopped
+    command: ["-web", "-data-folder", "/gmapsdata"]
+    ports:
+      - "127.0.0.1:${SCRAPER_PORT:-8080}:8080"
+    volumes:
+      - gmaps_data:/gmapsdata      # نتایج jobها تا حذف job/volume باقی می‌مانند
+      - gmaps_cache:/opt           # کش مرورگر Playwright تا ری‌استارت سریع باشد
+
+volumes:
+  gmaps_data:
+  gmaps_cache:
