@@ -1,0 +1,26 @@
+# Secrets
+.env
+
+# Outputs may contain personal data (emails / phones) — never commit
+*.csv
+*.xlsx
+results-*.json
+out/
+output/
+data/
+!data/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node (only if someone runs `npx skills` locally)
+node_modules/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

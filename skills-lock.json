@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "google-maps-scraper": {
+      "source": "mahanaicoach/google-maps-scraper-kit",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/google-maps-scraper/SKILL.md",
+      "computedHash": "d3a90acc458d5b6cdd21a292b3a2ce6c9c74642bf08bf422d8dc9877350bb4b6"
+    }
+  }
+}
