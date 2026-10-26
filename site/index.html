@@ -23,6 +23,7 @@
     </div>
   </div>
   <nav class="sitenav" aria-label="ناوبری">
+    <a href="app/">✨ وب‌اپ ساده</a>
     <a href="#features">امکانات</a>
     <a href="#how">گردش کار</a>
     <a href="#demo">دموی زنده</a>
@@ -46,7 +47,8 @@
       خروجی Excel/CSV/JSON فارسی تحویل می‌دهد — با داشبورد وب و CLI.
     </p>
     <div class="hero-cta">
-      <a class="primary" href="#demo">🔎 دموی زنده را ببین</a>
+      <a class="primary" href="app/">✨ رابط ساده را همین‌جا امتحان کن</a>
+      <a class="ghost" href="#demo">🔎 دموی زنده را ببین</a>
       <a class="ghost" href="#install">🚀 نصب در ۳ دستور</a>
       <a class="ghost" href="https://github.com/rahmaniho/Skill" target="_blank" rel="noopener">⭐ ستاره روی GitHub</a>
       <a class="ghost" href="https://github.com/rahmaniho/Skill/archive/refs/heads/main.zip">⬇ دریافت ZIP</a>
@@ -65,10 +67,16 @@
   <section id="features">
     <div class="section-head">
       <span class="eyebrow">امکانات</span>
-      <h2>هشت قابلیتی که این برنامه را از یک اسکراپر ساده جدا می‌کند</h2>
+      <h2>نه قابلیتی که این برنامه را از یک اسکراپر ساده جدا می‌کند</h2>
       <p>همه‌چیز فارسی، همه‌چیز محلی: داده‌ها روی دستگاه خودتان می‌ماند و هیچ سرویس ابری یا کلید API پولی لازم نیست.</p>
     </div>
     <div class="features">
+      <article class="feature">
+        <div class="ico">✨</div>
+        <h3>رابط ساده: یک جمله → خروجی</h3>
+        <p>همان موتور و همان مغز، اما بدون هیچ تنظیم فنی: می‌نویسید «دندانپزشکی در تهران» یا «همه مشاغل در مشهد» و برنامه صنف، شهر، زبان، کلیدواژه‌ها، عمق جست‌وجو و حجم کار را خودش تشخیص می‌دهد؛ پیش از اجرا هم زمان تقریبی و خلاصهٔ تصمیمش را نشان می‌دهد.</p>
+        <ul><li><a href="app/">همین‌جا امتحان کنید</a> — نسخهٔ نمایشی، بدون سرور</li><li>پیشنهاد خودکار صنف و شهر + انتخاب «هدف» و «اندازه» با یک کلیک</li><li>تنظیمات پیشرفته پشت یک بخش بازشو: تا لازم نشود، دیده نمی‌شوند</li></ul>
+      </article>
       <article class="feature">
         <div class="ico">🧭</div>
         <h3>جست‌وجوی تمامی مشاغل</h3>
@@ -114,8 +122,8 @@
       <article class="feature">
         <div class="ico">🧪</div>
         <h3>قابل اتکا و تست‌شده</h3>
-        <p>۹۷ تست واحد روی پایپ‌لاین، جاروی چندصنفی، لوکیشن دقیق، پیش‌تنظیم ستون‌ها، غنی‌سازی، امتیازدهی، خروجی، API و یکپارچگی همین صفحه — فقط با کتابخانه استاندارد پایتون ۳.۱۱+، بدون نصب پکیج.</p>
-        <ul><li><code>python3 -m unittest discover -s tests</code> · <code>node scripts/smoke_site.js</code></li><li>migration خودکار ستون‌های تازه در SQLite</li><li>CI روی پایتون ۳٫۱۱ و ۳٫۱۲ + استقرار خودکار همین صفحه روی Pages</li></ul>
+        <p>۱۲۸ تست واحد روی پایپ‌لاین، مغز جمله‌فهم، جاروی چندصنفی، لوکیشن دقیق، پیش‌تنظیم ستون‌ها، غنی‌سازی، امتیازدهی، خروجی، API و یکپارچگی همین صفحه — فقط با کتابخانه استاندارد پایتون ۳.۱۱+، بدون نصب پکیج.</p>
+        <ul><li><code>python3 -m unittest discover -s tests</code> · <code>node scripts/smoke_site.js</code> · <code>node scripts/smoke_smart.js</code></li><li>migration خودکار ستون‌های تازه در SQLite</li><li>CI روی پایتون ۳٫۱۱ و ۳٫۱۲ + استقرار خودکار همین صفحه روی Pages</li></ul>
       </article>
     </div>
   </section>
@@ -277,7 +285,7 @@ python3 -m leadgen.server --host 0.0.0.0 --port 8000
 
 <span class="k">./run.sh</span> doctor      <span class="c"># سلامت محیط: داکر، اصناف، شهرها</span>
 <span class="k">./run.sh</span> demo        <span class="c"># اجرای نمونه بدون داکر (موتور دمو)</span>
-<span class="k">./run.sh</span> test        <span class="c"># ۹۷ تست واحد</span></pre>
+<span class="k">./run.sh</span> test        <span class="c"># ۱۲۸ تست واحد</span></pre>
         </div>
         <p class="hint">اگر داکر در دسترس نباشد، برنامه به‌صورت خودکار به موتور دمو می‌رود تا پایپ‌لاین کامل قابل آزمایش باشد.</p>
       </div>

@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="fa" dir="rtl" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LeadGen Studio — رابط ساده (نسخهٔ نمایشی)</title>
+<meta name="description" content="یک جمله بنویسید؛ برنامه کسب‌وکارها را در گوگل‌مپ پیدا می‌کند، ایمیل و شبکه اجتماعی و لوکیشن دقیق می‌گیرد، امتیاز می‌دهد و متن تماس آماده می‌نویسد.">
+<meta name="theme-color" content="#0b1020">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body data-mode="demo">
+
+<!-- ═══ نوار بالا ═══════════════════════════════════════════════════════ -->
+<header class="topbar">
+  <div class="brand">
+    <img src="favicon.svg" alt="" width="34" height="34">
+    <div>
+      <b>LeadGen Studio</b>
+      <span class="tagline">لید کسب‌وکارهای محلی، ساده و هوشمند</span>
+    </div>
+  </div>
+  <div class="topbar-actions">
+    <span class="pill engine" id="enginePill" title="وضعیت موتور">
+      <i class="dot"></i><span id="engineText">در حال بررسی…</span>
+    </span>
+    <button class="icon-btn" id="themeBtn" title="تغییر پوسته" aria-label="تغییر پوسته">🌙</button>
+    <a class="link-btn" id="studioLink" href="/studio/" title="داشبورد کامل با همهٔ تنظیمات">داشبورد حرفه‌ای</a>
+    <a class="link-btn" href="https://github.com/rahmaniho/Skill" target="_blank" rel="noopener">GitHub</a>
+  </div>
+</header>
+
+<main>
+
+  <!-- ═══ جست‌وجوی هوشمند ══════════════════════════════════════════════ -->
+  <section class="hero" id="hero">
+    <h1>مشتری‌های بعدی‌ات را <span class="grad">همین حالا</span> پیدا کن</h1>
+    <p class="subtitle">
+      فقط یک جمله بنویس — مثلاً «دندانپزشکی در تهران» یا «همه مشاغل در مشهد».
+      برنامه پیدا کردن، پاک‌سازی، ایمیل و شبکه‌های اجتماعی، <b>لوکیشن دقیق</b>، امتیازدهی لید و
+      نوشتن متن تماس را خودش انجام می‌دهد.
+    </p>
+
+    <div class="search-card">
+      <div class="search-row">
+        <input id="q" type="text" autocomplete="off" spellcheck="false"
+               placeholder="چه شغلی، در کدام شهر؟ مثال: دندانپزشکی در تهران" aria-label="جست‌وجوی هوشمند">
+        <button class="cta" id="go">
+          <span class="cta-icon">🚀</span><span>شروع کن</span>
+        </button>
+      </div>
+      <div class="suggest" id="suggest" hidden></div>
+      <div class="examples" id="examples"></div>
+      <div class="brain" id="brain" hidden></div>
+    </div>
+
+    <div class="choice-block">
+      <div class="choice-label">هدفت چیست؟ <small>برنامه امتیازدهی و زاویهٔ تماس را بر همین اساس می‌چیند</small></div>
+      <div class="chips" id="goals"></div>
+    </div>
+
+    <div class="choice-block">
+      <div class="choice-label">چقدر بزرگ؟ <small>هرچه بزرگ‌تر، کامل‌تر و کندتر</small></div>
+      <div class="chips" id="sizes"></div>
+    </div>
+
+    <details class="advanced" id="advanced">
+      <summary>⚙️ تنظیمات پیشرفته <small>(اختیاری — پیش‌فرض‌ها خوب‌اند)</small></summary>
+      <div class="advanced-grid">
+        <label class="fld"><span>عمق جست‌وجو</span>
+          <input type="number" id="depth" min="1" max="10" value="4"></label>
+        <label class="fld"><span>کاشی‌بندی شهر (grid)</span>
+          <select id="grid"><option value="0">خاموش</option><option value="2">۲×۲</option>
+            <option value="3">۳×۳</option><option value="4">۴×۴</option></select></label>
+        <label class="fld"><span>سقف تعداد لید</span>
+          <input type="number" id="limit" min="0" step="10" value="200"></label>
+        <label class="fld"><span>ستون‌های خروجی</span><select id="cols"></select></label>
+        <label class="fld"><span>قالب فایل</span><select id="fmt"></select></label>
+        <label class="fld"><span>موتور</span><select id="engineMode">
+          <option value="auto">خودکار (داکر، وگرنه دمو)</option>
+          <option value="docker">داکر (داده واقعی)</option>
+          <option value="demo">دمو (داده نمونه)</option></select></label>
+        <label class="check"><input type="checkbox" id="socials" checked> شبکه‌های اجتماعی (IG/FB/IN)</label>
+        <label class="check"><input type="checkbox" id="emails" checked> استخراج ایمیل از سایت‌ها</label>
+        <label class="check"><input type="checkbox" id="demoMode"> حالت دمو (بدون سرور، فوری)</label>
+      </div>
+    </details>
+  </section>
+
+  <!-- ═══ پیشرفت ═══════════════════════════════════════════════════════ -->
+  <section class="panel" id="progressPanel" hidden>
+    <div class="panel-head">
+      <h2 id="progressTitle">در حال اجرا…</h2>
+      <button class="ghost-btn" id="cancelBtn" hidden title="پنل پنهان می‌شود؛ اجرا در پس‌زمینه ادامه دارد">پنهان کردن پنل</button>
+    </div>
+    <div class="track"><div class="fill" id="bar"></div></div>
+    <div class="stage-line"><span id="stageText">آماده‌سازی…</span><b id="percentText">۰٪</b></div>
+    <div class="log" id="log"></div>
+  </section>
+
+  <!-- ═══ نتایج ════════════════════════════════════════════════════════ -->
+  <section id="results" hidden>
+    <div class="kpis" id="kpis"></div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>🧠 مغز برنامه چه می‌گوید</h2>
+        <small id="runMeta"></small>
+      </div>
+      <div class="insights" id="insights"></div>
+      <div class="mini-charts">
+        <div><h3>پوشش اطلاعات تماس</h3><div id="covChart"></div></div>
+        <div><h3>بخش‌بندی لیدها</h3><div id="segChart"></div></div>
+        <div><h3>پرتکرارترین شکاف‌ها</h3><div id="gapChart"></div></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>📇 لیدها</h2>
+        <div class="toolbar">
+          <div class="seg-chips" id="segChips"></div>
+          <input type="search" id="leadSearch" placeholder="جست‌وجو در لیدها…">
+          <select id="leadSort">
+            <option value="score">بهترین امتیاز</option>
+            <option value="reviews">پرنظرترین</option>
+            <option value="rating">بالاترین امتیاز گوگل</option>
+            <option value="completeness">کامل‌ترین اطلاعات</option>
+          </select>
+          <div class="view-toggle">
+            <button data-view="cards" class="active" title="نمای کارت">▦</button>
+            <button data-view="table" title="نمای جدول">☰</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="export-bar">
+        <span>خروجی گرفتن:</span>
+        <button class="ghost-btn" data-export="xlsx">📊 اکسل</button>
+        <button class="ghost-btn" data-export="csv">📄 CSV</button>
+        <button class="ghost-btn" data-export="json">🧾 JSON</button>
+        <button class="ghost-btn" data-export="campaign">💬 فایل کمپین</button>
+        <button class="ghost-btn" data-export="hot">🔥 فقط داغ‌ها (اکسل)</button>
+        <span class="spacer"></span>
+        <small id="exportNote"></small>
+      </div>
+
+      <div class="cards" id="cards"></div>
+      <div class="table-wrap" id="tableWrap" hidden>
+        <table class="table" id="table">
+          <thead><tr>
+            <th>کسب‌وکار</th><th>صنف</th><th>تماس</th><th>ایمیل</th><th>سایت</th>
+            <th>شبکه</th><th>لوکیشن</th><th>⭐</th><th>امتیاز</th><th>وضعیت</th>
+          </tr></thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="leadsEmpty" hidden>لیدی با این فیلترها پیدا نشد.</div>
+      <div class="pager" id="pager"></div>
+    </div>
+  </section>
+
+  <!-- ═══ اجراهای قبلی ═════════════════════════════════════════════════ -->
+  <section class="panel" id="historyPanel" hidden>
+    <div class="panel-head"><h2>🗂 اجراهای قبلی</h2><small>روی هرکدام کلیک کنید تا نتایجش برگردد</small></div>
+    <div class="history" id="history"></div>
+  </section>
+
+  <p class="legal">
+    ⚖️ یادآوری: ایمیل و تلفن داده شخصی‌اند. برای تماس، مبنای قانونی، هویت فرستنده و گزینهٔ
+    «لغو دریافت» را رعایت کنید (GDPR / CAN-SPAM). اسکراپ گوگل‌مپ با شرایط استفادهٔ گوگل
+    سازگار نیست؛ خروجی را فهرست اولیهٔ نیازمند راستی‌آزمایی بدانید.
+  </p>
+</main>
+
+<!-- ═══ پروندهٔ لید ═════════════════════════════════════════════════════ -->
+<div class="modal" id="modal" hidden role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+  <div class="modal-head">
+    <h3 id="modalTitle">—</h3>
+    <button class="icon-btn" id="modalClose" aria-label="بستن">✕</button>
+  </div>
+  <div class="modal-body" id="modalBody"></div>
+</div>
+<div class="scrim" id="scrim" hidden></div>
+<div class="toasts" id="toasts"></div>
+
+<script src="campaign.js" defer></script>
+<script src="app.js" defer></script>
+</body>
+</html>
