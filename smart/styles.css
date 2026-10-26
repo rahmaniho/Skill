@@ -367,9 +367,11 @@ section{margin-bottom:1.4rem}
   white-space:pre-wrap;font-size:.84rem;line-height:2;max-height:320px;overflow:auto;
 }
 .msg-head{display:flex;gap:.6rem;flex-wrap:wrap;font-size:.76rem;color:var(--dim);margin-bottom:.35rem}
-.fx{font-size:.79rem;color:var(--muted);margin:.35rem 0}
-.fx .t{height:7px;background:var(--bg-soft);border-radius:99px;overflow:hidden;border:1px solid var(--line-soft);margin-top:.2rem}
-.fx .f{height:100%;background:linear-gradient(90deg,var(--ok),#10b981)}
+.fx{font-size:.79rem;color:var(--muted);margin:.45rem 0}
+.fx b{font-family:var(--mono);color:var(--text)}
+.fx small{display:block;color:var(--dim);font-size:.72rem;margin-top:.15rem}
+.fx .t{display:block;height:7px;background:var(--bg-soft);border-radius:99px;overflow:hidden;border:1px solid var(--line-soft);margin-top:.25rem}
+.fx .f{display:block;height:100%;background:linear-gradient(90deg,var(--ok),#10b981);border-radius:99px}
 .sender{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.5rem;margin:.5rem 0}
 .sender input{width:100%;background:var(--bg-soft);border:1px solid var(--line);color:var(--text);border-radius:10px;padding:.4rem .6rem;font-family:inherit;font-size:.82rem}
 .actions{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.6rem}
