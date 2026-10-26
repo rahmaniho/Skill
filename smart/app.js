@@ -982,6 +982,15 @@
         try { await loadRun(state.runId); $("results").scrollIntoView({ behavior: "smooth" }); }
         catch (err) { toast(`باز کردن اجرا ناموفق: ${err.message}`, "err"); }
       });
+      // اولین بازدید خالی نماند: تازه‌ترین اجرا خودش بارگذاری می‌شود
+      if (!state.runId && runs.length && $("results").hidden) {
+        try {
+          state.runId = runs[0].id;
+          await loadRun(state.runId);
+          $("results").scrollIntoView({ behavior: "smooth", block: "start" });
+          toast("آخرین اجرا بارگذاری شد — می‌توانید جست‌وجوی تازه شروع کنید");
+        } catch { state.runId = null; $("results").hidden = true; }
+      }
     } catch { $("historyPanel").hidden = true; }
   }
 
