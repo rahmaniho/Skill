@@ -145,7 +145,7 @@
     sel: { province: "", city: "", district: "", street: "", niche: "", goal: "site", size: "standard", allTrades: false },
     area: null,                  // نتیجهٔ resolve: {label, level, level_fa, lat, lon, radius, zoom}
     filters: {
-      q: "", segment: "", status: "", gap: "", niche_id: "",
+      q: "", segment: "", status: "", gap: "", niche_id: "", niche_fa: "",
       has_phone: null, has_email: null, has_website: null, has_social: null, has_instagram: null,
       no_website: false, min_score: "", min_rating: "", min_reviews: "",
       sort: "score", order: "desc", geoOnly: false,
@@ -423,6 +423,9 @@
         if (params.run_id && lead.run_id && lead.run_id !== params.run_id) return false;
         if (params.segment && lead.segment !== params.segment) return false;
         if (params.status && lead.status !== params.status) return false;
+        if (params.niche_fa && (lead.niche_fa || lead.category) !== params.niche_fa &&
+            !String(lead.category || "").includes(params.niche_fa) &&
+            !String(lead.niche_fa || "").includes(params.niche_fa)) return false;
         if (params.niche_id && lead.niche_id !== params.niche_id &&
             !String(lead.category || "").includes(params.niche_id) &&
             !String(lead.title || "").includes(params.niche_id)) return false;
@@ -735,6 +738,24 @@
     hint.title = (parsed.warnings || []).join("\n");
   }
 
+  // فیلتر «نوع کسب‌وکار» روی نتیجه‌ها — از شمارش‌های زندهٔ facets پر می‌شود
+  function renderNicheFilter() {
+    const select = $("selNicheFilter");
+    if (!select) return;
+    const facets = (state.facets || {}).niche || {};
+    const current = state.filters.niche_fa;
+    const names = Object.keys(facets);
+    if (!names.length && !current) {
+      select.innerHTML = '<option value="">همهٔ اصناف</option>';
+      return;
+    }
+    select.innerHTML = '<option value="">همهٔ اصناف</option>' +
+      names.map((name) => `<option value="${esc(name)}"${name === current ? " selected" : ""}>` +
+        `${esc(name)} (${faNum(facets[name])})</option>`).join("") +
+      (current && !names.includes(current)
+        ? `<option value="${esc(current)}" selected>${esc(current)}</option>` : "");
+  }
+
   function renderChips() {
     const facets = state.facets || {};
     const segments = facets.segment || {};
@@ -765,6 +786,7 @@
       status: filters.status,
       gap: filters.gap,
       niche_id: filters.niche_id,
+      niche_fa: filters.niche_fa,
       has_phone: filters.has_phone === true ? 1 : "",
       has_email: filters.has_email === true ? 1 : "",
       has_website: filters.has_website === true ? 1 : "",
@@ -808,6 +830,7 @@
       state.facets = data.facets || {};
       renderResults();
       renderChips();
+      renderNicheFilter();
       renderPager();
     } catch (err) {
       tbody.innerHTML = `<tr><td colspan="12" class="empty">خطا: ${esc(err.message)}</td></tr>`;
@@ -1423,6 +1446,11 @@
       state.page = 1;
       refresh();
     }, 380));
+    $("selNicheFilter").addEventListener("change", (event) => {
+      state.filters.niche_fa = event.target.value;
+      state.page = 1;
+      refresh();
+    });
     $("selStatus").addEventListener("change", (event) => {
       state.filters.status = event.target.value;
       state.page = 1;
@@ -1441,13 +1469,14 @@
     });
     $("clearFilters").addEventListener("click", () => {
       state.filters = {
-        q: "", segment: "", status: "", gap: "", niche_id: "",
+        q: "", segment: "", status: "", gap: "", niche_id: "", niche_fa: "",
         has_phone: null, has_email: null, has_website: null, has_social: null, has_instagram: null,
         no_website: false, min_score: "", min_rating: "", min_reviews: "",
         sort: "score", order: "desc", geoOnly: false,
       };
       ["minScore", "minRating", "minReviews", "inResults"].forEach((id) => { $(id).value = ""; });
       $("selStatus").value = "";
+      $("selNicheFilter").value = "";
       $("selSort").value = "score";
       $("geoOnly").checked = false;
       state.page = 1;

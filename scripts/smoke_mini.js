@@ -303,6 +303,18 @@ async function main() {
     await tick(600);
     check("فیلتر ایمیل اعمال شد", API_CALLS.some((u) => u.includes("has_email=1")) || !serverOk);
   }
+  // فیلتر «نوع کسب‌وکار» روی نتیجه‌ها (از facets پر می‌شود)
+  const nicheOptions = (html("selNicheFilter").match(/value="([^"]+)"/g) || [])
+    .map((raw) => raw.slice(7, -1)).filter(Boolean);
+  check("فیلتر صنف از شمارش‌های زنده پر شد", nicheOptions.length > 0, html("selNicheFilter").slice(0, 60));
+  if (nicheOptions.length) {
+    el("selNicheFilter").value = nicheOptions[0];
+    el("selNicheFilter").fire("change");
+    await tick(600);
+    check("فیلتر صنف اعمال شد", API_CALLS.some((u) => u.includes("niche_fa=")) || !serverOk,
+      API_CALLS.slice(-2).join(" "));
+  }
+
   el("minScore").value = "70";
   el("minScore").fire("input");
   await tick(900);

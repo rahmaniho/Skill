@@ -306,6 +306,17 @@ class SearchLeadsTestCase(unittest.TestCase):
         scored = storage.search_leads(min_score=200, limit=5)
         self.assertEqual(scored["total"], 0)
 
+    def test_niche_fa_filter(self):
+        facets = storage.search_leads(limit=0)["facets"]["niche"]
+        self.assertTrue(facets)
+        name = next(iter(facets))
+        found = storage.search_leads(niche_fa=name, limit=5)
+        self.assertGreater(found["total"], 0)
+        self.assertTrue(all(name in (lead.get("niche_fa") or lead.get("category") or "")
+                            for lead in found["leads"]))
+        self.assertEqual(found["filters"]["niche_fa"], name)
+        self.assertEqual(storage.search_leads(niche_fa="صنفی که نیست", limit=5)["total"], 0)
+
     def test_geo_radius_filter_is_a_circle(self):
         run = storage.get_run(self.run_id)
         lat, lon = float(run["lat"]), float(run["lon"])
@@ -527,6 +538,11 @@ class RegionsApiTestCase(unittest.TestCase):
             "lat": float(run["lat"]), "lon": float(run["lon"]), "radius_m": 2500, "limit": 5}))
         self.assertGreater(near["total"], 0)
         self.assertTrue(all(lead["distance_m"] <= 2500 for lead in near["leads"]))
+
+        niche_name = next(iter(found["facets"]["niche"]))
+        by_niche = self.get("/api/search?" + urllib.parse.urlencode(
+            {"run_id": run_id, "niche_fa": niche_name, "limit": 3}))
+        self.assertGreater(by_niche["total"], 0)
 
         filtered = self.get("/api/search?" + urllib.parse.urlencode({
             "run_id": run_id, "has_phone": 1, "segment": "hot", "sort": "rating", "limit": 3}))

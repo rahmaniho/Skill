@@ -347,6 +347,7 @@ def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 def search_leads(*, q: str = "", run_id: str | None = None, segment: str | None = None,
                  status: str | None = None, channel: str | None = None, gap: str | None = None,
                  niche_id: str | None = None, niche_group: str | None = None,
+                 niche_fa: str | None = None,
                  has_phone: bool | None = None, has_email: bool | None = None,
                  has_website: bool | None = None, has_social: bool | None = None,
                  has_instagram: bool | None = None, min_rating: float | None = None,
@@ -383,6 +384,9 @@ def search_leads(*, q: str = "", run_id: str | None = None, segment: str | None 
     if niche_id:
         add("(l.niche_id=? OR l.category LIKE ? OR l.title LIKE ?)", niche_id,
             f"%{niche_id}%", f"%{niche_id}%")
+    if niche_fa:
+        add("(l.niche_fa=? OR l.category=? OR l.niche_fa LIKE ?)", niche_fa, niche_fa,
+            f"%{niche_fa}%")
     if niche_group:
         ids = [n["id"] for n in _group_niches(niche_group)]
         if ids:
@@ -509,7 +513,8 @@ def _facets(rows, total: int = 0, partial: bool = False) -> dict:
 
 
 def _active_filters(scope: dict) -> dict:
-    keys = ("q", "run_id", "segment", "status", "channel", "gap", "niche_id", "niche_group",
+    keys = ("q", "run_id", "segment", "status", "channel", "gap", "niche_id", "niche_fa",
+            "niche_group",
             "has_phone", "has_email", "has_website", "has_social", "has_instagram",
             "min_rating", "min_reviews", "min_score", "lat", "lon", "radius_m")
     return {k: scope.get(k) for k in keys if scope.get(k) not in (None, "", 0, False)}

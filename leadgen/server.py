@@ -563,6 +563,7 @@ class Handler(BaseHTTPRequestHandler):
             "segment": query.get("segment") or None, "status": query.get("status") or None,
             "channel": query.get("channel") or None, "gap": query.get("gap") or None,
             "niche_id": query.get("niche_id") or None,
+            "niche_fa": query.get("niche_fa") or None,
             "niche_group": query.get("niche_group") or None,
             "has_phone": _flag(query, "has_phone"), "has_email": _flag(query, "has_email"),
             "has_website": _flag(query, "has_website"), "has_social": _flag(query, "has_social"),
