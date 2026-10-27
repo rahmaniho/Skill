@@ -69,6 +69,10 @@ def _flag(query: dict, key: str) -> bool | None:
 WEB_DIR = ROOT_DIR / "web"                 # داشبورد حرفه‌ای (کلاسیک)
 SMART_DIR = ROOT_DIR / "smart"             # رابط سادهٔ کاربرپسند (پیش‌فرض روی /)
 MINI_DIR = ROOT_DIR / "mini"               # نسخهٔ جمع‌وجور: جست‌وجو + استان/شهر/منطقه/خیابان
+
+# رابط پیش‌فرض روی «/»: smart (رابط ساده) یا mini (نسخهٔ جمع‌وجور)
+# با LEADGEN_ROOT_UI=mini می‌توان یک نمونهٔ جدا فقط برای نسخهٔ جمع‌وجور بالا آورد.
+ROOT_UI = os.environ.get("LEADGEN_ROOT_UI", "smart").strip().lower()
 DEMO_DATA = ROOT_DIR / "site" / "data" / "sample.json"   # دادهٔ حالت دمو (مشترک با سایت Pages)
 
 # حافظه پیشرفت اجراها (در حال اجرا) — پایگاه‌داده هم وضعیت نهایی را نگه می‌دارد
@@ -229,11 +233,12 @@ class Handler(BaseHTTPRequestHandler):
         storage.init_db()
 
         # رابط سادهٔ کاربرپسند (پیش‌فرض) روی / و داشبورد حرفه‌ای روی /studio/
+        root_dir = MINI_DIR if ROOT_UI == "mini" else SMART_DIR
         if path in ("/", "/index.html"):
-            return self._static("index.html", SMART_DIR)
+            return self._static("index.html", root_dir)
         if path in ("/styles.css", "/app.js", "/campaign.js", "/favicon.svg", "/demo-data.json") \
                 or path.startswith("/assets/"):
-            return self._static(path.lstrip("/"), SMART_DIR)
+            return self._static(path.lstrip("/"), root_dir)
         if path in ("/mini", "/mini/", "/mini/index.html"):
             return self._static("index.html", MINI_DIR)
         if path.startswith("/mini/"):
@@ -832,7 +837,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", default=config.HOST)
     parser.add_argument("--port", type=int, default=config.PORT)
     parser.add_argument("--print-engine", action="store_true", help="وضعیت موتور را چاپ کن و خارج شو")
-    args = parser.parse_args(argv or [])
+    # argv=None یعنی همان sys.argv (وگرنه --host/--port بی‌اثر و همیشه پیش‌فرض می‌شد!)
+    args = parser.parse_args(None if argv is None else list(argv))
 
     if args.print_engine:
         print(json.dumps(engine_mod.engine_status(), ensure_ascii=False, indent=2))

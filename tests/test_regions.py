@@ -550,6 +550,13 @@ class RegionsApiTestCase(unittest.TestCase):
         self.assertEqual(len(payload["leads"]), detail["lead_count"])
         storage.delete_run(run_id)
 
+    def test_cli_flags_are_honoured(self):
+        """`--port`/`--host`/`--print-engine` واقعاً باید از argv خوانده شوند."""
+        # اگر argv نادیده گرفته شود، این فراخوانی به‌جای خروج، پورت پیش‌فرض را bind می‌کند
+        self.assertEqual(server_mod.main(["--print-engine", "--port", "1"]), 0)
+        with self.assertRaises(SystemExit):
+            server_mod.main(["--port"])          # آرگومان ناقص → خطای argparse
+
     def test_search_export_without_results_is_404(self):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             self.get_bytes("/api/search/export?" + urllib.parse.urlencode({"q": "zzqqxx"}))
