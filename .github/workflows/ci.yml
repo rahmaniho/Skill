@@ -58,6 +58,8 @@ jobs:
 
       - name: Compact UI smoke test against a live server
         run: |
+          # دادهٔ نمونهٔ منطقه‌محور تا «جست‌وجوی قوی» و پروندهٔ لید هم پوشش داده شود
+          python scripts/seed_demo_data.py --fresh
           python -m leadgen.server --host 127.0.0.1 --port 8123 > /tmp/leadgen-server.log 2>&1 &
           SERVER_PID=$!
           for _ in $(seq 1 60); do
