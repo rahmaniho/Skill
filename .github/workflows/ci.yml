@@ -45,6 +45,7 @@ jobs:
           node --check site/app.js
           node --check smart/app.js
           node --check smart/campaign.js
+          node --check mini/app.js
 
       - name: Static site smoke test (fake DOM)
         run: node scripts/smoke_site.js
@@ -52,5 +53,24 @@ jobs:
       - name: Simple UI smoke test (fake DOM, demo mode)
         run: node scripts/smoke_smart.js
 
-      - name: Pages copy of the simple UI is in sync
+      - name: Compact UI smoke test (fake DOM, demo mode)
+        run: node scripts/smoke_mini.js
+
+      - name: Compact UI smoke test against a live server
+        run: |
+          # دادهٔ نمونهٔ منطقه‌محور تا «جست‌وجوی قوی» و پروندهٔ لید هم پوشش داده شود
+          python scripts/seed_demo_data.py --fresh
+          python -m leadgen.server --host 127.0.0.1 --port 8123 > /tmp/leadgen-server.log 2>&1 &
+          SERVER_PID=$!
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8123/api/health > /dev/null && break
+            sleep 0.5
+          done
+          STATUS=0
+          SMOKE_LIVE=http://127.0.0.1:8123 node scripts/smoke_mini.js || STATUS=$?
+          kill "$SERVER_PID" 2>/dev/null || true
+          if [ "$STATUS" -ne 0 ]; then tail -40 /tmp/leadgen-server.log; fi
+          exit "$STATUS"
+
+      - name: Pages copies of the web UIs are in sync
         run: python scripts/build_pages_app.py --check

@@ -31,11 +31,48 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import (analytics, campaign, config, engine as engine_mod, enrich, exports,
-               geo, niches, pipeline, scoring, smart, storage)
+               geo, niches, pipeline, regions, scoring, smart, storage)
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
+
+
+def _num(value) -> float | None:
+    """تبدیل امن به عدد اعشاری (برای lat/lon/حداقل امتیاز)."""
+    try:
+        if value in (None, ""):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _int(value, default: int = 0) -> int:
+    """تبدیل امن به عدد صحیح."""
+    try:
+        if value in (None, ""):
+            return int(default)
+        return int(float(value))
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def _flag(query: dict, key: str) -> bool | None:
+    """پارامتر سه‌حالتهٔ کوئری: 1/true → True، 0/false → False، نبود → None."""
+    if key not in query:
+        return None
+    raw = str(query.get(key, "")).strip().lower()
+    if raw in ("1", "true", "yes", "on", "دارد"):
+        return True
+    if raw in ("0", "false", "no", "off", "ندارد"):
+        return False
+    return None
 WEB_DIR = ROOT_DIR / "web"                 # داشبورد حرفه‌ای (کلاسیک)
 SMART_DIR = ROOT_DIR / "smart"             # رابط سادهٔ کاربرپسند (پیش‌فرض روی /)
+MINI_DIR = ROOT_DIR / "mini"               # نسخهٔ جمع‌وجور: جست‌وجو + استان/شهر/منطقه/خیابان
+
+# رابط پیش‌فرض روی «/»: smart (رابط ساده) یا mini (نسخهٔ جمع‌وجور)
+# با LEADGEN_ROOT_UI=mini می‌توان یک نمونهٔ جدا فقط برای نسخهٔ جمع‌وجور بالا آورد.
+ROOT_UI = os.environ.get("LEADGEN_ROOT_UI", "smart").strip().lower()
 DEMO_DATA = ROOT_DIR / "site" / "data" / "sample.json"   # دادهٔ حالت دمو (مشترک با سایت Pages)
 
 # حافظه پیشرفت اجراها (در حال اجرا) — پایگاه‌داده هم وضعیت نهایی را نگه می‌دارد
@@ -196,11 +233,16 @@ class Handler(BaseHTTPRequestHandler):
         storage.init_db()
 
         # رابط سادهٔ کاربرپسند (پیش‌فرض) روی / و داشبورد حرفه‌ای روی /studio/
+        root_dir = MINI_DIR if ROOT_UI == "mini" else SMART_DIR
         if path in ("/", "/index.html"):
-            return self._static("index.html", SMART_DIR)
+            return self._static("index.html", root_dir)
         if path in ("/styles.css", "/app.js", "/campaign.js", "/favicon.svg", "/demo-data.json") \
                 or path.startswith("/assets/"):
-            return self._static(path.lstrip("/"), SMART_DIR)
+            return self._static(path.lstrip("/"), root_dir)
+        if path in ("/mini", "/mini/", "/mini/index.html"):
+            return self._static("index.html", MINI_DIR)
+        if path.startswith("/mini/"):
+            return self._static(path[len("/mini/"):], MINI_DIR)
         if path in ("/studio", "/studio/", "/studio/index.html"):
             return self._static("index.html", WEB_DIR)
         if path.startswith("/studio/"):
@@ -220,6 +262,61 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/smart/suggest":
             return self._json(smart.suggest(query.get("q", ""), limit=int(query.get("limit", 6))))
+
+        # ── سلسله‌مراتب جغرافیایی: استان → شهر → منطقه → خیابان ─────────────
+        if path == "/api/regions":
+            return self._json(regions.hierarchy())
+
+        if path == "/api/regions/districts":
+            key = regions.city_key(query.get("city", ""))
+            if not key:
+                raise ApiError(f"شهر ناشناخته: {query.get('city', '')}", 404)
+            return self._json({"city": key, "city_fa": regions.city_fa(key),
+                               "districts": regions.districts(key)})
+
+        if path == "/api/regions/streets":
+            key = regions.city_key(query.get("city", ""))
+            if not key:
+                raise ApiError(f"شهر ناشناخته: {query.get('city', '')}", 404)
+            return self._json({"city": key, "city_fa": regions.city_fa(key),
+                               "district": query.get("district", ""),
+                               "streets": regions.streets(key, query.get("district", ""))})
+
+        if path == "/api/regions/search":
+            text = query.get("q", "")
+            cities = []
+            if text:
+                needle = text.strip().lower()
+                for item in geo.known_cities():
+                    pool = " ".join([item.get("fa", ""), item.get("label", ""),
+                                     *item.get("aliases", [])]).lower()
+                    if needle and needle in pool:
+                        cities.append(item)
+                    if len(cities) >= 6:
+                        break
+            return self._json({
+                "q": text,
+                "areas": regions.search_areas(text, limit=_int(query.get("limit", 8), 8)),
+                "in_text": [{"fa": h["fa"], "kind": h["kind"], "city": h["city"],
+                             "city_fa": h["city_fa"], "lat": h["lat"], "lon": h["lon"]}
+                            for h in regions.detect_area(text)],
+                "cities": cities,
+            })
+
+        if path == "/api/regions/resolve":
+            return self._json(regions.resolve(province=query.get("province", ""),
+                                              city=query.get("city", ""),
+                                              district=query.get("district", ""),
+                                              street=query.get("street", ""),
+                                              lat=_num(query.get("lat")),
+                                              lon=_num(query.get("lon"))))
+
+        # ── جست‌وجوی قوی در همهٔ داده‌های جمع‌شده (تمام اجراها) ──────────────
+        if path == "/api/search":
+            return self._json(storage.search_leads(**self._search_params(query)))
+
+        if path == "/api/search/export":
+            return self._search_export(query)
 
         if path == "/api/catalog":
             return self._json({
@@ -357,7 +454,15 @@ class Handler(BaseHTTPRequestHandler):
                 engine_mode=body.get("engine_mode") or config.ENGINE_MODE,
                 cols=body.get("cols", "contact"), export_fmt=body.get("export_fmt", "xlsx"),
                 allow_network=bool(body.get("allow_network", False)),
-                lat=str(body.get("lat", "") or ""), lon=str(body.get("lon", "") or "")))
+                lat=str(body.get("lat", "") or ""), lon=str(body.get("lon", "") or ""),
+                province=str(body.get("province", "") or ""),
+                district=str(body.get("district", "") or ""),
+                street=str(body.get("street", "") or ""),
+                radius=_int(body.get("radius")), niche_id=str(body.get("niche_id", "") or ""),
+                all_trades=(None if body.get("all_trades") is None
+                            else bool(body.get("all_trades"))),
+                limit=_int(body.get("limit")),
+                area_from_text=bool(body.get("area_from_text", True))))
 
         if path == "/api/niches/find" and method == "POST":
             body = self._read_json()
@@ -450,6 +555,68 @@ class Handler(BaseHTTPRequestHandler):
             "total": storage.count_leads(run_id),
             "statuses": storage.LEAD_STATUS_FA,
         })
+
+    def _search_params(self, query: dict) -> dict:
+        """پارامترهای جست‌وجوی قوی از کوئری‌استرینگ (یک تعریف، دو مصرف)."""
+        return {
+            "q": query.get("q", ""), "run_id": query.get("run_id") or None,
+            "segment": query.get("segment") or None, "status": query.get("status") or None,
+            "channel": query.get("channel") or None, "gap": query.get("gap") or None,
+            "niche_id": query.get("niche_id") or None,
+            "niche_fa": query.get("niche_fa") or None,
+            "niche_group": query.get("niche_group") or None,
+            "has_phone": _flag(query, "has_phone"), "has_email": _flag(query, "has_email"),
+            "has_website": _flag(query, "has_website"), "has_social": _flag(query, "has_social"),
+            "has_instagram": _flag(query, "has_instagram"),
+            "min_rating": _num(query.get("min_rating")),
+            "min_reviews": _int(query.get("min_reviews")),
+            "min_score": _int(query.get("min_score")),
+            "lat": _num(query.get("lat")), "lon": _num(query.get("lon")),
+            "radius_m": _int(query.get("radius_m") or query.get("radius")),
+            "sort": query.get("sort", "score"), "order": query.get("order", "desc"),
+            "limit": _int(query.get("limit", 200), 200), "offset": _int(query.get("offset"), 0),
+        }
+
+    def _search_export(self, query: dict) -> None:
+        """خروجی فایل از مجموعهٔ فیلترشدهٔ جست‌وجوی قوی (می‌تواند چند اجرا را شامل شود)."""
+        params = self._search_params(query)
+        params["limit"] = _int(query.get("max_rows", 20000), 20000)
+        params["offset"] = 0
+        rows = storage.search_leads(**params)["leads"]
+        if not rows:
+            raise ApiError("نتیجه‌ای برای خروجی گرفتن پیدا نشد؛ فیلترها را تغییر دهید.", 404)
+        fmt = (query.get("fmt") or "csv").lower()
+        full = query.get("full") in ("1", "true", "yes")
+        preset = query.get("cols") or query.get("preset") or "contact"
+        for row in rows:
+            row["gaps_fa"] = [scoring.GAP_FA.get(g, g) for g in (row.get("gaps") or [])]
+
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        base = f"search-{stamp}"
+        meta_run = {
+            "id": base, "niche_fa": query.get("q") or "جست‌وجوی ترکیبی",
+            "city": rows[0].get("run_city") or rows[0].get("city") or "",
+            "engine": "search", "keywords": [query["q"]] if query.get("q") else [],
+            "area_label": (rows[0].get("run_area") or ""),
+        }
+        disposition = lambda name, mime: self._send(  # noqa: E731
+            200, body, mime, {"Content-Disposition": f'attachment; filename="{name}"'})
+
+        if fmt == "json":
+            body = exports.json_bytes({"run": meta_run, "filters": params, "total": len(rows),
+                                       "leads": rows})
+            return disposition(f"{base}.json", "application/json; charset=utf-8")
+
+        if fmt in ("xlsx", "excel"):
+            pack = analytics.build(rows, meta_run)
+            sheets = exports.build_workbook(rows, pack, meta_run, None, full=full, preset=preset)
+            body = exports.xlsx_bytes(sheets)
+            return disposition(
+                f"{base}.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+        body = exports.csv_bytes(rows, full=full, preset=preset)
+        return disposition(f"{base}.csv", "text/csv; charset=utf-8")
 
     def _run_export(self, run_id: str, query: dict) -> None:
         run = storage.get_run(run_id)
@@ -671,7 +838,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", default=config.HOST)
     parser.add_argument("--port", type=int, default=config.PORT)
     parser.add_argument("--print-engine", action="store_true", help="وضعیت موتور را چاپ کن و خارج شو")
-    args = parser.parse_args(argv or [])
+    # argv=None یعنی همان sys.argv (وگرنه --host/--port بی‌اثر و همیشه پیش‌فرض می‌شد!)
+    args = parser.parse_args(None if argv is None else list(argv))
 
     if args.print_engine:
         print(json.dumps(engine_mod.engine_status(), ensure_ascii=False, indent=2))

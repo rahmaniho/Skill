@@ -19,8 +19,8 @@ import sys
 import textwrap
 from pathlib import Path
 
-from . import (analytics, campaign, config, engine as engine_mod, exports, geo,
-               niches, pipeline, scoring, storage)
+from . import (analytics, campaign, config, engine as engine_mod, exports, geo, niches,
+               pipeline, regions, scoring, storage)
 
 
 def _print_json(payload) -> None:
@@ -74,6 +74,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         max_niches=args.max_niches,
         keywords_per_niche=args.keywords_per_niche,
         keywords_per_job=args.keywords_per_job,
+        province=args.province or "",
+        district=args.district or "",
+        street=args.street or "",
     )
 
     def on_progress(payload: dict) -> None:
@@ -194,6 +197,111 @@ def cmd_leads(args: argparse.Namespace) -> int:
     print(_table(table, ["امتیاز", "نام", "تلفن", "ایمیل", "کانال", "وضعیت"]))
     print(f"\n{len(rows)} ردیف نمایش داده شد.")
     return 0
+
+
+def cmd_search(args: argparse.Namespace) -> int:
+    """جست‌وجوی قوی در همهٔ داده‌های جمع‌شده (همهٔ اجراها) با فیلترهای ترکیبی."""
+    storage.init_db()
+    lat = lon = None
+    radius = args.radius_m or 0
+    if args.district or args.street or (args.city and radius):
+        area = regions.resolve(province=args.province or "", city=args.city or "",
+                               district=args.district or "", street=args.street or "")
+        if area.get("lat"):
+            lat, lon = area["lat"], area["lon"]
+            radius = radius or area.get("radius") or 0
+            print(f"◈ محدوده: {area.get('label')} — شعاع {radius} متر "
+                  f"({lat:.5f}, {lon:.5f})", file=sys.stderr)
+        else:
+            print("✗ محدوده پیدا نشد؛ بدون فیلتر شعاع ادامه می‌دهم.", file=sys.stderr)
+
+    result = storage.search_leads(
+        q=args.query or "", run_id=args.run, segment=args.segment, status=args.status,
+        niche_id=args.niche_id, niche_group=args.group,
+        has_phone=_tri(args.has_phone), has_email=_tri(args.has_email),
+        has_website=_tri(args.has_website), has_social=_tri(args.has_social),
+        has_instagram=_tri(args.has_instagram),
+        min_rating=args.min_rating, min_reviews=args.min_reviews, min_score=args.min_score,
+        lat=lat, lon=lon, radius_m=radius, sort=args.sort, order=args.order,
+        limit=args.limit, offset=args.offset)
+    rows = result["leads"]
+    if not rows:
+        print("لیدی با این فیلترها پیدا نشد.")
+        return 0
+
+    facets = result["facets"]
+    seg = facets.get("segment", {})
+    print(f"✓ {result['total']} لید (نمایش {len(rows)}) — "
+          f"داغ {seg.get('hot', 0)} · گرم {seg.get('warm', 0)} · سرد {seg.get('cold', 0)} · "
+          f"میانگین امتیاز {facets.get('score', {}).get('avg', 0)}")
+    table = [[r.get("score"), (r.get("title") or "")[:34], r.get("niche_fa") or "—",
+              (r.get("run_area") or r.get("city") or "—")[:24],
+              r.get("phone") or "—", (r.get("email_primary") or "—")[:28],
+              (f"{r.get('distance_m')}m" if r.get("distance_m") is not None else "—")]
+             for r in rows]
+    print(_table(table, ["امتیاز", "نام", "صنف", "محدوده", "تلفن", "ایمیل", "فاصله"]))
+
+    if args.export:
+        for row in rows:
+            row["gaps_fa"] = [scoring.GAP_FA.get(g, g) for g in (row.get("gaps") or [])]
+        fmt = args.export
+        out = Path(args.out) if args.out else exports.default_path(f"search-{fmt}", fmt)
+        meta = {"id": "search", "niche_fa": args.query or "جست‌وجوی ترکیبی",
+                "city": rows[0].get("city") or "", "engine": "cli-search", "keywords": []}
+        if fmt in ("xlsx", "excel"):
+            path = exports.write_xlsx(out.with_suffix(".xlsx"), exports.build_workbook(
+                rows, analytics.build(rows, meta), meta, full=args.full, preset=args.cols))
+        elif fmt == "json":
+            path = exports.write_json(out.with_suffix(".json"),
+                                      {"filters": result["filters"], "total": result["total"],
+                                       "leads": rows})
+        else:
+            path = exports.write_csv(out.with_suffix(".csv"), rows, full=args.full,
+                                     preset=args.cols)
+        print(f"✓ خروجی {fmt}: {path}")
+    return 0
+
+
+def cmd_areas(args: argparse.Namespace) -> int:
+    """فهرست استان‌ها/شهرها/منطقه‌ها/خیابان‌های داخلی (آفلاین)."""
+    if args.provinces:
+        rows = [[p["fa"], p["en"], len(p["cities"]), p["capital_fa"]]
+                for p in regions.provinces()]
+        print(_table(rows, ["استان", "نام لاتین", "شهرها", "مرکز"]))
+        return 0
+    if args.city:
+        key = regions.city_key(args.city)
+        if not key:
+            print(f"✗ شهر پیدا نشد: {args.city}", file=sys.stderr)
+            return 1
+        if args.streets:
+            rows = [[r["fa"], r["district"] or "—", r["lat"], r["lon"]]
+                    for r in regions.streets(key, args.district or "")]
+            print(_table(rows, ["خیابان", "منطقه", "lat", "lon"]))
+        else:
+            rows = [[r["fa"], r["lat"], r["lon"]] for r in regions.districts(key)]
+            print(_table(rows, ["منطقه", "lat", "lon"]))
+        print(f"\n{len(rows)} ردیف برای {regions.city_fa(key)}")
+        return 0
+    rows = []
+    for province in regions.provinces():
+        for city in province["cities"]:
+            rows.append([province["fa"], city["fa"], city.get("districts", 0),
+                         city.get("streets", 0), city["lat"], city["lon"]])
+    for country in regions.countries():
+        for city in country["cities"]:
+            rows.append([country["fa"], city["fa"], city.get("districts", 0),
+                         city.get("streets", 0), city["lat"], city["lon"]])
+    print(_table(rows[:args.limit], ["استان/کشور", "شهر", "منطقه", "خیابان", "lat", "lon"]))
+    print(f"\n{len(rows)} شهر داخلی (نمایش {min(args.limit, len(rows))})")
+    return 0
+
+
+def _tri(value):
+    """پرچم سه‌حالتهٔ CLI: None یعنی «فرقی نمی‌کند»."""
+    if value is None:
+        return None
+    return value in ("1", "true", "yes", True)
 
 
 def cmd_export(args: argparse.Namespace) -> int:
@@ -345,6 +453,9 @@ def build_parser() -> argparse.ArgumentParser:
                        help='صنف یا عبارت آزاد، مثال: "دندانپزشکی" یا "plumbers" '
                             '(با --all-niches اختیاری است)')
     p_run.add_argument("--city", help='شهر، مثال: "تهران" یا "Denver, CO"')
+    p_run.add_argument("--province", help='استان (برای مرکز استان یا جست‌وجوی سطح استان)')
+    p_run.add_argument("--district", help='منطقه/محله، مثال: "ونک" یا "چیتگر" (شعاع ۲۵۰۰ متر)')
+    p_run.add_argument("--street", help='خیابان، مثال: "خیابان ملاصدرا" (شعاع ۹۰۰ متر)')
     p_run.add_argument("--lat"); p_run.add_argument("--lon")
     p_run.add_argument("--keyword", action="append", help="کلیدواژه دستی (تکرارپذیر)")
     p_run.add_argument("--lang", default="en", choices=["en", "fa"], help="زبان کلیدواژه‌های ارسالی به موتور")
@@ -400,6 +511,44 @@ def build_parser() -> argparse.ArgumentParser:
     p_leads.add_argument("--q", help="جست‌وجو در نام/نشانی/دامنه/ایمیل")
     p_leads.add_argument("--limit", type=int, default=25)
     p_leads.set_defaults(func=cmd_leads)
+
+    p_search = sub.add_parser("search", help="جست‌وجوی قوی در همهٔ داده‌های جمع‌شده")
+    p_search.add_argument("query", nargs="?", default="", help="متن جست‌وجو (چند کلمه = AND)")
+    p_search.add_argument("--run", help="محدود به یک اجرا")
+    p_search.add_argument("--city"); p_search.add_argument("--province")
+    p_search.add_argument("--district", help="منطقه برای فیلتر شعاع")
+    p_search.add_argument("--street", help="خیابان برای فیلتر شعاع")
+    p_search.add_argument("--radius-m", type=int, default=0, help="شعاع متر (پیش‌فرض از سطح محدوده)")
+    p_search.add_argument("--segment", choices=["hot", "warm", "cold"])
+    p_search.add_argument("--status", choices=list(storage.LEAD_STATUSES))
+    p_search.add_argument("--niche-id"); p_search.add_argument("--group")
+    p_search.add_argument("--has-phone", nargs="?", const="1", choices=["1", "0"])
+    p_search.add_argument("--has-email", nargs="?", const="1", choices=["1", "0"])
+    p_search.add_argument("--has-website", nargs="?", const="1", choices=["1", "0"])
+    p_search.add_argument("--has-social", nargs="?", const="1", choices=["1", "0"])
+    p_search.add_argument("--has-instagram", nargs="?", const="1", choices=["1", "0"])
+    p_search.add_argument("--min-rating", type=float)
+    p_search.add_argument("--min-reviews", type=int)
+    p_search.add_argument("--min-score", type=int)
+    p_search.add_argument("--sort", default="score",
+                          choices=["score", "rating", "reviews", "title", "created_at", "completeness"])
+    p_search.add_argument("--order", default="desc", choices=["desc", "asc"])
+    p_search.add_argument("--limit", type=int, default=25)
+    p_search.add_argument("--offset", type=int, default=0)
+    p_search.add_argument("--export", choices=["csv", "json", "xlsx"], help="خروجی از نتیجهٔ فیلترشده")
+    p_search.add_argument("--out", help="مسیر فایل خروجی")
+    p_search.add_argument("--cols", default="contact", choices=list(exports.COLUMN_PRESETS))
+    p_search.add_argument("--full", action="store_true")
+    p_search.set_defaults(func=cmd_search)
+
+    p_areas = sub.add_parser("areas", help="فهرست استان/شهر/منطقه/خیابان (آفلاین)")
+    p_areas.add_argument("--city", help="شهر برای فهرست منطقه‌ها یا خیابان‌ها")
+    p_areas.add_argument("--province", help="استان (اختیاری)")
+    p_areas.add_argument("--district", help="فیلتر خیابان‌ها بر اساس منطقه")
+    p_areas.add_argument("--streets", action="store_true", help="خیابان‌ها به‌جای منطقه‌ها")
+    p_areas.add_argument("--provinces", action="store_true", help="فقط فهرست استان‌ها")
+    p_areas.add_argument("--limit", type=int, default=40)
+    p_areas.set_defaults(func=cmd_areas)
 
     p_export = sub.add_parser("export", help="خروجی فایل از یک اجرا")
     p_export.add_argument("run")

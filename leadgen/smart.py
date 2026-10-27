@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 from difflib import SequenceMatcher
 
-from . import geo, niches, pipeline, scoring
+from . import geo, niches, pipeline, regions, scoring
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ۱) هدف کاربر → پروفایل امتیازدهی (بدون اصطلاح فنی)
@@ -315,30 +315,94 @@ def _eta_minutes(depth: int, keyword_count: int, grid: int) -> tuple[int, int]:
 def parse(text: str = "", goal: str = "site", size: str = "standard", city: str = "",
           socials: bool = True, emails: bool = True, engine_mode: str = "auto",
           cols: str = "contact", export_fmt: str = "xlsx", allow_network: bool = False,
-          lat: str = "", lon: str = "") -> dict:
-    """جملهٔ کاربر → درخواست آمادهٔ اجرا + خلاصهٔ انسانی.
+          lat: str = "", lon: str = "", province: str = "", district: str = "",
+          street: str = "", radius: int = 0, niche_id: str = "",
+          all_trades: bool | None = None, limit: int = 0,
+          area_from_text: bool = True) -> dict:
+    """جملهٔ کاربر + انتخاب‌های منطقه‌ای → درخواست آمادهٔ اجرا + خلاصهٔ انسانی.
 
-    خروجی کاملاً قابل توضیح است: `detected` (چه فهمیدیم)، `summary` (یک جمله فارسی)،
-    `keywords` (پیش‌نمایش)، `eta_minutes` (زمان تقریبی)، `warnings` (هشدار بدون توقف)،
-    `ready`/`missing` (آیا می‌توان اجرا کرد) و `request` (بدنهٔ `POST /api/runs`).
+    سه ورودی هم‌زمان پشتیبانی می‌شود و اولویت با دقیق‌ترین است:
+      ۱. انتخاب صریح رابط: `province` / `city` / `district` / `street` / `niche_id` / `all_trades`
+      ۲. متن آزاد: «کافه در خیابان ملاصدرا ونک» → صنف + شهر + منطقه + خیابان از خود جمله
+      ۳. مختصات دستی `lat`/`lon` (برای نقطه‌ای که در جدول‌ها نیست)
+
+    خروجی کاملاً قابل توضیح است: `detected` (چه فهمیدیم، از جمله `area`)، `summary`،
+    `keywords` (پیش‌نمایش)، `eta_minutes`، `warnings` (هشدار بدون توقف)، `ready`/`missing`
+    و `request` (بدنهٔ `POST /api/runs`).
     """
     raw = _norm(text)
     is_fa = _persian_ratio(raw) >= 0.3 or not raw
     groups = detect_groups(raw)
 
+    # ── ۱) منطقه/خیابان از داخل جمله (فقط اگر کاربر صریح انتخاب نکرده باشد) ──
+    areas_in_text = regions.detect_area(raw) if area_from_text else []
+    for hit in areas_in_text:
+        if hit["kind"] == "district" and not district:
+            district = hit["name"]
+        elif hit["kind"] == "street" and not street:
+            street = hit["name"]
+    area_city_key = next((h["city"] for h in areas_in_text if h.get("city")), "")
+
+    # ── ۲) شهر: انتخاب صریح > نام داخل جمله > شهرِ منطقهٔ پیدا‌شده ───────────
     found_city = detect_city(raw, allow_network=allow_network)
-    city_query = _norm(city) or found_city["label_local"] or ""
+    detected_city = regions.city_key(city) or found_city.get("key") or area_city_key or ""
+    city_key = detected_city
+    city_fa = regions.city_fa(city_key) if city_key else ""
+    city_query = _norm(city) or found_city["label_local"] or city_fa
     if lat and lon:
         city_query = city_query or f"{lat},{lon}"
     if not city_query:
         city_query = "تهران" if is_fa else "Tehran"
+    if not city_key:
+        city_key = regions.city_key(city_query)      # برای آبشار منطقه/خیابان در رابط
+    lang = "fa" if is_fa else "en"
 
+    # ── ۳) استان: انتخاب صریح یا استنباط از شهر ────────────────────────────
+    if not province:
+        province = regions.CITY_PROVINCE.get(city_key, "")
+
+    # ── ۴) نقطهٔ دقیق + شعاع جست‌وجو بر اساس سطح انتخاب‌شده ─────────────────
+    try:
+        manual_lat = float(lat) if lat else None
+        manual_lon = float(lon) if lon else None
+    except (TypeError, ValueError):
+        manual_lat = manual_lon = None
+    area = regions.resolve(province=province, city=city_query, district=district,
+                           street=street, lat=manual_lat, lon=manual_lon, lang=lang)
+    if area.get("lat") and not (manual_lat and manual_lon):
+        lat, lon = f"{area['lat']:.6f}", f"{area['lon']:.6f}"
+    area_level = area.get("level") or ("city" if (lat and lon) else "")
+    area_label = area.get("label") or city_query          # کلی → جزئی (نمایش)
+    area_keyword = area.get("keyword_label") or city_query  # جزئی → کلی (کلیدواژه)
+    resolved_radius = int(radius or area.get("radius") or 0)
+    resolved_zoom = int(area.get("zoom") or 15)
+    half = max(0.004, resolved_radius * 1.3 / 111000.0) if resolved_radius else 0.0
+    area_bbox: list = []
+    if half and area.get("lat") and area_level in ("street", "district"):
+        area_bbox = [round(area["lat"] - half, 4), round(area["lat"] + half, 4),
+                     round(area["lon"] - half, 4), round(area["lon"] + half, 4)]
+
+    # ── ۵) صنف: نام‌های جغرافیایی از جمله حذف می‌شوند تا صنف خالص بماند ────
     query_for_niche = raw
     if found_city["matched"]:
-        query_for_niche = re.sub(re.escape(found_city["matched"]), " ", raw, flags=re.IGNORECASE)
+        query_for_niche = re.sub(re.escape(found_city["matched"]), " ", query_for_niche,
+                                 flags=re.IGNORECASE)
+    for hit in areas_in_text:
+        query_for_niche = re.sub(re.escape(hit["name"]), " ", query_for_niche, flags=re.IGNORECASE)
     remainder = _strip_known(query_for_niche, found_city, groups)
 
-    mode, named, groups = choose_mode(raw, remainder, groups)
+    forced_niche = niches.find_niche(niche_id) if _norm(niche_id) else None
+    if forced_niche is not None and forced_niche.custom:
+        forced_niche = None
+    if all_trades:
+        mode, named = "sweep", matched_niches(remainder)
+        groups = groups or sorted({n.group for n in named})
+    elif forced_niche is not None:
+        mode, named = "single", [forced_niche]
+    elif not raw and not (district or street or city or province):
+        mode, named = "empty", []
+    else:
+        mode, named, groups = choose_mode(raw, remainder, groups)
     all_trades = mode == "sweep"
 
     niche = None
@@ -346,16 +410,33 @@ def parse(text: str = "", goal: str = "site", size: str = "standard", city: str 
         niche = named[0] if named else niches.find_niche(remainder or raw)
 
     goal_cfg, size_cfg = goal_of(goal), size_of(size)
-    lang = "fa" if is_fa else "en"
+    if lang == "en" and area_keyword:
+        # کلیدواژهٔ انگلیسی نباید نام فارسی شهر یا ویرگول عربی داشته باشد
+        latin_city = geo.city_label(city_key, city_query) if city_key else city_query
+        for persian in (city_fa, city_query):
+            if persian and persian in area_keyword:
+                area_keyword = area_keyword.replace(persian, latin_city)
+        area_keyword = re.sub(r"\s*،\s*", ", ", area_keyword).strip(", ")
 
     request: dict = {
-        "city_query": city_query, "lat": lat, "lon": lon, "lang": lang,
+        "city_query": area_label, "lat": lat, "lon": lon, "lang": lang,
         "profile": goal_cfg["profile"], "socials": bool(socials), "emails": bool(emails),
         "deep_emails": bool(emails), "signals": True, "engine_mode": engine_mode,
         "export_fmt": export_fmt, "cols": cols,
         "depth": size_cfg["depth"], "grid": size_cfg["grid"], "limit": size_cfg["limit"],
         "max_time": size_cfg["max_time"], "fast_mode": size_cfg["id"] == "quick",
+        # سطح منطقه‌ای — پایپ‌لاین از همین عدد‌ها نقطه و شعاع را برمی‌دارد
+        "province": province, "district": district, "street": street,
+        "area_label": area_keyword, "area_level": area_level, "bbox": area_bbox,
+        "area_applied": True,
     }
+    if resolved_radius:
+        request["radius"] = resolved_radius
+        request["zoom"] = resolved_zoom
+    if area_level in ("street", "district"):
+        request["grid"] = 0                     # شعاع کوچک است؛ کاشی‌بندی لازم نیست
+    if limit:
+        request["limit"] = int(limit)
     if all_trades:
         request.update({"all_niches": True, "niche_groups": groups,
                         "max_niches": size_cfg["max_niches"],
@@ -370,43 +451,59 @@ def parse(text: str = "", goal: str = "site", size: str = "standard", city: str 
 
     # پیش‌نمایش کلیدواژه‌ها و زمان تقریبی — با همان توابع پایپ‌لاین، بدون اجرای موتور
     try:
-        place = pipeline.resolve_city(request["city_query"], lat, lon, allow_network=allow_network)
+        place = pipeline.resolve_city(city_query, lat, lon, allow_network=allow_network)
+        place = dict(place or {})
+        if lang == "fa":
+            place["label_local"] = area_keyword
+        elif place.get("country") != "IR":
+            place["label"] = area_keyword
         keywords, keyword_count = _preview_keywords(
             all_trades, groups, niche, request.get("max_niches", 6),
             request.get("keywords_per_niche", 2), place, lang)
-        place_label = place.get("label_local") if lang == "fa" else place.get("label")
-        city_key = place.get("key") or found_city["key"]
+        place_label = area_label
         country = place.get("country") or found_city["country"]
+        city_key = city_key or place.get("key") or found_city["key"]
         if all_trades:
             plan_size = max(1, keyword_count // max(1, request.get("keywords_per_niche", 1)))
-            niche_fa, niche_id = f"همهٔ مشاغل ({plan_size} صنف)", "all-trades"
+            niche_fa, niche_id_out = f"همهٔ مشاغل ({plan_size} صنف)", "all-trades"
         else:
-            niche_fa, niche_id = (niche.fa if niche else ""), (niche.id if niche else "")
+            niche_fa, niche_id_out = (niche.fa if niche else ""), (niche.id if niche else "")
     except Exception:                                  # پیش‌نمایش هرگز نباید جلوی اجرا را بگیرد
         keywords, keyword_count = [], 0
-        place_label, city_key, country = city_query, found_city["key"], found_city["country"]
-        niche_fa = "همهٔ مشاگل" if all_trades else (niche.fa if niche else "")
-        niche_id = "all-trades" if all_trades else (niche.id if niche else "")
+        place_label, city_key, country = area_label, city_key, found_city["country"]
+        niche_fa = "همهٔ مشاغل" if all_trades else (niche.fa if niche else "")
+        niche_id_out = "all-trades" if all_trades else (niche.id if niche else "")
 
     eta = _eta_minutes(request["depth"], max(1, keyword_count), request["grid"])
 
     # ── خلاصهٔ انسانی ──────────────────────────────────────────────────────
     ready = mode != "empty" and bool(request.get("niche_query") or all_trades)
+    scope = f" (شعاع {resolved_radius:,} متر)".replace(",", "٬") if resolved_radius else ""
     if not ready:
-        summary = "چه شغلی را در کدام شهر می‌خواهید؟ مثال: «دندانپزشکی در تهران» یا «همه مشاغل در مشهد»."
+        summary = ("چه شغلی را در کدام منطقه می‌خواهید؟ مثال: «دندانپزشکی در ونک تهران» یا "
+                   "استان/شهر/منطقه را از فهرست‌ها انتخاب کنید و «همهٔ کسب‌وکارها» را بزنید.")
     else:
         limit_txt = f"{request['limit']} لید" if request["limit"] else "هرچه پیدا شود"
-        summary = (f"{limit_txt} «{niche_fa}» در {place_label} برای هدف «{goal_cfg['fa']}» — "
-                   f"حالت {size_cfg['fa']}، {keyword_count} کلیدواژه، حدود {eta[0]}–{eta[1]} دقیقه")
+        summary = (f"{limit_txt} «{niche_fa}» در {place_label}{scope} برای هدف "
+                   f"«{goal_cfg['fa']}» — حالت {size_cfg['fa']}، {keyword_count} کلیدواژه، "
+                   f"حدود {eta[0]}–{eta[1]} دقیقه")
 
     warnings: list[str] = []
     if not ready:
-        warnings.append("صنف (یا «همه مشاغل») را بنویسید تا اجرا شروع شود.")
-    if not found_city["key"] and not (lat and lon):
+        warnings.append("صنف (یا «همهٔ کسب‌وکارها») را انتخاب کنید تا اجرا شروع شود.")
+    if not detected_city and not (manual_lat and manual_lon):
         warnings.append(f"شهر از جمله تشخیص داده نشد؛ «{place_label}» در نظر گرفته شد. "
-                        "می‌توانید نام شهر را بنویسید یا از پیشنهادها انتخاب کنید.")
+                        "می‌توانید نام شهر را بنویسید یا از فهرست انتخاب کنید.")
     if niche and niche.custom and not all_trades:
         warnings.append(f"«{niche.fa}» در کاتالوگ ۹۱ صنفی نبود؛ به‌عنوان صنف سفارشی جست‌وجو می‌شود.")
+    if area_level == "street":
+        warnings.append(f"جست‌وجو در سطح خیابان است ({resolved_radius} متر). اگر نتیجه کم بود، "
+                        "خیابان را خالی بگذارید تا کل منطقه جست‌وجو شود.")
+    elif area_level == "province":
+        warnings.append("سطح استان بسیار وسیع است؛ بهتر است شهر را هم انتخاب کنید تا نتیجه "
+                        "دقیق‌تر و سریع‌تر شود.")
+    elif district and not area.get("lat"):
+        warnings.append(f"منطقهٔ «{district}» در جدول مختصات نبود؛ مرکز شهر مبنا قرار گرفت.")
     if size_cfg["id"] == "deep":
         warnings.append("حالت «کامل» سنگین است (کاشی‌بندی شهر + عمق بالا). بدون پراکسی ممکن است IP شما "
                         "موقتاً نزد گوگل محدود شود؛ اجرا متوقف نمی‌شود ولی هشدارش را جدی بگیرید.")
@@ -419,7 +516,7 @@ def parse(text: str = "", goal: str = "site", size: str = "standard", city: str 
         "ready": ready,
         "missing": [] if ready else ["niche"],
         "detected": {
-            "niche_id": niche_id, "niche_fa": niche_fa,
+            "niche_id": niche_id_out, "niche_fa": niche_fa,
             "custom_niche": bool(niche and niche.custom),
             "group": niche.group if niche else (groups[0] if groups else ""),
             "named_niches": [n.fa for n in named],
@@ -427,13 +524,26 @@ def parse(text: str = "", goal: str = "site", size: str = "standard", city: str 
             "all_trades": all_trades, "groups": groups, "lang": lang,
             "goal": goal_cfg, "size": size_cfg,
             "keyword_count": keyword_count,
+            "area": {
+                "province": province,
+                "province_fa": regions.PROVINCES[province]["fa"] if province in regions.PROVINCES else "",
+                "city": city_query, "city_key": city_key, "city_fa": city_fa,
+                "district": district, "street": street,
+                "label": area_label, "keyword_label": area_keyword,
+                "level": area_level, "level_fa": regions.LEVEL_FA.get(area_level, ""),
+                "lat": area.get("lat"), "lon": area.get("lon"),
+                "radius": resolved_radius, "zoom": resolved_zoom, "bbox": area_bbox,
+                "districts": len(regions.DISTRICTS.get(city_key, [])),
+                "streets": len(regions.STREETS.get(city_key, [])),
+                "in_text": [h["name"] for h in areas_in_text],
+            },
         },
         "keywords": keywords,
         "eta_minutes": list(eta),
         "summary": summary,
         "warnings": warnings,
         "request": request,
-        "needs_confirmation": bool(not found_city["key"] and not (lat and lon)),
+        "needs_confirmation": bool(not detected_city and not (manual_lat and manual_lon)),
     }
 
 

@@ -24,6 +24,7 @@
   </div>
   <nav class="sitenav" aria-label="ناوبری">
     <a href="app/">✨ وب‌اپ ساده</a>
+    <a href="mini/">🧭 نسخهٔ جمع‌وجور</a>
     <a href="#features">امکانات</a>
     <a href="#how">گردش کار</a>
     <a href="#demo">دموی زنده</a>
@@ -48,6 +49,7 @@
     </p>
     <div class="hero-cta">
       <a class="primary" href="app/">✨ رابط ساده را همین‌جا امتحان کن</a>
+      <a class="primary" href="mini/" style="background:linear-gradient(135deg,#34d399,#0ea5e9)">🧭 نسخهٔ جمع‌وجور (استان ← شهر ← منطقه ← خیابان)</a>
       <a class="ghost" href="#demo">🔎 دموی زنده را ببین</a>
       <a class="ghost" href="#install">🚀 نصب در ۳ دستور</a>
       <a class="ghost" href="https://github.com/rahmaniho/Skill" target="_blank" rel="noopener">⭐ ستاره روی GitHub</a>
@@ -56,7 +58,7 @@
     <div class="hero-stats" id="heroStats">
       <div class="hstat"><b id="stNiches">۹۱</b><span>صنف آماده در کاتالوگ</span></div>
       <div class="hstat"><b id="stGroups">۱۳</b><span>گروه شغلی (جاروی تمامی مشاغل)</span></div>
-      <div class="hstat"><b id="stCities">۷۰</b><span>شهر با مختصات داخلی (آفلاین)</span></div>
+      <div class="hstat"><b id="stCities">۱۶۳</b><span>شهر با مختصات داخلی (آفلاین)</span></div>
       <div class="hstat"><b id="stCols">۳۴</b><span>ستون خام موتور + فیلدهای محاسبه‌شده</span></div>
       <div class="hstat"><b id="stPresets">۴</b><span>پیش‌تنظیم ستون خروجی</span></div>
       <div class="hstat"><b id="stDeps">۰</b><span>وابستگی پایتون (فقط کتابخانه استاندارد)</span></div>
@@ -67,7 +69,7 @@
   <section id="features">
     <div class="section-head">
       <span class="eyebrow">امکانات</span>
-      <h2>نه قابلیتی که این برنامه را از یک اسکراپر ساده جدا می‌کند</h2>
+      <h2>ده قابلیتی که این برنامه را از یک اسکراپر ساده جدا می‌کند</h2>
       <p>همه‌چیز فارسی، همه‌چیز محلی: داده‌ها روی دستگاه خودتان می‌ماند و هیچ سرویس ابری یا کلید API پولی لازم نیست.</p>
     </div>
     <div class="features">
@@ -76,6 +78,19 @@
         <h3>رابط ساده: یک جمله → خروجی</h3>
         <p>همان موتور و همان مغز، اما بدون هیچ تنظیم فنی: می‌نویسید «دندانپزشکی در تهران» یا «همه مشاغل در مشهد» و برنامه صنف، شهر، زبان، کلیدواژه‌ها، عمق جست‌وجو و حجم کار را خودش تشخیص می‌دهد؛ پیش از اجرا هم زمان تقریبی و خلاصهٔ تصمیمش را نشان می‌دهد.</p>
         <ul><li><a href="app/">همین‌جا امتحان کنید</a> — نسخهٔ نمایشی، بدون سرور</li><li>پیشنهاد خودکار صنف و شهر + انتخاب «هدف» و «اندازه» با یک کلیک</li><li>تنظیمات پیشرفته پشت یک بخش بازشو: تا لازم نشود، دیده نمی‌شوند</li></ul>
+      </article>
+      <article class="feature">
+        <div class="ico">🗺️</div>
+        <h3>نسخهٔ جمع‌وجور: استان ← شهر ← منطقه ← خیابان</h3>
+        <p>یک صفحهٔ کوچک با یک جعبهٔ جست‌وجو و چهار انتخابگر آبشاری. محدوده را تا سطح یک خیابان
+        کوچک کنید (شعاع ۹۰۰ متر)، «همهٔ کسب‌وکارها» را بزنید یا یک صنف خاص را انتخاب کنید؛
+        بعد با فیلترهای تماس، امتیاز، ستاره و شعاع، همان داده‌ها را غربال کنید.</p>
+        <ul>
+          <li><a href="mini/">همین‌جا امتحان کنید</a> — نسخهٔ نمایشی با دادهٔ نمونه</li>
+          <li>۳۱ استان، ۱۶۳ شهر (۱۱۷ شهر ایرانی)، ۲۵۰+ منطقه و ۱۳۰+ خیابان با مختصات آماده — بدون اینترنت</li>
+          <li>«جست‌وجوی قوی»: چند کلمه‌ای، روی همهٔ اجراهای قبلی، با فیلتر شعاع حول منطقهٔ انتخابی</li>
+          <li>نام منطقه/خیابان را داخل جمله هم می‌فهمد: «کافه در چیتگر تهران»، «cafes in Saadat Abad»</li>
+        </ul>
       </article>
       <article class="feature">
         <div class="ico">🧭</div>
@@ -138,7 +153,7 @@
     <div class="steps">
       <div class="step"><b>انتخاب صنف و شهر</b>کاتالوگ ۹۱ صنفی یا متن آزاد؛ نزدیک‌ترین صنف با تطبیق فارسی/انگلیسی پیدا می‌شود.<code>niches.find_niche()</code></div>
       <div class="step"><b>ساخت کلیدواژه</b>مکان همیشه داخل کلیدواژه است (قاعده اسکیل): «دندانپزشکی در تهران».<code>build_keywords()</code></div>
-      <div class="step"><b>مختصات و کاشی‌بندی</b>۷۰ شهر داخلی؛ برای پوشش کامل، شبکه n×n با radius و zoom محاسبه‌شده.<code>geo.grid_cells()</code></div>
+      <div class="step"><b>مختصات و کاشی‌بندی</b>۱۶۳ شهر داخلی + ۳۱ استان و منطقه/خیابان؛ برای پوشش کامل، شبکه n×n با radius و zoom محاسبه‌شده.<code>geo.grid_cells()</code> · <code>regions.resolve()</code></div>
       <div class="step"><b>اجرای job</b>یک job در هر لحظه؛ <code>lat/lon</code> رشته، <code>max_time</code> ثانیه، <code>depth</code> و <code>email=true</code>.<code>POST /api/v1/jobs</code></div>
       <div class="step"><b>نظرسنجی و دانلود</b>وضعیت <code>working → ok|failed</code>؛ سپس CSV خام ۳۴ ستونی.<code>GET /jobs/{id}/download</code></div>
       <div class="step"><b>یکتاسازی و پاک‌سازی</b>حذف تکراری بر اساس <code>place_id/cid/link</code>، نرمال‌سازی تلفن و ایمیل، تفکیک <code>place_status</code>.<code>geo.dedupe()</code></div>
@@ -334,7 +349,7 @@ python3 -m leadgen.cli run --all-niches --city <span class="k">"مشهد"</span>
   --groups <span class="k">"سلامت و پزشکی,غذا و نوشیدنی"</span> --engine demo</pre>
         <h3 style="margin-top:1rem">🧰 دستورهای دیگر</h3>
 <pre class="code">python3 -m leadgen.cli niches            <span class="c"># ۹۱ صنف در ۱۳ گروه</span>
-python3 -m leadgen.cli cities            <span class="c"># ۷۰ شهر آفلاین</span>
+python3 -m leadgen.cli cities            <span class="c"># ۱۶۳ شهر آفلاین</span>
 python3 -m leadgen.cli profiles          <span class="c"># پروفایل‌های امتیازدهی</span>
 python3 -m leadgen.cli runs              <span class="c"># فهرست اجراها</span>
 python3 -m leadgen.cli leads &lt;run_id&gt; --segment hot
@@ -358,6 +373,14 @@ python3 -m leadgen.cli rescore &lt;run_id&gt; --profile recruitment</pre>
             <tr><td><code>GET /api/runs/{id}/export?fmt=xlsx&amp;cols=contact</code></td><td>دانلود فایل</td></tr>
             <tr><td><code>POST /api/runs/{id}/rescore</code></td><td>امتیازدهی مجدد با پروفایل دیگر</td></tr>
             <tr><td><code>GET /api/leads/{id}</code></td><td>پرونده کامل لید + breakdown امتیاز</td></tr>
+            <tr><td><code>POST /api/smart/parse</code></td><td>تجزیهٔ جملهٔ آزاد به درخواست اجرا (صنف + شهر + منطقه/خیابان + هدف + اندازه)</td></tr>
+            <tr><td><code>GET /api/smart/options</code> · <code>/suggest</code></td><td>هدف‌ها، اندازه‌ها، پیش‌تنظیم‌ها + پیشنهاد صنف/شهر</td></tr>
+            <tr><td><code>GET /api/regions</code></td><td>درخت استان ← شهر (۳۱ استان، ۱۶۳ شهر) + شعاع هر سطح</td></tr>
+            <tr><td><code>GET /api/regions/districts</code> · <code>/streets</code></td><td>منطقه‌ها و خیابان‌های یک شهر با مختصات</td></tr>
+            <tr><td><code>GET /api/regions/search?q=</code></td><td>پیشنهاد زندهٔ منطقه/خیابان + تشخیص نام‌ها داخل جمله</td></tr>
+            <tr><td><code>GET /api/regions/resolve</code></td><td>نقطه، شعاع، زوم و برچسب یک محدودهٔ انتخابی</td></tr>
+            <tr><td><code>GET /api/search</code></td><td>جست‌وجوی قوی در همهٔ اجراها: چند توکنی + فیلتر تماس/امتیاز/شعاع + facets</td></tr>
+            <tr><td><code>GET /api/search/export?fmt=xlsx</code></td><td>خروجی از همان مجموعهٔ فیلترشده (csv/xlsx/json)</td></tr>
             <tr><td><code>POST /api/import</code></td><td>وارد کردن CSV/JSON موجود (multipart)</td></tr>
             <tr><td><code>POST /api/niches/find</code> · <code>POST /api/geocode</code></td><td>تطبیق صنف و مختصات‌یابی شهر</td></tr>
             <tr><td><code>DELETE /api/runs/{id}</code></td><td>حذف اجرا و لیدهایش</td></tr>
