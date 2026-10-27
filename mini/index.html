@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>لیدژن مینی — پیدا کردن همهٔ کسب‌وکارهای یک منطقه</title>
+<meta name="description" content="نسخهٔ جمع‌وجور لیدژن: یک جعبهٔ جست‌وجو + انتخاب استان، شهر، منطقه و خیابان برای یافتن و فیلتر کردن همهٔ کسب‌وکارهای یک محدوده.">
+<link rel="icon" href="favicon.svg">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="logo" aria-hidden="true">◎</span>
+    <div>
+      <b>لیدژن <em>مینی</em></b>
+      <small>یک جست‌وجو + استان ← شهر ← منطقه ← خیابان</small>
+    </div>
+  </div>
+  <nav class="links">
+    <span class="pill" id="enginePill">در حال بررسی موتور…</span>
+    <a href="/" id="fullLink">نسخهٔ کامل</a>
+    <a href="/studio/" id="studioLink">داشبورد حرفه‌ای</a>
+    <button class="icon" id="themeBtn" type="button" title="تغییر پوسته">🌙</button>
+  </nav>
+</header>
+
+<main>
+  <!-- ۱) جست‌وجوی قوی -->
+  <section class="card search">
+    <div class="search-row">
+      <input id="q" type="search" autocomplete="off" spellcheck="false"
+             placeholder="چه کسب‌وکاری در کدام منطقه؟ مثال: کافه در ونک تهران · همهٔ کسب‌وکارهای چیتگر · دندانپزشکی مشهد">
+      <button class="primary" id="findBtn" type="button">🔍 پیدا کن</button>
+      <button class="ghost" id="storedBtn" type="button" title="جست‌وجو در داده‌هایی که قبلاً جمع شده‌اند">📚 داده‌های قبلی</button>
+    </div>
+    <div class="suggest" id="suggest" hidden></div>
+    <p class="hint" id="parseHint">استان و شهر را انتخاب کنید یا همین‌جا بنویسید؛ منطقه و خیابان هم از متن فهمیده می‌شود.</p>
+  </section>
+
+  <!-- ۲) انتخابگرهای آبشاری -->
+  <section class="card selectors">
+    <div class="grid">
+      <label>استان / کشور
+        <select id="selProvince"><option value="">—</option></select>
+      </label>
+      <label>شهر
+        <select id="selCity"><option value="">—</option></select>
+      </label>
+      <label>منطقه
+        <select id="selDistrict"><option value="">همهٔ منطقه‌ها</option></select>
+      </label>
+      <label>خیابان
+        <select id="selStreet"><option value="">همهٔ خیابان‌ها</option></select>
+      </label>
+    </div>
+    <div class="grid">
+      <label>صنف
+        <select id="selNiche"><option value="">از متن یا «همهٔ کسب‌وکارها»</option></select>
+      </label>
+      <label>هدف فروش
+        <select id="selGoal"></select>
+      </label>
+      <label>وسعت جست‌وجو
+        <select id="selSize"></select>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="allTrades">
+        <span>همهٔ کسب‌وکارهای این محدوده (جاروی اصناف)</span>
+      </label>
+    </div>
+    <div class="area-info" id="areaInfo">
+      <span class="dot"></span> محدودهٔ انتخابی: <b>—</b>
+    </div>
+  </section>
+
+  <!-- ۳) فیلترها -->
+  <section class="card filters">
+    <div class="frow" id="segmentRow"></div>
+    <div class="frow" id="contactRow"></div>
+    <div class="frow inputs">
+      <label>امتیاز ≥<input id="minScore" type="number" min="0" max="100" step="1" placeholder="۰"></label>
+      <label>ستاره ≥<input id="minRating" type="number" min="0" max="5" step="0.1" placeholder="۰"></label>
+      <label>تعداد نظر ≥<input id="minReviews" type="number" min="0" step="1" placeholder="۰"></label>
+      <label>وضعیت پیگیری<select id="selStatus"></select></label>
+      <label>مرتب‌سازی<select id="selSort"></select></label>
+      <label class="grow">جست‌وجو در نتایج<input id="inResults" type="search" placeholder="نام، نشانی، تلفن…"></label>
+      <label class="check"><input type="checkbox" id="geoOnly"><span>فقط داخل محدودهٔ انتخابی</span></label>
+      <button class="ghost small" id="clearFilters" type="button">پاک کردن فیلترها</button>
+    </div>
+  </section>
+
+  <!-- ۴) وضعیت اجرا -->
+  <section class="card run" id="runCard" hidden>
+    <div class="run-head">
+      <b id="runTitle">اجرا</b>
+      <span id="runStage"></span>
+      <button class="ghost small" id="hideRun" type="button">پنهان کردن</button>
+    </div>
+    <div class="bar"><i id="runBar"></i></div>
+    <p class="run-msg" id="runMsg"></p>
+  </section>
+
+  <!-- ۵) نتایج -->
+  <section class="card results">
+    <div class="res-head">
+      <div class="res-title">
+        <b id="resCount">—</b>
+        <span id="resNote"></span>
+      </div>
+      <div class="exports">
+        <select id="selCols" title="ستون‌های خروجی"></select>
+        <button class="ghost small" data-fmt="csv" type="button">CSV</button>
+        <button class="ghost small" data-fmt="xlsx" type="button">XLSX</button>
+        <button class="ghost small" data-fmt="json" type="button">JSON</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table id="table">
+        <thead>
+          <tr>
+            <th>کسب‌وکار</th>
+            <th>صنف</th>
+            <th>منطقه / نشانی</th>
+            <th>تلفن</th>
+            <th>ایمیل</th>
+            <th>سایت</th>
+            <th>شبکه‌ها</th>
+            <th class="num">★</th>
+            <th class="num">نظر</th>
+            <th class="num">امتیاز</th>
+            <th>وضعیت</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+      <p class="empty" id="emptyRow" hidden>نتیجه‌ای پیدا نشد.</p>
+    </div>
+    <div class="pager" id="pager"></div>
+  </section>
+</main>
+
+<footer class="foot">
+  <span>داده‌های واقعی با موتور محلی (<code>docker compose up -d</code>) جمع می‌شوند؛ بدون آن، برنامه روی دادهٔ نمونه کار می‌کند.</span>
+  <span>خروجی را به‌عنوان «سرنخ» بررسی کنید — قوانین GDPR/CAN-SPAM و شرایط گوگل را رعایت کنید.</span>
+</footer>
+
+<div class="modal" id="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <button class="icon close" id="modalClose" type="button" title="بستن">✕</button>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+<script src="app.js"></script>
+</body>
+</html>

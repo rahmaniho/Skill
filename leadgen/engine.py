@@ -265,6 +265,14 @@ class DemoEngine:
             niche = niches.get(per_keyword) or niche
         category = getattr(niche, "fa" if lang_fa else "en", keyword.split(" in ")[0].title())
 
+        # اگر کاربر منطقه/خیابان مشخصی انتخاب کرده، نشانی‌ها همان‌جا ساخته می‌شوند
+        area_hood = str(body.get("area_hood") or "").strip()
+        # city_label می‌تواند خودش شامل نام منطقه باشد («چیتگر، تهران») → حذف تکرار
+        city_short = city_label
+        if area_hood and city_short:
+            trimmed = (city_short.replace(f"{area_hood}، ", "").replace(f"{area_hood}, ", "")
+                       .replace(area_hood, "").strip(" ،,"))
+            city_short = trimmed or city_label
         hoods = list(NEIGHBORHOODS.get(city_key, []))
         if not hoods:
             hoods = ["مرکز شهر", "شمال شهر", "خیابان اصلی"] if lang_fa else \
@@ -278,8 +286,8 @@ class DemoEngine:
             biz = category if lang_fa else keyword.split(" in ")[0].rstrip("s")
             name = rnd.choice(family)
             for _try in range(6):
-                title = rnd.choice(templates).format(biz=biz, name=name,
-                                                     hood=rnd.choice(hoods)).strip()
+                hood = area_hood if (area_hood and rnd.random() < 0.75) else rnd.choice(hoods)
+                title = rnd.choice(templates).format(biz=biz, name=name, hood=hood).strip()
                 if title not in used_names:
                     break
                 name = rnd.choice(family)
@@ -305,12 +313,12 @@ class DemoEngine:
             # نشانی: برای شهرهای غیرایرانی نام خیابان لاتین می‌ماند (حتی در خروجی فارسی)
             use_fa_streets = lang_fa and (country in ("IR", "") or not country)
             street = rnd.choice(_STREETS_FA if use_fa_streets else _STREETS_EN)
-            if use_fa_streets:
-                address = f"{street}، {rnd.choice(hoods)}، {city_label}"
-            elif lang_fa:
-                address = f"{street}، {rnd.choice(hoods)}، {city_label}"
+            hood = area_hood if (area_hood and rnd.random() < 0.75) else rnd.choice(hoods)
+            place_label = city_short if area_hood else city_label
+            if use_fa_streets or lang_fa:
+                address = f"{street}، {hood}، {place_label}"
             else:
-                address = f"{rnd.randint(1, 900)} {street}, {city_label}"
+                address = f"{rnd.randint(1, 900)} {street}, {place_label}"
             price = rnd.choice(["", "", "$", "$$", "$$$"]) if not lang_fa else \
                 rnd.choice(["", "", "ارزان", "متوسط", "گران"])
             cid = f"{self._seed(title, i, index):d}"

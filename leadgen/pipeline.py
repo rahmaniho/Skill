@@ -20,6 +20,7 @@ import traceback
 from dataclasses import dataclass, field
 from typing import Callable
 
+from . import regions
 from . import analytics, campaign, config, enrich, exports, geo, niches, scoring, storage
 from .engine import Engine, EngineError, make_engine
 
@@ -64,12 +65,22 @@ class ScrapeRequest:
     keywords_per_job: int = 8
     cols: str = "lead"               # پیش‌تنظیم ستون‌های خروجی: lead|contact|location|all
     run_id: str = ""                 # اگر server از قبل شناسه ساخته، همان را ادامه می‌دهیم
+    # ── سطح منطقه‌ای (استان/شهر/منطقه/خیابان) — رابط جمع‌وجور ──────────────
+    province: str = ""               # شناسهٔ استان یا کد کشور
+    district: str = ""               # نام منطقه/محله
+    street: str = ""                 # نام خیابان
+    bbox: list = field(default_factory=list)   # جعبهٔ محدودکنندهٔ دلخواه [s,n,w,e]
+    area_label: str = ""             # برچسب خوانای منطقه (برای نمایش در خروجی)
+    area_level: str = ""             # street|district|city|province
+    area_applied: bool = False       # آیا نقطهٔ منطقه یک‌بار محاسبه شده؟
+    zoom_set: bool = False           # zoom صریحاً داده شده؟ وگرنه از سطح منطقه می‌آید
 
     @classmethod
     def from_dict(cls, data: dict) -> "ScrapeRequest":
         known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
         clean = {k: v for k, v in (data or {}).items() if k in known}
-        for int_key in ("depth", "grid", "radius", "zoom", "max_time", "limit"):
+        clean["zoom_set"] = "zoom" in clean
+        for int_key in ("depth", "grid", "radius", "zoom", "max_time", "limit", "area_radius"):
             if int_key in clean and clean[int_key] is not None:
                 try:
                     clean[int_key] = int(clean[int_key])
@@ -77,8 +88,15 @@ class ScrapeRequest:
                     clean.pop(int_key)
         if isinstance(clean.get("niche_groups"), str):
             clean["niche_groups"] = [g.strip() for g in clean["niche_groups"].split(",") if g.strip()]
+        if clean.get("bbox"):
+            try:
+                clean["bbox"] = [float(x) for x in clean["bbox"]]
+                if len(clean["bbox"]) != 4:
+                    clean.pop("bbox")
+            except (TypeError, ValueError):
+                clean.pop("bbox")
         for bool_key in ("fast_mode", "emails", "deep_emails", "socials", "signals",
-                         "keep_full_columns", "all_niches"):
+                         "keep_full_columns", "all_niches", "area_applied"):
             if bool_key in clean and clean[bool_key] is not None:
                 clean[bool_key] = bool(clean[bool_key])
         return cls(**clean)
@@ -107,6 +125,58 @@ def _progress(on_progress: ProgressFn | None, run_id: str, payload: dict | None 
 
 def resolve_niche(query: str) -> niches.Niche:
     return niches.find_niche(query or "")
+
+
+def apply_area(request: "ScrapeRequest") -> dict:
+    """سطح منطقه‌ای (استان/شهر/منطقه/خیابان) را به یک نقطه + شعاع + جعبه تبدیل می‌کند.
+
+    این تابع `request` را درجا به‌روز می‌کند تا هر سه مسیر (CLI، API، وب‌اپ) یکسان کار کنند
+    و دومین فراخوانی آن بی‌اثر است (idempotent).
+    """
+    if getattr(request, "area_applied", False):
+        return {"lat": request.lat, "lon": request.lon, "label": request.area_label,
+                "level": request.area_level, "radius": request.radius,
+                "bbox": list(request.bbox or [])}
+    if not (request.province or request.district or request.street):
+        request.area_applied = True
+        return {"lat": request.lat, "lon": request.lon, "label": request.area_label,
+                "level": request.area_level, "radius": request.radius,
+                "bbox": list(request.bbox or [])}
+
+    try:
+        lat_f = float(request.lat) if request.lat else None
+        lon_f = float(request.lon) if request.lon else None
+    except (TypeError, ValueError):
+        lat_f = lon_f = None
+
+    area = regions.resolve(province=request.province, city=request.city_query,
+                           district=request.district, street=request.street,
+                           lat=lat_f, lon=lon_f, lang=request.lang or "fa")
+    request.area_applied = True
+    if not area.get("lat"):
+        return {"lat": request.lat, "lon": request.lon, "label": request.area_label,
+                "level": "", "radius": request.radius}
+
+    request.lat = f"{area['lat']:.6f}"
+    request.lon = f"{area['lon']:.6f}"
+    request.radius = int(request.radius or area["radius"])
+    # زوم مناسبِ سطح: خیابان ۱۶، منطقه ۱۵، شهر ۱۳، استان ۱۰ (مگر کاربر خودش zoom داده باشد)
+    if area.get("zoom") and not request.zoom_set:
+        request.zoom = int(area["zoom"])
+    request.city_query = area["label"] or request.city_query
+    request.area_label = area.get("keyword_label") or area["label"]
+    request.area_level = area["level"]
+    if area["level"] in ("street", "district"):
+        request.grid = 0                     # شعاع کوچک است؛ کاشی‌بندی لازم نیست
+        request.fast_mode = bool(request.fast_mode)
+    # جعبهٔ محدودکننده فقط برای سطح خیابان/منطقه (وگرنه شهرهای دیگرِ استان بیرون می‌افتند)
+    if area["level"] in ("street", "district"):
+        half = max(0.004, request.radius * 1.3 / 111000.0)
+        lat_f, lon_f = area["lat"], area["lon"]
+        request.bbox = [round(lat_f - half, 4), round(lat_f + half, 4),
+                        round(lon_f - half, 4), round(lon_f + half, 4)]
+    return {"lat": request.lat, "lon": request.lon, "label": request.area_label,
+            "level": request.area_level, "radius": request.radius, "bbox": request.bbox}
 
 
 def resolve_city(query: str, lat: str = "", lon: str = "", allow_network: bool = True) -> dict:
@@ -201,6 +271,7 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
 
     try:
         # ── ۱) صنف و شهر ─────────────────────────────────────────────────────
+        apply_area(request)
         niche = resolve_niche(request.niche_query)
         _progress(on_progress, run_id, {"stage": "resolve", "status": "running", "percent": 4,
                                      "message": f"صنف: «{niche.fa}» — شهر: «{request.city_query}»"})
@@ -211,6 +282,16 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                 f"مکان «{request.city_query}» پیدا نشد. یک شهر شناخته‌شده بنویسید یا "
                 f"lat/lon را دستی بدهید (فهرست شهرها: GET /api/cities)."
             )
+        if request.bbox and len(request.bbox) == 4:
+            city = dict(city)
+            city["bbox"] = list(request.bbox)
+        if request.area_label:
+            # کلیدواژه باید نام منطقه/خیابان را هم داشته باشد، نه فقط شهر
+            city = dict(city)
+            if request.lang != "en":
+                city["label_local"] = request.area_label
+            elif city.get("country") != "IR":
+                city["label"] = request.area_label
         country = city.get("country") or ""
 
         # ── ۲) کلیدواژه‌ها و نقشه jobها ───────────────────────────────────────
@@ -263,6 +344,9 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
             "city": place_fa, "city_key": city.get("key"), "country": country,
             "lat": city["lat"], "lon": city["lon"], "keywords": keywords,
             "radius": radius, "depth": depth,
+            "province": request.province, "district": request.district,
+            "street": request.street, "area_label": request.area_label,
+            "area_level": request.area_level,
         })
         storage.update_run(run_id, **run_meta)
 
@@ -281,6 +365,7 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                 "keywords": term_list,
                 "lang": "fa" if is_fa else "en",
                 "zoom": request.zoom,
+                "area_hood": request.district or request.street or "",
                 "lat": str(city["lat"]),          # قرارداد اسکیل: رشته
                 "lon": str(city["lon"]),
                 "fast_mode": request.fast_mode,
@@ -451,7 +536,10 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
             })
 
         slug_niche = "all-trades" if request.all_niches else primary_niche.id
-        slug = (f"{slug_niche}-{(city.get('key') or exports.safe_filename(city['label']))}-{run_id}")
+        # نام فایل: صنف + شهر + (منطقه/خیابان اگر انتخاب شده باشد) + شناسهٔ اجرا
+        slug_area = exports.safe_filename(request.street or request.district or "")
+        slug = (f"{slug_niche}-{(city.get('key') or exports.safe_filename(city['label']))}"
+                f"{f'-{slug_area}' if slug_area else ''}-{run_id}")
         paths = []
         main_fmt = request.export_fmt or "xlsx"
         preset = request.cols if not request.keep_full_columns else "all"

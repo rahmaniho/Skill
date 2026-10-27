@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # شروع سریع LeadGen Studio
-#   ./run.sh              → وب‌اپ (رابط ساده روی / و داشبورد حرفه‌ای روی /studio/) روی پورت ۸۰۰۰
+#   ./run.sh              → وب‌اپ روی پورت ۸۰۰۰: رابط ساده (/) + نسخهٔ جمع‌وجور (/mini/) + داشبورد حرفه‌ای (/studio/)
 #   ./run.sh demo         → ساخت یک اجرای نمونه فوری (بدون داکر) و چاپ مسیر فایل‌ها
-#   ./run.sh test         → اجرای همه تست‌ها
+#   ./run.sh seed         → ساخت دادهٔ نمونهٔ منطقه‌محور (۷ اجرا در ۵ محدوده) برای نمایش/توسعه
+#   ./run.sh test         → اجرای همه تست‌های پایتون
+#   ./run.sh smoke        → تست سریع رابط‌ها بدون مرورگر (site + smart + mini)
 #   ./run.sh doctor       → بررسی سلامت محیط (موتور، داکر، پایگاه‌داده)
 #   ./run.sh engine       → بالا آوردن موتور واقعی با داکر (docker compose up -d)
-#   ./run.sh pages        → ساخت دادهٔ نمونه + کپی رابط ساده برای GitHub Pages
+#   ./run.sh pages        → ساخت دادهٔ نمونه + کپی هر دو رابط برای GitHub Pages
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -17,8 +19,9 @@ case "$CMD" in
     if ! command -v python3 >/dev/null 2>&1; then
       echo "✗ python3 پیدا نشد. پایتون ۳٫۹+ نصب کنید." >&2; exit 1
     fi
-    echo "▶ وب‌اپ:      http://localhost:$PORT/         (رابط ساده — یک جمله بنویسید)"
-    echo "▶ داشبورد حرفه‌ای: http://localhost:$PORT/studio/   (همهٔ تنظیمات)"
+    echo "▶ وب‌اپ:           http://localhost:$PORT/        (رابط ساده — یک جمله بنویسید)"
+    echo "▶ نسخهٔ جمع‌وجور:  http://localhost:$PORT/mini/   (جست‌وجو + استان/شهر/منطقه/خیابان)"
+    echo "▶ داشبورد حرفه‌ای: http://localhost:$PORT/studio/ (همهٔ تنظیمات)"
     echo "  (برای توقف: Ctrl+C)"
     exec python3 -m leadgen.server --host "${LEADGEN_HOST:-0.0.0.0}" --port "$PORT"
     ;;
@@ -26,8 +29,17 @@ case "$CMD" in
     exec python3 -m leadgen.cli run "دندانپزشکی" --city "تهران" --lang fa \
       --profile web_design --socials --engine demo --depth 3 --export xlsx
     ;;
+  seed)
+    exec python3 scripts/seed_demo_data.py "${2:-}"
+    ;;
   test)
     exec python3 -m unittest discover -s tests -v
+    ;;
+  smoke)
+    node scripts/smoke_site.js
+    node scripts/smoke_smart.js
+    node scripts/smoke_mini.js
+    echo "✓ هر سه رابط بدون خطا اجرا شدند"
     ;;
   doctor)
     exec python3 -m leadgen.cli doctor
@@ -53,6 +65,6 @@ case "$CMD" in
     echo "✓ برای پیش‌نمایش محلی: python3 -m http.server -d site --bind 0.0.0.0 8090"
     ;;
   *)
-    echo "کاربرد: ./run.sh [serve|demo|test|doctor|engine|pages]" >&2; exit 1
+    echo "کاربرد: ./run.sh [serve|demo|seed|test|smoke|doctor|engine|pages]" >&2; exit 1
     ;;
 esac
