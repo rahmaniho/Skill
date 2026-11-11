@@ -207,6 +207,99 @@ class WsgiDeliveryTests(unittest.TestCase):
         self.assertEqual(len(paths), data["count"])
 
 
+class WsgiProtocolTests(unittest.TestCase):
+    """پروتکل WSGI — همان چیزی که میزبان serverless (Vercel) سخت‌گیرانه بررسی می‌کند.
+
+    تجربهٔ واقعی: اگر `status` با پیشوند «HTTP/1.1» داده شود یا هدرهای hop-by-hop
+    (Server/Date/Connection/Transfer-Encoding) برگردانده شود، Vercel پاسخ را نامعتبر
+    می‌داند و `500 FUNCTION_INVOCATION_FAILED` می‌دهد — بدون هیچ لاگ روشن.
+    """
+
+    FORBIDDEN = {"server", "date", "connection", "keep-alive", "transfer-encoding", "te",
+                 "trailers", "upgrade", "proxy-authenticate", "proxy-authorization"}
+
+    def collect(self, method="GET", path="/api/health", headers=None):
+        captured = {}
+
+        def start_response(status, response_headers, exc_info=None):
+            captured["status"] = status
+            captured["headers"] = list(response_headers)
+
+        env = wsgi.make_environ(method, path, headers=headers or {})
+        body = b"".join(wsgi.application(env, start_response))
+        return captured, body
+
+    def test_status_has_no_protocol_prefix(self):
+        for path in ("/api/health", "/api/catalog", "/", "/api/nope"):
+            captured, _ = self.collect(path=path)
+            status = captured["status"]
+            self.assertFalse(status.upper().startswith("HTTP/"), f"{path}: {status!r}")
+            code, reason = status.split(" ", 1)
+            self.assertTrue(code.isdigit(), f"{path}: {status!r}")
+            self.assertTrue(200 <= int(code) < 600, f"{path}: {status!r}")
+            self.assertTrue(reason.strip(), f"{path}: دلیل وضعیت خالی است: {status!r}")
+
+    def test_status_codes_match_routes(self):
+        self.assertEqual("200", self.collect(path="/api/health")[0]["status"].split()[0])
+        self.assertEqual("404", self.collect(path="/api/nope")[0]["status"].split()[0])
+        self.assertEqual("200", self.collect(path="/")[0]["status"].split()[0])
+        self.assertEqual("405", self.collect(method="OPTIONS", path="/api/health")[0]
+                         ["status"].split()[0])
+
+    def test_no_hop_by_hop_headers_are_returned(self):
+        for path in ("/api/health", "/", "/api/nope", "/mini/"):
+            captured, _ = self.collect(path=path)
+            names = {name.lower() for name, _ in captured["headers"]}
+            leaked = sorted(names & self.FORBIDDEN)
+            self.assertEqual([], leaked, f"{path}: هدرهای ممنوع برگردانده شد → {leaked}")
+
+    def test_content_length_matches_body_exactly(self):
+        for path in ("/api/health", "/", "/api/catalog", "/api/nope"):
+            captured, body = self.collect(path=path)
+            lengths = [v for k, v in captured["headers"] if k.lower() == "content-length"]
+            self.assertEqual(1, len(lengths), f"{path}: باید دقیقاً یک Content-Length باشد")
+            self.assertEqual(len(body), int(lengths[0]),
+                             f"{path}: Content-Length با بدنه نمی‌خواند")
+
+    def test_content_type_is_present(self):
+        captured, _ = self.collect()
+        types = [v for k, v in captured["headers"] if k.lower() == "content-type"]
+        self.assertEqual(1, len(types))
+        self.assertIn("application/json", types[0])
+
+    def test_unknown_status_reason_gets_a_default(self):
+        # «HTTP/1.1 418» (بدون دلیل) نباید میزبان را بشکند
+        self.assertEqual("418 OK", wsgi._wsgi_status("HTTP/1.1 418"))
+        self.assertEqual("204 No Content", wsgi._wsgi_status("HTTP/1.1 204 No Content"))
+        self.assertEqual("200 OK", wsgi._wsgi_status("200 OK"))
+        self.assertEqual("500 Internal Server Error", wsgi._wsgi_status(""))
+
+    def test_rewrite_destination_recovers_original_path(self):
+        """Vercel همهٔ مسیرها را به `/api/index` بازنویسی می‌کند؛ مسیر اصلی باید برگردد."""
+        captured, body = self.collect(path="/api/index",
+                                      headers={"X-Vercel-Original-Path": "/api/health"})
+        self.assertEqual("200", captured["status"].split()[0])
+        self.assertIn(b'"ok"', body)
+
+        captured, body = self.collect(path="/api/index",
+                                      headers={"X-Vercel-Original-Path": "/api/queue/jobs?limit=2"})
+        self.assertEqual("200", captured["status"].split()[0])
+        self.assertIn(b'"jobs"', body)
+
+    def test_rewrite_destination_with_query_keeps_query_string(self):
+        captured, body = self.collect(
+            path="/api/index",
+            headers={"X-Vercel-Original-Path": "/api/search?q=تهران&limit=2"})
+        self.assertEqual("200", captured["status"].split()[0])
+        self.assertIn(b'"total"', body)
+
+    def test_normal_paths_are_not_redirected_by_the_recovery(self):
+        # اگر مسیر خودش واقعی است، هدر کمکی نباید جای آن را بگیرد
+        captured, _ = self.collect(path="/api/health",
+                                   headers={"X-Vercel-Original-Path": "/api/nope"})
+        self.assertEqual("200", captured["status"].split()[0])
+
+
 class WsgiAdapterTests(unittest.TestCase):
     def test_environ_builder_sets_wsgi_keys(self):
         environ = wsgi.make_environ("POST", "/api/runs", query="a=1", body=b'{"x":1}',

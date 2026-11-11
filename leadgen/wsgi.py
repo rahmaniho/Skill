@@ -35,6 +35,12 @@ _IGNORED_HEADERS = {"wsgi.input", "wsgi.errors", "wsgi.url_scheme", "wsgi.multit
                     "wsgi.multiprocess", "wsgi.run_once", "wsgi.version", "wsgi.errors",
                     "wsgi.file_wrapper"}
 
+# هدرهایی که `BaseHTTPRequestHandler` می‌سازد ولی پروتکل WSGI اجازهٔ برگرداندشان را نمی‌دهد
+# (میزبان serverless مثل Vercel با دیدنشان پاسخ را نامعتبر می‌داند → FUNCTION_INVOCATION_FAILED).
+_HOP_BY_HOP = {"connection", "keep-alive", "transfer-encoding", "te", "trailers", "upgrade",
+               "proxy-authenticate", "proxy-authorization", "server", "date",
+               "content-length"}
+
 
 def _headers_from_environ(environ: dict) -> Message:
     """هدرهای WSGI را به `email.Message` تبدیل می‌کند (همان نوع `self.headers`)."""
@@ -69,12 +75,81 @@ def _body_from_environ(environ: dict) -> bytes:
         return b""
 
 
-def _full_path(environ: dict) -> str:
+# وقتی Vercel همهٔ مسیرها را به `/api/index` بازنویسی می‌کند، `PATH_INFO` همان مقصد می‌شود؛
+# مسیر واقعی درخواست در این هدرها می‌آید (هر کدام بود).
+_ORIGINAL_PATH_HEADERS = ("HTTP_X_VERCEL_ORIGINAL_PATH", "HTTP_X_MATCHED_PATH",
+                          "HTTP_X_ORIGINAL_PATH", "HTTP_X_FORWARDED_URI")
+_REWRITE_DESTINATIONS = ("/api/index", "/api/index/", "")
+
+
+def _original_path(environ: dict) -> str | None:
+    """مسیر واقعی درخواست را از هدرهای میزبان برمی‌گرداند (اگر بازنویسی شده باشد)."""
     path = environ.get("PATH_INFO") or "/"
+    if path.rstrip("/") not in {d.rstrip("/") for d in _REWRITE_DESTINATIONS if d}:
+        return None
+    for key in _ORIGINAL_PATH_HEADERS:
+        value = (environ.get(key) or "").strip()
+        if not value:
+            continue
+        parsed = urllib.parse.urlsplit(value)
+        candidate = parsed.path or "/"
+        query = parsed.query
+        if query:
+            environ["QUERY_STRING"] = environ.get("QUERY_STRING") or query
+        if candidate.startswith("/"):
+            return candidate
+    return None
+
+
+def _full_path(environ: dict) -> str:
+    """مسیر + کوئری به شکل ASCII-safe (همان چیزی که یک خط درخواست HTTP می‌پذیرد).
+
+    هدرهایی مثل `x-vercel-original-path` ممکن است کوئری فارسیِ **رمزنگاری‌نشده** داشته باشند؛
+    بدون quote کردن، ساخت `requestline` با latin-1 می‌شکند (UnicodeEncodeError).
+    """
+    path = _original_path(environ) or environ.get("PATH_INFO") or "/"
     if not path.startswith("/"):
         path = "/" + path
+    path = urllib.parse.quote(path, safe="/%~")
     query = environ.get("QUERY_STRING") or ""
-    return f"{urllib.parse.quote(path)}?{query}" if query else urllib.parse.quote(path)
+    if query:
+        # «%» را نگه می‌داریم تا رشتهٔ از قبل رمز شده دوباره رمز نشود
+        query = urllib.parse.quote(query, safe="=&%+")
+        return f"{path}?{query}"
+    return path
+
+
+def _wsgi_status(status_line: str) -> str:
+    """«HTTP/1.1 200 OK» → «200 OK».
+
+    طبق PEP 3333 مقدار `status` در `start_response` باید «کد + دلیل» باشد و **بدون** پیشوند
+    پروتکل. میزبان‌های سخت‌گیر (Vercel/Cloud Run) در غیر این صورت پاسخ را رد می‌کنند.
+    """
+    parts = [part for part in (status_line or "").strip().split(" ", 2) if part]
+    if parts and parts[0].upper().startswith("HTTP/"):
+        parts = parts[1:]
+    if not parts or not parts[0].isdigit():
+        return "500 Internal Server Error"
+    if len(parts) == 1:
+        parts.append(_REASONS.get(parts[0], "OK"))
+    return f"{parts[0]} {parts[1]}"
+
+
+_REASONS = {"200": "OK", "201": "Created", "202": "Accepted", "204": "No Content",
+            "301": "Moved Permanently", "302": "Found", "304": "Not Modified",
+            "400": "Bad Request", "401": "Unauthorized", "403": "Forbidden",
+            "404": "Not Found", "405": "Method Not Allowed", "409": "Conflict",
+            "413": "Payload Too Large", "422": "Unprocessable Entity",
+            "500": "Internal Server Error", "502": "Bad Gateway",
+            "503": "Service Unavailable", "504": "Gateway Timeout"}
+
+
+def _wsgi_headers(headers: list[tuple[str, str]], payload: bytes) -> list[tuple[str, str]]:
+    """هدرهای hop-by-hop را حذف و `Content-Length` درست را با بدنه هم‌تراز می‌کند."""
+    out = [(name, value) for name, value in headers
+           if name.strip().lower() not in _HOP_BY_HOP]
+    out.append(("Content-Length", str(len(payload))))
+    return out
 
 
 def _parse_response(raw: bytes) -> tuple[str, list[tuple[str, str]], bytes]:
@@ -88,7 +163,7 @@ def _parse_response(raw: bytes) -> tuple[str, list[tuple[str, str]], bytes]:
             continue
         name, _, value = line.decode("latin-1").partition(":")
         headers.append((name.strip(), value.strip()))
-    return status_line, headers, body
+    return _wsgi_status(status_line), _wsgi_headers(headers, body), body
 
 
 class _FakeHandler:
@@ -110,7 +185,7 @@ class _FakeHandler:
         self.handler._headers_buffer = []      # BaseHTTPRequestHandler در py3 لازم دارد
         # `log_request` این‌ها را می‌خواند؛ بدون آن‌ها send_response استثنا می‌دهد
         self.handler.requestline = f"{self.handler.command} {self.handler.path} HTTP/1.1"
-        self.handler.raw_requestline = self.handler.requestline.encode("latin-1")
+        self.handler.raw_requestline = self.handler.requestline.encode("utf-8", "replace")
 
     def run(self) -> bytes:
         method = getattr(self.handler, f"do_{self.handler.command}", None)
@@ -184,10 +259,8 @@ def call(method: str = "GET", path: str = "/", query: str = "", body: bytes = b"
     captured: dict = {}
 
     def start_response(status: str, response_headers, exc_info=None):
-        # «HTTP/1.1 200 OK» → 200
-        parts = status.split(" ")
-        code = parts[1] if len(parts) > 1 else parts[0]
-        captured["status"] = int(code)
+        # «200 OK» → 200 (همان قالبی که میزبان‌های WSGI می‌گیرند)
+        captured["status"] = int(str(status).split(" ", 1)[0])
         captured["status_line"] = status
         captured["headers"] = {k.lower(): v for k, v in response_headers}
 
