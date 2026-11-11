@@ -430,7 +430,7 @@ site/               نسخه قابل انتشار روی GitHub Pages (لندی
   app/              کپی وب‌اپ ساده در حالت دمو → https://rahmaniho.github.io/Skill/app/
   mini/             کپی نسخهٔ جمع‌وجور در حالت دمو → https://rahmaniho.github.io/Skill/mini/
   data/sample.json  داده نمونه مصنوعی + بستهٔ `mini` (درخت منطقه‌ها و فهرست نام‌ها)
-api/index.py        نقطهٔ ورود Vercel (یک تابع = کل اپ)          vercel.json  پیکربندی همان تابع
+api/index.py        نقطهٔ ورود Vercel (یک تابع = کل اپ)          vercel.json  همان تابع + بازنویسی‌ای که مسیر را در `__lg_path` حمل می‌کند
 supabase/schema.sql جدول‌ها، ایندکس‌ها و توابع SQL (جست‌وجو/صف/آمار) — idempotent
 .devcontainer/      Codespaces: موتور داکر + ورکر صف (setup.sh, start-worker.sh)
 docs/CLOUD.md       راهنمای عملیاتی استقرار ابری (گام‌به‌گام + رفع اشکال)

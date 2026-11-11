@@ -75,28 +75,79 @@ def _body_from_environ(environ: dict) -> bytes:
         return b""
 
 
-# وقتی Vercel همهٔ مسیرها را به `/api/index` بازنویسی می‌کند، `PATH_INFO` همان مقصد می‌شود؛
-# مسیر واقعی درخواست در این هدرها می‌آید (هر کدام بود).
+# وقتی Vercel همهٔ مسیرها را به `/api/index` بازنویسی می‌کند، تابع `PATH_INFO=/api/index`
+# می‌بیند — یعنی مسیر واقعی درخواست گم می‌شود و هر صفحه‌ای 404 می‌گیرد.
+# راه‌حل قطعی (و مستند): خودِ بازنویسی مسیر را در یک پارامتر کوئری حمل می‌کند:
+#     {"source": "/:path*", "destination": "/api/index?__lg_path=/:path*"}
+# و این لایه آن را برمی‌گرداند. هدرهای میزبان فقط «تور ایمنی» هستند چون هیچ هدر مستندی
+# برای مسیرِ پیش از بازنویسی وجود ندارد.
+_PATH_PARAM = "__lg_path"
 _ORIGINAL_PATH_HEADERS = ("HTTP_X_VERCEL_ORIGINAL_PATH", "HTTP_X_MATCHED_PATH",
                           "HTTP_X_ORIGINAL_PATH", "HTTP_X_FORWARDED_URI")
 _REWRITE_DESTINATIONS = ("/api/index", "/api/index/", "")
 
 
-def _original_path(environ: dict) -> str | None:
-    """مسیر واقعی درخواست را از هدرهای میزبان برمی‌گرداند (اگر بازنویسی شده باشد)."""
-    path = environ.get("PATH_INFO") or "/"
-    if path.rstrip("/") not in {d.rstrip("/") for d in _REWRITE_DESTINATIONS if d}:
+def _pop_path_param(environ: dict) -> str | None:
+    """`__lg_path` را از کوئری بیرون می‌کشد و بقیهٔ کوئری را دست‌نخورده می‌گذارد.
+
+    همیشه صدا زده می‌شود تا این پارامتر هرگز به مسیریابی برنامه نرسد (نه‌فقط وقتی
+    بازنویسی رخ داده). مقدار ممکن است درصد-رمز شده باشد (`/api/search?q=تهران` →
+    `%2Fapi%2Fsearch`) یا فارسیِ خام؛ هر دو حالت یکسان نرمال می‌شوند.
+    """
+    query = environ.get("QUERY_STRING") or ""
+    if not query:
         return None
+    pairs = urllib.parse.parse_qsl(query, keep_blank_values=True)
+    value = None
+    rest: list[tuple[str, str]] = []
+    for name, val in pairs:
+        if name == _PATH_PARAM and value is None:
+            value = val
+        elif name != _PATH_PARAM:
+            rest.append((name, val))
+    if value is not None:
+        environ["QUERY_STRING"] = urllib.parse.urlencode(rest)
+        return urllib.parse.unquote(value, errors="replace")
+    return None
+
+
+def _normalize_path(value: str) -> str | None:
+    """مسیر بازیابی‌شده را به شکل قابل‌استفاده درمی‌آورد (یا رد می‌کند)."""
+    candidate = (value or "").strip()
+    if not candidate:
+        return None
+    if any(ord(ch) < 0x20 for ch in candidate):     # هیچ CR/LF/کنترلی در خط درخواست
+        return None
+    if not candidate.startswith("/"):
+        candidate = "/" + candidate
+    return candidate
+
+
+def _adopt_query(environ: dict, value: str) -> None:
+    """اگر مقدارِ بازیابی‌شده خودش کوئری داشت و کوئری دیگری نیست، همان را می‌پذیرد."""
+    query = urllib.parse.urlsplit(value).query
+    if query and not environ.get("QUERY_STRING"):
+        environ["QUERY_STRING"] = query
+
+
+def _original_path(environ: dict) -> str | None:
+    """مسیر واقعی درخواست را پشت بازنویسی Vercel برمی‌گرداند (اگر بازنویسی شده باشد)."""
+    path = environ.get("PATH_INFO") or "/"
+    value = _pop_path_param(environ)
+    rewritten = path.rstrip("/") in {d.rstrip("/") for d in _REWRITE_DESTINATIONS if d}
+    if not rewritten:
+        return None
+    if value:
+        _adopt_query(environ, value)
+        return _normalize_path(urllib.parse.urlsplit(value).path or value)
     for key in _ORIGINAL_PATH_HEADERS:
-        value = (environ.get(key) or "").strip()
-        if not value:
+        header = (environ.get(key) or "").strip()
+        if not header:
             continue
-        parsed = urllib.parse.urlsplit(value)
-        candidate = parsed.path or "/"
-        query = parsed.query
-        if query:
-            environ["QUERY_STRING"] = environ.get("QUERY_STRING") or query
-        if candidate.startswith("/"):
+        parsed = urllib.parse.urlsplit(header)
+        candidate = _normalize_path(parsed.path or "/")
+        _adopt_query(environ, header)
+        if candidate:
             return candidate
     return None
 

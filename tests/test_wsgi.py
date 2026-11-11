@@ -300,6 +300,109 @@ class WsgiProtocolTests(unittest.TestCase):
         self.assertEqual("200", captured["status"].split()[0])
 
 
+class WsgiRewriteTests(unittest.TestCase):
+    """بازنویسی catch-all ورسل: `/:path* → /api/index?__lg_path=/:path*`.
+
+    تابع همیشه با `PATH_INFO=/api/index` بیدار می‌شود؛ مسیر واقعی در پارامتر
+    `__lg_path` می‌آید. این تست‌ها دقیقاً همان environ را می‌سازند که ورسل می‌فرستد.
+    """
+
+    DEST = "/api/index"
+
+    def collect(self, query, method="GET", body=b"", content_type="", headers=None):
+        captured = {}
+
+        def start_response(status, response_headers, exc_info=None):
+            captured["status"] = status
+            captured["headers"] = list(response_headers)
+
+        env = wsgi.make_environ(method, self.DEST, query=query, body=body,
+                                content_type=content_type, headers=headers or {})
+        payload = b"".join(wsgi.application(env, start_response))
+        return int(captured["status"].split()[0]), captured["headers"], payload, env
+
+    def test_api_health_through_the_rewrite(self):
+        code, headers, body, _ = self.collect("__lg_path=%2Fapi%2Fhealth")
+        self.assertEqual(200, code)
+        self.assertIn(b'"ok"', body)
+        self.assertIn("application/json", dict(headers)["Content-Type"])
+
+    def test_root_serves_the_ui_through_the_rewrite(self):
+        code, _, body, _ = self.collect("__lg_path=%2F")
+        self.assertEqual(200, code)
+        self.assertIn(b"<!doctype html>", body.lower())
+        self.assertIn(b"queueLine", body)
+
+    def test_mini_ui_through_the_rewrite(self):
+        code, _, body, _ = self.collect("__lg_path=%2Fmini%2F")
+        self.assertEqual(200, code)
+        self.assertIn(b"<!doctype html>", body.lower())
+
+    def test_persian_query_survives_the_rewrite(self):
+        code, _, body, _ = self.collect(
+            "__lg_path=%2Fapi%2Fsearch&q=%D8%AA%D9%87%D8%B1%D8%A7%D9%86&limit=2")
+        self.assertEqual(200, code)
+        data = json.loads(body)
+        self.assertEqual("تهران", data["filters"]["q"])     # فارسی سالم رسیده است
+        self.assertIn("facets", data)
+        self.assertLessEqual(data["returned"], 2)           # limit=2 هم اعمال شده
+        self.assertEqual(data["total"], data.get("counted", data["total"]))
+
+    def test_unencoded_persian_value_is_also_accepted(self):
+        code, _, body, _ = self.collect("__lg_path=/api/search&q=تهران")
+        self.assertEqual(200, code)
+        self.assertEqual("تهران", json.loads(body)["filters"]["q"])
+
+    def test_path_param_never_reaches_the_application(self):
+        code, _, _, env = self.collect("__lg_path=%2Fapi%2Fqueue%2Fjobs&status=pending")
+        self.assertEqual(200, code)
+        self.assertNotIn("__lg_path", wsgi._full_path(env))
+        self.assertIn("status=pending", wsgi._full_path(env))
+
+    def test_post_body_is_queued_through_the_rewrite(self):
+        payload = json.dumps({"niche_query": "دندانپزشکی", "city_query": "تهران",
+                              "engine_mode": "demo", "depth": 1}).encode("utf-8")
+        config.QUEUE_MODE = "always"
+        try:
+            code, _, body, _ = self.collect("__lg_path=%2Fapi%2Fruns", method="POST",
+                                            body=payload, content_type="application/json")
+        finally:
+            config.QUEUE_MODE = "auto"
+        self.assertEqual(202, code)
+        self.assertEqual("queued", json.loads(body)["status"])
+
+    def test_unknown_route_is_json_404_not_a_crash(self):
+        code, _, body, _ = self.collect("__lg_path=%2Fapi%2Fnope")
+        self.assertEqual(404, code)
+        self.assertIn(b"error", body)
+
+    def test_header_fallback_still_works_without_the_param(self):
+        captured = {}
+
+        def start_response(status, headers, exc_info=None):
+            captured["status"] = status
+
+        env = wsgi.make_environ("GET", "/api/index",
+                                headers={"X-Vercel-Original-Path": "/api/catalog"})
+        body = b"".join(wsgi.application(env, start_response))
+        self.assertEqual("200", captured["status"].split()[0])
+        self.assertIn(b"niches", body)
+
+    def test_control_characters_in_the_param_are_refused(self):
+        self.assertIsNone(wsgi._normalize_path("/api%0A/health\r\nX: 1"))
+        env = wsgi.make_environ("GET", "/api/index",
+                                query="__lg_path=%2Fapi%0A%2Fhealth")
+        self.assertNotIn("\n", wsgi._full_path(env))
+
+    def test_vercel_json_and_wsgi_agree_on_the_param_name(self):
+        cfg = json.loads((Path(__file__).resolve().parents[1] / "vercel.json")
+                         .read_text(encoding="utf-8"))
+        rewrite = cfg["rewrites"][0]
+        self.assertEqual("/:path*", rewrite["source"])
+        self.assertIn(f"{wsgi._PATH_PARAM}=/:path*", rewrite["destination"])
+        self.assertTrue(rewrite["destination"].startswith("/api/index?"))
+
+
 class WsgiAdapterTests(unittest.TestCase):
     def test_environ_builder_sets_wsgi_keys(self):
         environ = wsgi.make_environ("POST", "/api/runs", query="a=1", body=b'{"x":1}',

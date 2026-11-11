@@ -7,7 +7,7 @@
 
   • `api/index.py` وجود دارد و `application` را از `leadgen.wsgi` بیرون می‌دهد
   • `vercel.json` یک تابع دارد، `maxDuration` دست‌کم ۶۰ ثانیه، و بازنویسی catch-all به
-    `/api/index`
+    `/api/index?__lg_path=/:path*`
   • `requirements.txt` بدون وابستگی بیرونی است (کل برنامه با کتابخانهٔ استاندارد پایتون
     نوشته شده — نصب وابستگی در Vercel فقط خطر و زمان اضافه می‌کند)
   • مسیرهای سرویس‌شده توسط `leadgen.wsgi` با مسیرهای `leadgen.server` یکی است
@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import sys
+import urllib.parse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -61,17 +62,23 @@ def main() -> int:
     settings = functions["api/index.py"]
     if int(settings.get("maxDuration") or 0) < 60:
         fail(f"maxDuration باید دست‌کم ۶۰ ثانیه باشد؛ هست: {settings.get('maxDuration')}")
-    if int(settings.get("memory") or 0) < 1024:
-        fail(f"memory باید دست‌کم ۱۰۲۴ مگابایت باشد؛ هست: {settings.get('memory')}")
+    if "memory" in settings:
+        fail("کلید memory در vercel.json روی Active CPU نادیده گرفته می‌شود و فقط هشدار بیلد "
+             f"می‌سازد؛ حذفش کنید (هست: {settings['memory']})")
     if settings.get("includeFiles") != "**":
         fail("includeFiles باید «**» باشد تا رابط‌های وب و دادهٔ نمونه هم بسته‌بندی شوند")
-    ok(f"تابع api/index.py: maxDuration={settings['maxDuration']}s، memory={settings['memory']}MB، "
-       f"includeFiles=**")
+    ok(f"تابع api/index.py: maxDuration={settings['maxDuration']}s، includeFiles=**")
 
+    # بازنویسی catch-all باید مسیر اصلی را در پارامتر __lg_path حمل کند؛ وگرنه تابع فقط
+    # PATH_INFO=/api/index می‌بیند و هر صفحه‌ای ۴۰۴ می‌شود (بدون هیچ هدر مستندِ جایگزین).
     rewrites = cfg.get("rewrites") or []
-    if not rewrites or rewrites[0].get("source") != "/(.*)" or rewrites[0].get("destination") != "/api/index":
-        fail(f"بازنویسی catch-all «/(.*) → /api/index» لازم است؛ هست: {rewrites}")
-    ok("بازنویسی catch-all درست است (همهٔ مسیرها به تابع می‌روند)")
+    rewrite = rewrites[0] if rewrites else {}
+    destination = rewrite.get("destination") or ""
+    if rewrite.get("source") != "/:path*":
+        fail(f"بازنویسی باید «/:path*» را بگیرد؛ هست: {rewrite.get('source')}")
+    if not destination.startswith("/api/index?") or "/:path*" not in destination:
+        fail(f"مقصد بازنویسی باید مسیر را به تابع برساند؛ هست: {destination!r}")
+    ok(f"بازنویسی catch-all مسیر را حمل می‌کند: /:path* → {destination}")
 
     requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
     deps = [line for line in requirements.splitlines()
@@ -91,6 +98,21 @@ def main() -> int:
     if missing:
         fail(f"مسیرها روی لایهٔ WSGI خطای سرور دادند: {missing}")
     ok(f"{len(ROUTES)} مسیر کلیدی روی لایهٔ WSGI (Vercel) پاسخ می‌دهند")
+
+    # نام پارامتر باید در vercel.json و leadgen/wsgi.py یکی باشد
+    if f"{wsgi._PATH_PARAM}=/" not in destination:
+        fail(f"vercel.json از پارامتر {wsgi._PATH_PARAM!r} استفاده نمی‌کند؛ "
+             f"مقصد: {destination!r}")
+    rewritten = []
+    for route in ("/", "/api/health", "/api/queue", "/mini/"):
+        status, _headers, body = wsgi.call(
+            "GET", "/api/index",
+            query=f"{wsgi._PATH_PARAM}=" + urllib.parse.quote(route, safe=""))
+        if status >= 500 or (route == "/" and b"<!doctype html" not in body.lower()):
+            rewritten.append(f"{route} → {status}")
+    if rewritten:
+        fail(f"مسیرها پشت بازنویسی ورسل کار نکردند: {rewritten}")
+    ok("۴ مسیر پشت بازنویسی ورسل (PATH_INFO=/api/index + __lg_path) درست سرو می‌شوند")
 
     print(f"\n{GREEN}✔ پیکربندی استقرار سازگار است{RESET}")
     return 0
