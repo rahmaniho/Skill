@@ -1,0 +1,12 @@
+# LeadGen هیچ وابستگی بیرونی ندارد — فقط کتابخانهٔ استاندارد پایتون.
+#
+# این فایل عمداً خالی است تا Vercel/Cloud Run یک runtime پایتون ۳٫۱۱ بسازند بدون
+# این‌که چیزی نصب شود (استقرار سریع‌تر، سطح حمله کوچک‌تر).
+#
+#   • پایگاه‌دادهٔ ابری: REST/PostgREST با urllib        → leadgen/cloud.py
+#   • ایمیل (Gmail API / SMTP): urllib + smtplib        → leadgen/delivery.py
+#   • اکسل/CSV: zipfile + xml                            → leadgen/exports.py
+#   • سرور: http.server (محلی) و WSGI (ابر)              → leadgen/server.py, leadgen/wsgi.py
+#
+# اگر روزی خواستید موتور دیتابیس مستقیم (psycopg) یا SDK رسمی Supabase اضافه کنید،
+# همین‌جا بنویسید؛ تا آن زمان «صفر وابستگی» یک مزیت استقرار است، نه محدودیت.

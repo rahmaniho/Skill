@@ -119,6 +119,10 @@
     lead: async (id) => (await jget(`/api/leads/${id}`)).lead,
     setStatus: (id, status, note) => jpost(`/api/leads/${id}`, { status, note }, "PATCH"),
     runs: async () => (await jget("/api/runs")).runs || [],
+    queue: () => jget("/api/queue"),
+    queueJobs: (limit = 20) => jget(`/api/queue/jobs?limit=${limit}`),
+    delivery: () => jget("/api/delivery/status"),
+    deliver: (kind, payload) => jpost(`/api/delivery/${kind}`, payload),
     campaign: async (id, channel, sender) => {
       const data = await jpost(`/api/leads/${id}/campaign`, { channel, sender, language: "fa" });
       return data;
@@ -206,6 +210,15 @@
       return { run_id: "demo" };
     },
     async progress() { return {}; },
+    async queue() { return { mode: "demo", active: false, backend: "demo",
+                             stats: { pending: 0, running: 0, done: 1, failed: 0,
+                                      oldest_wait_s: 0, workers: [] } }; },
+    async queueJobs() { return { jobs: [], statuses: [] }; },
+    async delivery() {
+      return { transport: "none", configured: false, recipients: [],
+               hint: "در حالت دمو ایمیلی ارسال نمی‌شود؛ گزارش به‌صورت فایل ساخته می‌شود." };
+    },
+    async deliver(kind) { return demoDeliver(kind); },
     async detail() {
       const d = await this.load();
       return { run: { id: "demo", niche_fa: "نمونهٔ چندصنفی", city: d.meta.city, engine: "demo",
@@ -466,6 +479,7 @@
     $("results").hidden = true;
     $("progressPanel").hidden = false;
     $("cancelBtn").hidden = false;
+    hideQueueLine();
     $("bar").className = "fill"; $("bar").style.width = "2%";
     $("log").innerHTML = ""; $("stageText").textContent = "آماده‌سازی…"; $("percentText").textContent = "۰٪";
     $("progressPanel").scrollIntoView({ behavior: "smooth", block: "center" });
@@ -493,7 +507,9 @@
       if (state.mode === "demo") {
         ({ run_id: runId } = await Demo.start(request, onProgress));
       } else {
-        ({ run_id: runId } = await Live.start(request));
+        const started = await Live.start(request);
+        runId = started.run_id;
+        if (started.status === "queued") renderQueueLine(started.position || started.queue || {});
         runId = await pollProgress(runId, onProgress);
       }
       state.runId = runId;
@@ -523,6 +539,8 @@
           const evt = await Live.progress(runId);
           onProgress(evt);
           const status = evt.status || evt.stage;
+          if (status === "queued" || evt.stage === "queued") renderQueueLine(evt.queue || {});
+          else if (evt.stage !== "queued") hideQueueLine();
           if (status === "done" || evt.percent >= 100) { clearInterval(state.poller); state.poller = null; resolve(runId); }
           else if (status === "failed") { clearInterval(state.poller); state.poller = null; reject(new Error(evt.error || evt.message || "اجرا ناموفق بود")); }
           misses = 0;
@@ -536,6 +554,123 @@
     });
   }
 
+  // ── صف و ارسال ایمیل ───────────────────────────────────────────────────
+  function renderQueueLine(position) {
+    const line = $("queueLine");
+    if (!line) return;
+    line.hidden = false;
+    const wait = position.wait_seconds ? ` — انتظار ~${fa(position.wait_seconds)} دقیقه` : "";
+    $("queueText").textContent =
+      (position.message || "در صف اجرا — منتظر ورکر") + wait;
+  }
+  function hideQueueLine() { const line = $("queueLine"); if (line) line.hidden = true; }
+
+  async function refreshQueue() {
+    try {
+      const data = await backend.queue();
+      const stats = data.stats || {};
+      const text = data.active
+        ? `صف فعال: ${fa(stats.pending || 0)} در انتظار، ${fa(stats.running || 0)} در حال اجرا` +
+          (stats.workers && stats.workers.length ? ` — ورکر: ${stats.workers.join("، ")}`
+                                                : " — ورکری وصل نیست")
+        : "صف غیرفعال است؛ اجراها مستقیم و هم‌زمان انجام می‌شوند";
+      $("queueText").textContent = text;
+      $("queueLine").hidden = false;
+      toast(text, data.active ? "ok" : "warn");
+    } catch (err) { toast(`صف خوانده نشد: ${err.message}`, "err"); }
+  }
+
+  async function renderDeliveryNote() {
+    const note = $("deliveryNote");
+    if (!note) return;
+    try {
+      const info = await backend.delivery();
+      note.textContent = info.configured
+        ? `📧 ایمیل آماده است (${info.transport}` +
+          (info.recipients && info.recipients.length ? ` → ${info.recipients.join("، ")}` : "") + ")"
+        : "📧 ایمیل تنظیم نشده — گزارش به‌صورت فایل ساخته می‌شود";
+      note.title = info.hint || "";
+    } catch { note.textContent = ""; }
+  }
+
+  function demoDeliver(kind) {
+    // در حالت دمو سروری نیست؛ همان محتوا را محلی می‌سازیم و دانلود می‌کنیم.
+    syncSender();
+    const leads = (state.view && state.view.length ? state.view : state.leads) || [];
+    const hot = leads.filter((l) => l.segment === "hot").slice(0, 12);
+    const shown = hot.length ? hot : leads.slice(0, 12);
+    const now = new Date().toLocaleString("fa-IR");
+    if (kind === "drafts") {
+      const parts = shown.map((lead, i) => {
+        const msg = window.LeadCampaign.messageFor(lead, "email");
+        return `── پیش‌نویس ${fa(i + 1)} ─────────────────────────────\n` +
+               `به: ${msg.to}\nموضوع: ${msg.subject}\n\n${msg.text}\n`;
+      });
+      downloadBlob("leadgen-drafts.txt", parts.join("\n"), "text/plain;charset=utf-8");
+      const items = shown.map((lead) => ({ status: "dry_run", to: lead.email_primary || lead.email || "",
+                                           title: lead.title }));
+      return { status: "dry_run", kind, count: items.length, items,
+               hint: "حالت دمو — فایل محلی ساخته شد" };
+    }
+    const withPhone = leads.filter((l) => l.phone || l.phones).length;
+    const withEmail = leads.filter((l) => l.email_primary || l.email).length;
+    const noSite = leads.filter((l) => !l.website).length;
+    const rows = shown.map((l, i) =>
+      `${fa(i + 1)}. ${l.title} — امتیاز ${fa(l.score)} | ${l.segment === "hot" ? "داغ" : l.segment === "warm" ? "گرم" : "سرد"}` +
+      `\n   تلفن: ${l.phone || (l.phones || [])[0] || "—"} | ایمیل: ${l.email_primary || l.email || "—"}` +
+      `\n   سایت: ${l.website || "ندارد (فرصت!)"} | ${l.address || ""}`).join("\n");
+    const text = `گزارش لیدهای داغ — ${now}\n` +
+      `=====================================\n` +
+      `کل لیدها: ${fa(leads.length)} | داغ: ${fa(leads.filter((l) => l.segment === "hot").length)}` +
+      ` | تلفن‌دار: ${fa(withPhone)} | ایمیل‌دار: ${fa(withEmail)} | بدون وب‌سایت: ${fa(noSite)}\n\n` +
+      rows + `\n\n— ساخته‌شده با LeadGen (حالت دمو: ایمیلی ارسال نشد)\n`;
+    downloadBlob("leadgen-digest.txt", text, "text/plain;charset=utf-8");
+    return { status: "dry_run", kind, subject: `گزارش لیدهای داغ | ${fa(leads.length)} لید`,
+             shown: shown.length, scope_total: leads.length,
+             hint: "حالت دمو — فایل محلی دانلود شد، ایمیلی نرفت" };
+  }
+
+  function rememberedTo() {
+    if (state.deliveryTo) return state.deliveryTo;
+    try { state.deliveryTo = localStorage.getItem("leadgen-digest-to") || ""; } catch { }
+    return state.deliveryTo;
+  }
+  function rememberTo(value) {
+    state.deliveryTo = value;
+    try { localStorage.setItem("leadgen-digest-to", value); } catch { }
+  }
+
+  async function doDeliver(kind, forcedTo) {
+    if (!state.runId && state.mode !== "demo") { toast("اول یک اجرا انجام دهید", "warn"); return; }
+    syncSender();
+    const to = forcedTo || rememberedTo() || "";
+    try {
+      const result = await backend.deliver(kind, {
+        run_id: state.runId || "", dry_run: state.mode === "demo" ? true : undefined,
+        limit: kind === "drafts" ? 10 : 12, segment: "hot", sender: state.sender, to,
+      });
+      if (result.status === "sent") {
+        toast(`✉ ارسال شد — ${result.subject || ""} (${fa(result.shown || 0)} لید)`);
+      } else if (result.status === "skipped" || result.status === "error") {
+        toast(result.hint || result.error || "ارسال انجام نشد — تنظیمات ایمیل را ببینید", "err");
+      } else {
+        const items = result.items || [];
+        toast(kind === "drafts"
+          ? `${fa(result.count || items.length)} پیش‌نویس ساخته شد` +
+            (result.path || (items[0] || {}).path ? " (فایل در سرور)" : " (فایل دانلود شد)")
+          : `گزارش ساخته شد — ${result.subject || ""}` + (result.path ? " (فایل در سرور)" : ""));
+      }
+      renderDeliveryNote();
+    } catch (err) {
+      // گیرنده‌ای تنظیم نشده؟ یک بار از کاربر می‌پرسیم و دوباره امتحان می‌کنیم
+      if (kind === "digest" && !to && /گیرنده/.test(err.message || "")) {
+        const asked = window.prompt("گزارش لیدها به کدام ایمیل برود؟ (چند نشانی با کاما)", "");
+        if (asked && asked.trim()) { rememberTo(asked.trim()); return doDeliver(kind, asked.trim()); }
+      }
+      toast(`ارسال ناموفق: ${err.message}`, "err");
+    }
+  }
+
   async function loadRun(runId) {
     const detail = await backend.detail(runId);
     state.run = detail.run || {};
@@ -543,6 +678,7 @@
     state.leads = (await backend.leads(runId)) || [];
     state.page = 1;
     renderResults();
+    renderDeliveryNote();
     $("progressPanel").hidden = true;
     $("results").hidden = false;
   }
@@ -1030,6 +1166,8 @@
       b.classList.add("active"); state.viewMode = b.dataset.view; renderLeads();
     });
     document.querySelectorAll("[data-export]").forEach((b) => b.onclick = () => doExport(b.dataset.export));
+    document.querySelectorAll("[data-deliver]").forEach((b) => b.onclick = () => doDeliver(b.dataset.deliver));
+    if ($("queueBtn")) $("queueBtn").onclick = refreshQueue;
     $("cancelBtn").onclick = () => { $("progressPanel").hidden = true; };
     $("modalClose").onclick = closeModal;
     $("scrim").onclick = closeModal;

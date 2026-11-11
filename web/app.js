@@ -9,7 +9,7 @@ const state = {
   catalog: null, health: null, runs: [], currentRun: null,
   leads: [], leadCount: 0, page: 0, pageSize: 25,
   filters: { q: "", segment: "", status: "", channel: "", gap: "", sort: "score" },
-  pollTimer: null, niche: null, sender: null,
+  pollTimer: null, niche: null, sender: null, opsTimer: null, delivery: null,
 };
 
 /* ── ابزارها ─────────────────────────────────────────────────────────────── */
@@ -58,6 +58,7 @@ function switchView(view) {
   if (view === "analysis") loadAnalysis();
   if (view === "settings") loadDoctor();
   if (view === "campaign") prepareCampaign();
+  if (view === "ops") loadOps(); else stopOpsTimer();
 }
 
 /* ── شروع ─────────────────────────────────────────────────────────────────── */
@@ -828,6 +829,164 @@ async function loadDoctor() {
     }, null, 2);
   } catch (err) { $("#doctorBox").textContent = `خطا: ${err.message}`; }
 }
+
+/* ── صف اجراها و ارسال ایمیل ──────────────────────────────────────────────── */
+const JOB_STATUS_FA = { pending: "در انتظار", running: "در حال اجرا", done: "انجام شد",
+                        failed: "ناموفق", cancelled: "لغو شده" };
+
+function stopOpsTimer() {
+  if (state.opsTimer) { clearInterval(state.opsTimer); state.opsTimer = null; }
+}
+
+function waitFa(seconds) {
+  const s = Number(seconds || 0);
+  if (s < 60) return `${fa(s)} ثانیه`;
+  const m = Math.round(s / 60);
+  return m < 60 ? `${fa(m)} دقیقه` : `${fa(Math.round(m / 60))} ساعت`;
+}
+
+async function loadOps() {
+  await Promise.all([loadQueue(), loadDelivery()]);
+  stopOpsTimer();
+  if ($("#queueAuto").checked) {
+    state.opsTimer = setInterval(() => {
+      if ($("#view-ops").classList.contains("active")) loadQueue();
+      else stopOpsTimer();
+    }, 5000);
+  }
+}
+
+async function loadQueue() {
+  try {
+    const [queue, jobs] = await Promise.all([api("/api/queue"), api("/api/queue/jobs?limit=20")]);
+    renderQueue(queue, jobs.jobs || []);
+  } catch (err) {
+    $("#queueStats").innerHTML = empty(`صف در دسترس نیست: ${err.message}`);
+    $("#jobsTable tbody").innerHTML = "";
+  }
+}
+
+function renderQueue(queue, jobs) {
+  const stats = queue.stats || {};
+  $("#queueMode").textContent = queue.active
+    ? `فعال — حالت «${queue.mode}»، پایگاه «${queue.backend}»`
+    : `غیرفعال — حالت «${queue.mode}»: اجراها مستقیم در همین فرایند انجام می‌شوند`;
+
+  $("#queueStats").innerHTML = [
+    ["در انتظار", fa(stats.pending || 0)], ["در حال اجرا", fa(stats.running || 0)],
+    ["انجام‌شده", fa(stats.done || 0)], ["ناموفق", fa(stats.failed || 0)],
+    ["انتظار قدیمی‌ترین", queue.wait_seconds ? waitFa(queue.wait_seconds) : "—"],
+  ].map(([label, value]) => `<div class="stat"><span>${esc(label)}</span><b>${esc(value)}</b></div>`).join("");
+
+  $("#jobsTable tbody").innerHTML = jobs.length ? jobs.map((job) => `
+    <tr>
+      <td><code>${esc(job.run_id || job.id || "—")}</code></td>
+      <td>${esc(job.status_fa || JOB_STATUS_FA[job.status] || job.status || "—")}</td>
+      <td>${fa(job.attempts || 0)} / ${fa(job.max_attempts || 3)}</td>
+      <td>${esc(job.worker || "—")}</td>
+      <td class="hint">${esc(job.last_error || "")}</td>
+    </tr>`).join("") : `<tr><td colspan="5" class="hint">کاری در صف نیست</td></tr>`;
+
+  const workers = stats.workers || [];
+  $("#workersBox").innerHTML = workers.length
+    ? `<p class="hint">ورکرهای فعال: ${workers.map((w) => `<code>${esc(w)}</code>`).join(" ، ")}</p>`
+    : `<p class="hint">ورکر فعالی وصل نیست${queue.active
+        ? " — در Codespace دستور <code>bash .devcontainer/start-worker.sh</code> را اجرا کنید."
+        : ""}</p>`;
+}
+
+async function loadDelivery() {
+  try {
+    const info = await api("/api/delivery/status");
+    state.delivery = info;
+    const box = $("#deliveryStatus");
+    box.className = info.configured ? "compliance" : "warnbox";
+    box.innerHTML = info.configured
+      ? `✓ ایمیل فعال است — روش ارسال: <b>${esc(info.transport)}</b>` +
+        (info.recipients && info.recipients.length
+          ? ` — گیرنده‌های پیش‌فرض: <code>${esc(info.recipients.join("، "))}</code>` : "")
+      : `⚠ ایمیل پیکربندی نشده — ${esc(info.hint || "")}`;
+    if (info.recipients && info.recipients.length && !$("#dlvTo").value) {
+      $("#dlvTo").value = info.recipients.join(", ");
+    }
+    const last = info.last_digest || null;
+    $("#lastDelivery").textContent = last
+      ? `${esc(last.status || "")} — ${esc(last.subject || "")} → ${esc(last.target || "")}` +
+        (last.created_at ? ` (${new Date(Number(last.created_at) * 1000).toLocaleString("fa-IR")})` : "")
+      : "—";
+  } catch (err) {
+    $("#deliveryStatus").className = "warnbox";
+    $("#deliveryStatus").textContent = `خطا در خواندن وضعیت ایمیل: ${err.message}`;
+  }
+  try {
+    const runs = await api("/api/runs");
+    const select = $("#dlvRun");
+    const current = select.value;
+    select.innerHTML = `<option value="">همهٔ لیدهای پایگاه</option>` + (runs.runs || []).map((run) =>
+      `<option value="${esc(run.id)}">${esc(run.niche_fa || run.id)} — ${esc(run.city || "")}` +
+      ` (${fa(run.total || 0)} لید)</option>`).join("");
+    select.value = current;
+  } catch { /* فهرست اجراها اختیاری است */ }
+}
+
+function deliveryPayload() {
+  return {
+    to: $("#dlvTo").value.trim(),
+    limit: Number($("#dlvLimit").value || 12),
+    segment: $("#dlvSegment").value || "",
+    run_id: $("#dlvRun").value || "",
+    dry_run: $("#dlvDry").checked,
+    with_xlsx: true,
+    sender: senderPayload(),
+  };
+}
+
+async function sendDelivery(kind) {
+  const btn = kind === "digest" ? $("#dlvDigest") : $("#dlvDrafts");
+  const log = $("#deliveryLog");
+  btn.disabled = true; log.hidden = false; log.textContent = "در حال پردازش…";
+  try {
+    const result = await api(`/api/delivery/${kind}`, { method: "POST", body: deliveryPayload() });
+    log.textContent = JSON.stringify(result, null, 2);
+    if (kind === "digest") {
+      const head = result.status === "sent" ? "✉ گزارش ارسال شد"
+        : result.status === "dry_run" ? "پیش‌نمایش ساخته شد (ایمیل نرفت)"
+        : `وضعیت: ${result.status}`;
+      toast(`${head} — ${result.subject || ""} (${fa(result.shown || 0)} لید از ${fa(result.scope_total || 0)})`,
+            result.status === "error" ? "err" : "ok");
+    } else {
+      const items = result.items || [];
+      toast(`${fa(result.count || items.length)} پیش‌نویس ساخته شد` +
+            (result.status === "dry_run" ? " (فایل‌ها در سرور)" : ` — ${result.status || ""}`),
+            result.status === "error" ? "err" : "ok");
+      if (items.length) {
+        log.textContent = items.map((item, i) =>
+          `${fa(i + 1)}. ${item.title || ""} → ${item.to || "بدون ایمیل"}${item.path ? `\n    ${item.path}` : ""}`
+        ).join("\n") + "\n\n" + JSON.stringify(result, null, 2);
+      }
+    }
+    loadDelivery();
+  } catch (err) {
+    log.textContent = `خطا: ${err.message}`;
+    toast(`ارسال ناموفق: ${err.message}`, "err");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function senderPayload() {
+  const value = (id) => ($(id) && $(id).value || "").trim();
+  const sender = { name: value("#sndName"), company: value("#sndCompany"), role: value("#sndRole"),
+                   phone: value("#sndPhone"), email: value("#sndEmail"),
+                   website: value("#sndWebsite"), offer: value("#sndOffer"),
+                   case_study: value("#sndCase") };
+  return Object.values(sender).some(Boolean) ? sender : null;
+}
+
+$("#queueRefresh").onclick = () => loadQueue();
+$("#queueAuto").onchange = () => loadOps();
+$("#dlvDigest").onclick = () => sendDelivery("digest");
+$("#dlvDrafts").onclick = () => sendDelivery("drafts");
 
 /* برچسب فارسی شکاف‌ها برای کشو */
 api("/api/catalog").then((c) => { window.GAP_FA = c.gap_labels; }).catch(() => { });

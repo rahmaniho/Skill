@@ -34,6 +34,14 @@ jobs:
       - name: Doctor (demo engine)
         run: python -m leadgen.cli doctor
 
+      # هم‌ارزی جست‌وجو: SQLite (محلی) در برابر انتظارهای commit‌شده از Postgres/Supabase.
+      # بدون شبکه اجرا می‌شود؛ اگر منطق جست‌وجو عوض شود و با تابع SQL فرق کند، اینجا می‌شکند.
+      - name: Cloud parity (SQLite ↔ committed Postgres expectations)
+        run: python scripts/cloud_parity.py
+
+      - name: Deployment config sanity (Vercel + WSGI)
+        run: python scripts/check_deploy_config.py
+
       - name: Set up Node
         uses: actions/setup-node@v5
         with:

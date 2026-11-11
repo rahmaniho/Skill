@@ -96,6 +96,11 @@
     </div>
     <div class="track"><div class="fill" id="bar"></div></div>
     <div class="stage-line"><span id="stageText">آماده‌سازی…</span><b id="percentText">۰٪</b></div>
+    <div class="queue-line" id="queueLine" hidden>
+      <span class="q-badge">⏳ در صف</span>
+      <span id="queueText">منتظر ورکر…</span>
+      <button class="ghost-btn" id="queueBtn" title="وضعیت زندهٔ صف">به‌روز کن</button>
+    </div>
     <div class="log" id="log"></div>
   </section>
 
@@ -142,7 +147,11 @@
         <button class="ghost-btn" data-export="json">🧾 JSON</button>
         <button class="ghost-btn" data-export="campaign">💬 فایل کمپین</button>
         <button class="ghost-btn" data-export="hot">🔥 فقط داغ‌ها (اکسل)</button>
+        <span class="sep"></span>
+        <button class="ghost-btn" data-deliver="digest" title="گزارش لیدهای داغ به ایمیل شما">📧 گزارش ایمیلی</button>
+        <button class="ghost-btn" data-deliver="drafts" title="پیش‌نویس پیام برای لیدهای داغ">✉️ پیش‌نویس‌ها</button>
         <span class="spacer"></span>
+        <small id="deliveryNote"></small>
         <small id="exportNote"></small>
       </div>
 

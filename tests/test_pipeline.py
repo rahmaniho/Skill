@@ -410,6 +410,50 @@ class DemoEngineTests(unittest.TestCase):
         with self.assertRaises(engine_mod.EngineError):
             docker.create_job({"keywords": ["x"], "lat": "", "lon": "1", "max_time": 60})
 
+    def test_docker_body_is_json_safe_and_drops_internal_keys(self):
+        """بدنهٔ job باید JSON خالص باشد — وگرنه هر اجرای واقعی با TypeError می‌شکند.
+
+        پایپ‌لاین کلیدهای داخلی `_niche` (شیء Niche) و `_keyword_niches` را برای موتور دمو
+        در بدنه می‌گذارد؛ موتور واقعی باید آن‌ها را نبیند.
+        """
+        captured = {}
+
+        class Niche:                      # شیء غیرJSON مثل niches.Niche
+            def __init__(self):
+                self.id, self.fa = "cafe", "کافه"
+
+        class FakeDocker(engine_mod.DockerEngine):
+            def _request(self, method, path, body=None, timeout=45):
+                captured["method"], captured["path"], captured["body"] = method, path, body
+                return 200, b'{"id": "job-42"}'
+
+        docker = FakeDocker(base_url="http://localhost:1")
+        body = {"keywords": ["کافه در تهران"], "lat": 35.7592, "lon": 51.4094,
+                "max_time": 600, "depth": 3, "_niche": Niche(),
+                "_keyword_niches": {"کافه در تهران": "cafe"}, "bbox": [35.5, 35.9, 51.1, 51.7],
+                "city_label": "تهران", "lang": "fa"}
+        self.assertEqual(docker.create_job(body), "job-42")
+        payload = captured["body"]
+        json.dumps(payload, ensure_ascii=False)               # نباید استثنا بدهد
+        self.assertNotIn("_niche", payload)
+        self.assertNotIn("_keyword_niches", payload)
+        self.assertEqual(payload["lat"], "35.7592")           # قرارداد اسکیل: رشته
+        self.assertEqual(payload["lon"], "51.4094")
+        self.assertEqual(payload["keywords"], ["کافه در تهران"])
+        self.assertEqual(payload["lang"], "fa")
+        self.assertTrue(payload["email"])                     # پیش‌فرض اسکیل
+        self.assertEqual(payload["max_time"], 600)
+        self.assertNotIn("proxies", payload)
+
+    def test_engine_status_honours_requested_mode(self):
+        """`engine_status` باید حالت خواسته‌شده را گزارش کند، نه همیشه `ENGINE_MODE` را."""
+        self.assertEqual(pipeline.engine_status("demo")["active"], "demo")
+        self.assertFalse(pipeline.engine_status("demo")["live"])
+        docker = pipeline.engine_status("docker")             # داکر در محیط آزمون خاموش است
+        self.assertIn(docker["active"], ("docker", "unavailable"))
+        self.assertTrue(docker["reason"])
+        self.assertIn(pipeline.engine_status(engine_mod.DemoEngine())["active"], ("demo",))
+
     def test_engine_status_reports_demo_when_docker_down(self):
         status = engine_mod.engine_status()
         self.assertIn(status["active"], ("docker", "demo", "unavailable"))

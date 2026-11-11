@@ -18,6 +18,39 @@ from . import config
 
 _LOCK = threading.RLock()
 
+
+def _cloud_backend():
+    """اگر پایگاه‌دادهٔ ابری فعال باشد، همان API را از `pgstore` برمی‌گرداند.
+
+    این تنها نقطهٔ تصمیم است: بقیهٔ برنامه (server/pipeline/cli/worker) بدون تغییر
+    روی SQLite محلی یا Supabase ابری کار می‌کند.
+    """
+    if config.DB_BACKEND != "supabase":
+        return None
+    from . import pgstore
+    return pgstore
+
+
+def _dumps(value) -> str:
+    """`json.dumps` با تبدیل امن شیء‌های غیرJSON (مثل `Niche` در payload پیشرفت)."""
+    from .cloud import jsonable
+    return json.dumps(jsonable(value), ensure_ascii=False)
+
+
+def _json_or(value, default):
+    """رشتهٔ JSON (SQLite) یا مقدار بومی jsonb (Postgres) → مقدار پایتونی."""
+    if value is None or value == "":
+        return default
+    if isinstance(value, (list, dict)):
+        return value
+    try:
+        parsed = json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return default
+    if parsed is None:
+        return default
+    return parsed
+
 LEAD_STATUSES = ("new", "contacted", "replied", "qualified", "won", "lost", "unsubscribed")
 LEAD_STATUS_FA = {
     "new": "جدید",
@@ -114,6 +147,32 @@ CREATE TABLE IF NOT EXISTS leads (
 CREATE INDEX IF NOT EXISTS idx_leads_run ON leads(run_id);
 CREATE INDEX IF NOT EXISTS idx_leads_segment ON leads(segment);
 CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status);
+CREATE TABLE IF NOT EXISTS jobs (
+    id            TEXT PRIMARY KEY,
+    run_id        TEXT,
+    status        TEXT NOT NULL DEFAULT 'pending',
+    priority      INTEGER NOT NULL DEFAULT 0,
+    attempts      INTEGER NOT NULL DEFAULT 0,
+    max_attempts  INTEGER NOT NULL DEFAULT 3,
+    worker        TEXT,
+    request       TEXT NOT NULL DEFAULT '{}',
+    last_error    TEXT,
+    created_at    REAL NOT NULL,
+    started_at    REAL,
+    finished_at   REAL,
+    updated_at    REAL
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_queue ON jobs(status, priority DESC, created_at);
+CREATE TABLE IF NOT EXISTS deliveries (
+    id            TEXT PRIMARY KEY,
+    kind          TEXT NOT NULL DEFAULT 'digest',
+    channel       TEXT NOT NULL DEFAULT 'email',
+    target        TEXT,
+    subject       TEXT,
+    status        TEXT NOT NULL DEFAULT 'sent',
+    detail        TEXT NOT NULL DEFAULT '{}',
+    created_at    REAL NOT NULL
+);
 """
 
 # ستون‌هایی که در جدول leads ذخیره می‌شوند
@@ -148,6 +207,9 @@ _RUN_MIGRATIONS = [("province", "TEXT"), ("district", "TEXT"), ("street", "TEXT"
 
 def init_db() -> None:
     """جدول‌ها را می‌سازد و ستون‌های تازه را به پایگاه‌داده موجود اضافه می‌کند."""
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.init_db()
     with _LOCK, _connect() as conn:
         conn.executescript(SCHEMA)
         existing = {row["name"] for row in conn.execute("PRAGMA table_info(leads)")}
@@ -165,6 +227,9 @@ def new_run_id() -> str:
 
 
 def create_run(meta: dict) -> str:
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.create_run(meta)
     run_id = meta.get("id") or new_run_id()
     row = {
         "id": run_id,
@@ -176,7 +241,7 @@ def create_run(meta: dict) -> str:
         "country": meta.get("country"),
         "lat": meta.get("lat"),
         "lon": meta.get("lon"),
-        "keywords": json.dumps(meta.get("keywords") or [], ensure_ascii=False),
+        "keywords": _dumps(meta.get("keywords") or []),
         "depth": meta.get("depth"),
         "radius": meta.get("radius"),
         "grid": meta.get("grid"),
@@ -187,8 +252,8 @@ def create_run(meta: dict) -> str:
         "engine": meta.get("engine"),
         "live": int(bool(meta.get("live"))),
         "status": meta.get("status") or "pending",
-        "job_ids": json.dumps(meta.get("job_ids") or [], ensure_ascii=False),
-        "progress": json.dumps(meta.get("progress") or {}, ensure_ascii=False),
+        "job_ids": _dumps(meta.get("job_ids") or []),
+        "progress": _dumps(meta.get("progress") or {}),
         "province": meta.get("province"),
         "district": meta.get("district"),
         "street": meta.get("street"),
@@ -203,23 +268,32 @@ def create_run(meta: dict) -> str:
 
 
 def update_run(run_id: str, **fields) -> None:
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.update_run(run_id, **fields)
     if not fields:
         return
     for key, value in list(fields.items()):
         if isinstance(value, (dict, list)):
-            fields[key] = json.dumps(value, ensure_ascii=False)
+            fields[key] = _dumps(value)
     assignments = ", ".join(f"{k}=?" for k in fields)
     with _LOCK, _connect() as conn:
         conn.execute(f"UPDATE runs SET {assignments} WHERE id=?", [*fields.values(), run_id])
 
 
 def get_run(run_id: str) -> dict | None:
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.get_run(run_id)
     with _LOCK, _connect() as conn:
         row = conn.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
     return _run_to_dict(row) if row else None
 
 
 def list_runs(limit: int = 100) -> list[dict]:
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.list_runs(limit)
     with _LOCK, _connect() as conn:
         rows = conn.execute("SELECT * FROM runs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
     return [_run_to_dict(r) for r in rows]
@@ -228,23 +302,16 @@ def list_runs(limit: int = 100) -> list[dict]:
 def _run_to_dict(row: sqlite3.Row) -> dict:
     data = dict(row)
     for key in ("keywords", "job_ids"):
-        try:
-            data[key] = json.loads(data.get(key) or "[]")
-        except json.JSONDecodeError:
-            data[key] = []
-    try:
-        data["progress"] = json.loads(data.get("progress") or "{}")
-    except json.JSONDecodeError:
-        data["progress"] = {}
-    try:
-        data["analytics"] = json.loads(data.get("analytics") or "null")
-    except json.JSONDecodeError:
-        data["analytics"] = None
+        value = _json_or(data.get(key), [])
+        data[key] = value if isinstance(value, list) else []
+    value = _json_or(data.get("progress"), {})
+    data["progress"] = value if isinstance(value, dict) else {}
+    data["analytics"] = _json_or(data.get("analytics"), None)
     data["live"] = bool(data.get("live"))
     data["socials"] = bool(data.get("socials"))
     data["emails"] = bool(data.get("emails"))
     data["status_fa"] = {
-        "pending": "در صف", "running": "در حال اجرا", "enriching": "غنی‌سازی",
+        "pending": "در صف", "queued": "در صف", "running": "در حال اجرا", "enriching": "غنی‌سازی",
         "scoring": "امتیازدهی", "done": "تکمیل شد", "failed": "ناموفق",
         "partial": "نسبی",
     }.get(data.get("status"), data.get("status"))
@@ -253,6 +320,9 @@ def _run_to_dict(row: sqlite3.Row) -> dict:
 
 def save_leads(run_id: str, rows: list[dict]) -> int:
     """لیدها را ذخیره می‌کند (upsert بر اساس run_id + place_id/title)."""
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.save_leads(run_id, rows)
     now = time.time()
     payloads = []
     for row in rows:
@@ -263,9 +333,9 @@ def save_leads(run_id: str, rows: list[dict]) -> int:
             if col == "status" and value not in LEAD_STATUSES:
                 value = "new"
             if col in ("gaps", "tags", "score_factors") and isinstance(value, list):
-                value = json.dumps(value, ensure_ascii=False)
+                value = _dumps(value)
             elif col == "signals" and isinstance(value, dict):
-                value = json.dumps(value, ensure_ascii=False)
+                value = _dumps(value)
             elif isinstance(value, bool):
                 value = int(value)
             record[col] = value
@@ -289,6 +359,10 @@ def load_leads(run_id: str | None = None, *, segment: str | None = None,
                gap: str | None = None, channel: str | None = None,
                min_score: int | None = None, sort: str = "score",
                order: str = "desc", limit: int = 1000, offset: int = 0) -> list[dict]:
+    cloud = _cloud_backend()
+    if cloud is not None:
+        scope = {key: value for key, value in locals().items() if key not in ("cloud", "scope")}
+        return cloud.load_leads(**scope)
     sql = "SELECT * FROM leads"
     where, params = [], []
     if run_id:
@@ -364,6 +438,10 @@ def search_leads(*, q: str = "", run_id: str | None = None, segment: str | None 
       • فیلتر جغرافیایی: شعاع متر حول یک نقطه (منطقه/خیابان انتخاب‌شده در رابط)
       • `facets`: شمارش‌های زنده برای نوار فیلتر (بدون توجه به limit)
     """
+    cloud = _cloud_backend()
+    if cloud is not None:
+        scope = {key: value for key, value in locals().items() if key not in ("cloud", "scope")}
+        return cloud.search_leads(**scope)
     where: list[str] = []
     params: list = []
 
@@ -521,6 +599,9 @@ def _active_filters(scope: dict) -> dict:
 
 
 def count_leads(run_id: str | None = None) -> int:
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.count_leads(run_id)
     with _LOCK, _connect() as conn:
         if run_id:
             return conn.execute("SELECT COUNT(*) FROM leads WHERE run_id=?", (run_id,)).fetchone()[0]
@@ -537,14 +618,10 @@ def _labels() -> tuple[dict, dict, dict]:
 def _lead_to_dict(row: sqlite3.Row) -> dict:
     data = dict(row)
     for key in ("gaps", "tags", "score_factors"):
-        try:
-            data[key] = json.loads(data.get(key) or "[]")
-        except json.JSONDecodeError:
-            data[key] = []
-    try:
-        data["signals"] = json.loads(data.get("signals") or "{}")
-    except json.JSONDecodeError:
-        data["signals"] = {}
+        value = _json_or(data.get(key), [])
+        data[key] = value if isinstance(value, list) else []
+    value = _json_or(data.get("signals"), {})
+    data["signals"] = value if isinstance(value, dict) else {}
     for key in ("has_website", "has_email", "has_phone", "has_social"):
         data[key] = bool(data.get(key))
     # مختصات عددی (برای نقشه/لوکیشن دقیق) از ستون‌های متنی latitude/longitude
@@ -566,6 +643,9 @@ def _lead_to_dict(row: sqlite3.Row) -> dict:
 
 
 def set_lead_status(lead_id: str, status: str, note: str | None = None) -> bool:
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.set_lead_status(lead_id, status, note)
     if status not in LEAD_STATUSES:
         return False
     with _LOCK, _connect() as conn:
@@ -577,12 +657,18 @@ def set_lead_status(lead_id: str, status: str, note: str | None = None) -> bool:
 
 
 def get_lead(lead_id: str) -> dict | None:
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.get_lead(lead_id)
     with _LOCK, _connect() as conn:
         row = conn.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
     return _lead_to_dict(row) if row else None
 
 
 def delete_run(run_id: str) -> bool:
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.delete_run(run_id)
     with _LOCK, _connect() as conn:
         conn.execute("DELETE FROM leads WHERE run_id=?", (run_id,))
         cur = conn.execute("DELETE FROM runs WHERE id=?", (run_id,))
@@ -591,12 +677,18 @@ def delete_run(run_id: str) -> bool:
 
 def all_leads_for_export(run_id: str) -> list[dict]:
     """همه لیدهای یک اجرا (بدون محدودیت صفحه‌بندی) برای خروجی فایل."""
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.all_leads_for_export(run_id)
     with _LOCK, _connect() as conn:
         rows = conn.execute("SELECT * FROM leads WHERE run_id=? ORDER BY score DESC", (run_id,)).fetchall()
     return [_lead_to_dict(r) for r in rows]
 
 
 def pipeline_stats() -> dict:
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.pipeline_stats()
     with _LOCK, _connect() as conn:
         runs = conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
         leads = conn.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
@@ -610,3 +702,247 @@ def pipeline_stats() -> dict:
 def data_dir() -> Path:
     config.ensure_dirs()
     return config.DATA_DIR
+
+
+# ── صف اجراها (پشتیبان SQLite — آینهٔ توابع SQL در supabase/schema.sql) ───────
+JOB_STATUSES = ("pending", "running", "done", "failed")
+JOB_STATUS_FA = {"pending": "در صف", "queued": "در صف", "running": "در حال اجرا",
+                 "done": "تکمیل شد", "failed": "ناموفق"}
+_STALE_MESSAGE = "ورکر پاسخ نداد — دوباره به صف برگشت"
+
+
+def job_status_fa(status: str | None) -> str:
+    """برچسب فارسی وضعیت کار (برای رابط و API)."""
+    return JOB_STATUS_FA.get(status or "", status or "")
+
+
+def _job_to_dict(row) -> dict:
+    data = dict(row)
+    data["request"] = _json_or(data.get("request"), {})
+    if not isinstance(data["request"], dict):
+        data["request"] = {}
+    data["status_fa"] = job_status_fa(data.get("status"))
+    return data
+
+
+def enqueue_job(run_id: str, request: dict, priority: int = 0) -> str:
+    """یک اجرا را در صف می‌گذارد تا ورکر (Codespace/Actions) برش دارد."""
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.enqueue_job(run_id, request, priority)
+    job_id = run_id or ("job-" + uuid.uuid4().hex[:12])
+    now = time.time()
+    with _LOCK, _connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO jobs (id, run_id, status, priority, attempts, max_attempts,"
+            " worker, request, last_error, created_at, started_at, finished_at, updated_at)"
+            " VALUES (?,?, 'pending', ?, 0, ?, NULL, ?, NULL, ?, NULL, NULL, ?)",
+            (job_id, run_id, int(priority), config.WORKER_MAX_ATTEMPTS,
+             _dumps(request or {}), now, now))
+    return job_id
+
+
+def claim_job(worker: str | None = None, max_attempts: int | None = None) -> dict | None:
+    """یک کار در انتظار را برمی‌دارد (زیر قفل؛ دو ورکر یک کار را نمی‌گیرند)."""
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.claim_job(worker, max_attempts)
+    worker = worker or config.WORKER_ID
+    ceiling = int(max_attempts or config.WORKER_MAX_ATTEMPTS)
+    now = time.time()
+    with _LOCK, _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM jobs WHERE status='pending' AND attempts<? "
+            "ORDER BY priority DESC, created_at ASC LIMIT 1", (ceiling,)).fetchone()
+        if not row:
+            return None
+        conn.execute("UPDATE jobs SET status='running', worker=?, attempts=attempts+1,"
+                     " started_at=?, updated_at=? WHERE id=?", (worker, now, now, row["id"]))
+        job = _job_to_dict(row)
+    job.update({"status": "running", "worker": worker, "attempts": job["attempts"] + 1,
+                "started_at": now})
+    job["status_fa"] = _job_to_dict({"status": "running"})["status_fa"]   # برچسب وضعیت تازه
+    return job
+
+
+def heartbeat_job(job_id: str, progress: dict | None = None, status: str | None = None) -> bool:
+    """پیشرفت را روی job و run می‌نویسد تا رابط وضعیت زنده را نشان دهد."""
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.heartbeat_job(job_id, progress, status)
+    now = time.time()
+    with _LOCK, _connect() as conn:
+        if status:
+            conn.execute("UPDATE jobs SET updated_at=?, status=? WHERE id=?", (now, status, job_id))
+        else:
+            conn.execute("UPDATE jobs SET updated_at=? WHERE id=?", (now, job_id))
+        row = conn.execute("SELECT run_id FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if not row or not row["run_id"] or not (progress or status):
+            return True
+        run = conn.execute("SELECT progress, status, error FROM runs WHERE id=?",
+                           (row["run_id"],)).fetchone()
+        if not run:
+            return True
+        merged = _json_or(run["progress"], {}) or {}
+        merged.update(progress or {})
+        merged["ts"] = now
+        new_status = (progress or {}).get("status") or status or run["status"]
+        new_error = (progress or {}).get("error") or run["error"]
+        conn.execute("UPDATE runs SET progress=?, status=?, error=? WHERE id=?",
+                     (_dumps(merged), new_status, new_error, row["run_id"]))
+    return True
+
+
+def _job_message(final: str, job: dict, error: str | None = None) -> str:
+    """پیام فارسی وضعیت کار برای نمایش در رابط (نه متن خام خطا)."""
+    attempts = int(job.get("attempts") or 0)
+    ceiling = int(job.get("max_attempts") or config.WORKER_MAX_ATTEMPTS)
+    detail = (error or "").strip()
+    if final == "done":
+        return "پایان کار" + (f" — {detail}" if detail else "")
+    if final == "pending":
+        return f"تلاش {attempts} ناموفق بود — دوباره در صف" + (f": {detail}" if detail else "")
+    return (f"اجرا ناموفق شد ({attempts} از {ceiling} تلاش)"
+            + (f": {detail}" if detail else ""))
+
+
+def finish_job(job_id: str, status: str = "done", error: str | None = None) -> dict | None:
+    """پایان کار؛ اگر شکست خورده و تلاش باقی است، برای تلاش مجدد به صف برمی‌گردد."""
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.finish_job(job_id, status, error)
+    now = time.time()
+    with _LOCK, _connect() as conn:
+        row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            return None
+        job = _job_to_dict(row)
+        if status == "failed" and job["attempts"] < job["max_attempts"]:
+            conn.execute("UPDATE jobs SET status='pending', last_error=?, worker=NULL,"
+                         " updated_at=? WHERE id=?", (error, now, job_id))
+            final = "pending"
+        else:
+            conn.execute("UPDATE jobs SET status=?, last_error=?, finished_at=?, updated_at=?"
+                         " WHERE id=?", (status, error, now, now, job_id))
+            final = status
+        if job.get("run_id"):
+            run_status = "queued" if final == "pending" else final
+            run = conn.execute("SELECT progress FROM runs WHERE id=?", (job["run_id"],)).fetchone()
+            merged = _json_or(run["progress"] if run else {}, {}) or {}
+            merged.update({"status": run_status, "stage": final,
+                           "message": _job_message(final, job, error), "ts": now})
+            if error:
+                merged["error"] = error
+            conn.execute("UPDATE runs SET status=?, error=?, progress=? WHERE id=?",
+                         (run_status, error, _dumps(merged), job["run_id"]))
+    job["status"] = final
+    job["last_error"] = error
+    return job
+
+
+def requeue_stale_jobs(seconds: int = 1800) -> int:
+    """کارهای نیمه‌تمامِ ورکرِ مرده را به صف برمی‌گرداند (Codespace خاموش شد)."""
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.requeue_stale_jobs(seconds)
+    now = time.time()
+    cutoff = now - max(int(seconds), 30)
+    count = 0
+    with _LOCK, _connect() as conn:
+        rows = conn.execute("SELECT * FROM jobs WHERE status='running'"
+                            " AND COALESCE(started_at, ?) < ?", (now, cutoff)).fetchall()
+        for row in rows:
+            job = _job_to_dict(row)
+            final = "failed" if job["attempts"] >= job["max_attempts"] else "pending"
+            conn.execute("UPDATE jobs SET status=?, worker=NULL,"
+                         " last_error=COALESCE(last_error, ?), updated_at=? WHERE id=?",
+                         (final, _STALE_MESSAGE, now, job["id"]))
+            count += 1
+        conn.execute("UPDATE runs SET status='queued' WHERE status='running' AND id IN"
+                     " (SELECT run_id FROM jobs WHERE status='pending')")
+    return count
+
+
+def queue_stats() -> dict:
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.queue_stats()
+    now = time.time()
+    with _LOCK, _connect() as conn:
+        counts = {r["status"]: r["c"] for r in
+                  conn.execute("SELECT status, COUNT(*) AS c FROM jobs GROUP BY status")}
+        oldest = conn.execute("SELECT MIN(created_at) AS oldest FROM jobs"
+                              " WHERE status='pending'").fetchone()["oldest"]
+        workers = [r["worker"] for r in conn.execute(
+            "SELECT DISTINCT worker FROM jobs WHERE status='running' AND worker IS NOT NULL")]
+    return {"pending": counts.get("pending", 0), "running": counts.get("running", 0),
+            "done": counts.get("done", 0), "failed": counts.get("failed", 0),
+            "oldest_wait_s": int(now - oldest) if oldest else 0, "workers": workers}
+
+
+def list_jobs(status: str | None = None, limit: int = 50) -> list[dict]:
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.list_jobs(status, limit)
+    with _LOCK, _connect() as conn:
+        if status:
+            rows = conn.execute("SELECT * FROM jobs WHERE status=? ORDER BY created_at DESC"
+                                " LIMIT ?", (status, int(limit))).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?",
+                                (int(limit),)).fetchall()
+    return [_job_to_dict(r) for r in rows]
+
+
+# ── تحویل خروجی (گزارش ایمیل‌ها) ──────────────────────────────────────────────
+def log_delivery(kind: str, channel: str, target: str, subject: str, status: str,
+                 detail: dict | None = None) -> str:
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.log_delivery(kind, channel, target, subject, status, detail)
+    delivery_id = "dlv-" + uuid.uuid4().hex[:12]
+    with _LOCK, _connect() as conn:
+        conn.execute("INSERT OR REPLACE INTO deliveries (id, kind, channel, target, subject,"
+                     " status, detail, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                     (delivery_id, kind or "digest", channel or "email", target, subject,
+                      status or "sent", _dumps(detail or {}), time.time()))
+    return delivery_id
+
+
+def last_delivery(kind: str = "digest") -> dict | None:
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.last_delivery(kind)
+    with _LOCK, _connect() as conn:
+        row = conn.execute("SELECT * FROM deliveries WHERE kind=? AND status='sent'"
+                           " ORDER BY created_at DESC LIMIT 1", (kind,)).fetchone()
+    if not row:
+        return None
+    data = dict(row)
+    data["detail"] = _json_or(data.get("detail"), {})
+    return data
+
+
+def dashboard_stats() -> dict:
+    """آمار یک‌نگاه برای داشبورد/ایمیل (در هر دو پشتیبان هم‌شکل)."""
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.dashboard_stats()
+    with _LOCK, _connect() as conn:
+        def scalar(sql: str) -> int:
+            return conn.execute(sql).fetchone()[0]
+        stats = {
+            "runs": scalar("SELECT COUNT(*) FROM runs"),
+            "leads": scalar("SELECT COUNT(*) FROM leads"),
+            "contacted": scalar("SELECT COUNT(*) FROM leads WHERE status!='new'"),
+            "won": scalar("SELECT COUNT(*) FROM leads WHERE status='won'"),
+            "with_email": scalar("SELECT COUNT(*) FROM leads WHERE has_email=1"),
+            "with_phone": scalar("SELECT COUNT(*) FROM leads WHERE has_phone=1"),
+            "with_site": scalar("SELECT COUNT(*) FROM leads WHERE has_website=1"),
+            "hot": scalar("SELECT COUNT(*) FROM leads WHERE segment='hot'"),
+        }
+        latest = conn.execute("SELECT id, niche_fa, city, area_label, status, total, hot,"
+                              " created_at FROM runs ORDER BY created_at DESC LIMIT 5").fetchall()
+    stats["queue"] = queue_stats()
+    stats["latest_runs"] = [dict(r) for r in latest]
+    return stats

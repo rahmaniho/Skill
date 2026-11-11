@@ -13,6 +13,11 @@
 **بدون وابستگی بیرونی:** فقط کتابخانه استاندارد پایتون ۳٫۱۱+ (حتی نوشتن فایل `xlsx` هم بدون
 کتابخانه انجام می‌شود). بدون کلید API. همه‌چیز روی دستگاه خودتان.
 
+**☁️ استقرار ابری (اختیاری ولی کامل):** همان کد روی **Vercel** (رابط + API) با پایگاه‌دادهٔ
+**Supabase/Postgres**، موتور واقعی داکر در **GitHub Codespaces**، صف اجراها با ورکر جدا، و
+تحویل خروجی با **ایمیل Gmail** (گزارش لیدهای داغ + پیوست اکسل + پیش‌نویس تماس هر لید).
+راهنمای گام‌به‌گام: [`docs/CLOUD.md`](docs/CLOUD.md).
+
 **✨ وب‌اپ ساده (یک جمله → خروجی):** یک جعبهٔ جست‌وجو، دو ردیف چیپس (هدف و اندازه) و یک دکمه.
 صنف، شهر، زبان، کلیدواژه‌ها، عمق، حجم و حتی زمان تقریبی اجرا را **مغز برنامه** تشخیص می‌دهد؛
 تنظیمات فنی پشت یک بخش بازشو پنهان‌اند. روی `http://localhost:8000/` اجرا می‌شود و
@@ -403,7 +408,13 @@ leadgen/            هسته برنامه (فقط کتابخانه استاند�
   scoring.py        روبریک امتیازدهی، ۵ پروفایل، شکاف‌ها، برچسب‌ها، کانال
   campaign.py       متن فارسی/انگلیسی ایمیل، واتس‌اپ، پیامک، اینستاگرام، سناریوی تماس
   analytics.py      قیف، توزیع‌ها، نقشه، بینش‌ها
-  storage.py        SQLite: اجراها، لیدها، وضعیت پیگیری + مایگریشن سبک
+  storage.py        SQLite: اجراها، لیدها، وضعیت پیگیری، صف، جست‌وجوی قوی + مایگریشن سبک
+  cloud.py          کلاینت PostgREST (stdlib) برای Supabase: request/rpc/rows/health
+  pgstore.py        همان قرارداد storage روی Postgres (RPCها: search_leads, save_run, claim_job…)
+  jobs.py           صف اجراها: enqueue/claim/heartbeat/finish/requeue + جای صف و زمان انتظار
+  worker.py         ورکر صف (Codespaces/داکر): برداشتن کار، اجرا، ذخیره، تحویل ایمیل
+  delivery.py       گزارش ایمیلی لیدهای داغ (HTML/RTL + پیوست اکسل) و پیش‌نویس تماس هر لید
+  wsgi.py           پل WSGI روی همان هندلر HTTP (یک مسیریابی، دو میزبان: محلی و Vercel)
   exports.py        CSV(BOM) / JSON / XLSX چندبرگی (نویسنده OOXML بدون وابستگی)
   pipeline.py       ارکستراتور ۹ مرحله‌ای
   smart.py          مغز وب‌اپ: جملهٔ آزاد + انتخابگرها → صنف/محدوده/زبان/حالت/کلیدواژه/زمان تقریبی
@@ -419,8 +430,17 @@ site/               نسخه قابل انتشار روی GitHub Pages (لندی
   app/              کپی وب‌اپ ساده در حالت دمو → https://rahmaniho.github.io/Skill/app/
   mini/             کپی نسخهٔ جمع‌وجور در حالت دمو → https://rahmaniho.github.io/Skill/mini/
   data/sample.json  داده نمونه مصنوعی + بستهٔ `mini` (درخت منطقه‌ها و فهرست نام‌ها)
-scripts/            ساخت دادهٔ نمونه، دادهٔ منطقه‌محور توسعه، کپی رابط‌ها برای Pages، تست دود سه صفحه (DOM ساختگی)
-tests/              ۱۷۴ تست (پایپ‌لاین، جارو، لوکیشن، ستون‌ها، API، سایت، مغز جمله‌فهم، **منطقه‌ها و جست‌وجوی قوی**)
+api/index.py        نقطهٔ ورود Vercel (یک تابع = کل اپ)          vercel.json  پیکربندی همان تابع
+supabase/schema.sql جدول‌ها، ایندکس‌ها و توابع SQL (جست‌وجو/صف/آمار) — idempotent
+.devcontainer/      Codespaces: موتور داکر + ورکر صف (setup.sh, start-worker.sh)
+docs/CLOUD.md       راهنمای عملیاتی استقرار ابری (گام‌به‌گام + رفع اشکال)
+scripts/            ساخت دادهٔ نمونه، کپی رابط‌ها برای Pages، تست دود سه صفحه،
+                    cloud_parity.py (هم‌ارزی SQLite↔Postgres)، engine_proxy.py (پراکسی کلیددار موتور)،
+                    gmail_token.py (گرفتن refresh token)، check_deploy_config.py
+tests/              ۲۷۷ تست (پایپ‌لاین، جارو، لوکیشن، ستون‌ها، API، سایت، مغز جمله‌فهم، منطقه‌ها و
+                    جست‌وجوی قوی، **پایگاه‌دادهٔ ابری، صف و ورکر، تحویل ایمیل، لایهٔ WSGI/Vercel،
+                    هم‌ارزی SQLite↔Postgres، قرارداد رابط کاربری و پراکسی موتور**)
+  fixtures/cloud_parity/  فیکسچر قطعی ۸ لیدی + ۱۳ سناریوی جست‌وجو + انتظارهای commit‌شده
 .github/workflows/  CI (تست‌ها + smoke سه صفحه + هم‌خوانی Pages) و استقرار خودکار Pages
 docker-compose.yml  موتور اسکراپر کیت اصلی (روی 127.0.0.1)
 data/               پایگاه‌داده + خروجی‌ها (در .gitignore — داده شخصی است)
@@ -444,13 +464,26 @@ cp .env.example .env
 | `LEADGEN_HOST` / `LEADGEN_PORT` | `0.0.0.0` / `8000` | آدرس داشبورد |
 | `LEADGEN_DATA_DIR` | `data` | پایگاه‌داده و خروجی‌ها |
 | `ENRICH_WORKERS` | `8` | تعداد رشته‌های موازی غنی‌سازی |
+| `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` | — | پایگاه‌دادهٔ ابری؛ وقتی پر شوند `DB_BACKEND` خودش `supabase` می‌شود |
+| `LEADGEN_QUEUE` | `auto` | `auto` · `always` (سرورلس) · `never` (هم‌زمان در همان فرایند) |
+| `WORKER_ID` / `WORKER_POLL_SECONDS` / `WORKER_MAX_ATTEMPTS` | `worker-<host>` / `5` / `3` | تنظیم ورکر صف |
+| `DIGEST_TO` / `DIGEST_MAX_LEADS` | — / `12` | گیرنده‌ها و حجم گزارش ایمیلی |
+| `GMAIL_REFRESH_TOKEN` / `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` | — | ارسال با Gmail API (تنها راه روی Vercel) |
+| `GMAIL_SENDER` / `GMAIL_APP_PASSWORD` | — | ارسال با SMTP «رمز برنامه» (محلی/Codespaces) |
+| `LEADGEN_DELIVERY_DRY` | خالی | `1` = فقط فایل `.eml` بساز، چیزی ارسال نکن |
+| `APP_BASE_URL` | — | نشانی اپ برای لینک‌های داخل ایمیل |
+
+فهرست کامل با توضیح فارسی در [`.env.example`](.env.example) (۹۲ خط) و راهنمای عملیاتی در
+[`docs/CLOUD.md`](docs/CLOUD.md).
 
 ---
 
 ## تست‌ها
 
 ```bash
-python3 -m unittest discover -s tests -v       # ۱۷۴ تست
+python3 -m unittest discover -s tests -v       # ۲۷۷ تست
+python3 scripts/cloud_parity.py                # هم‌ارزی جست‌وجو: SQLite ↔ انتظارهای Postgres (بدون شبکه)
+python3 scripts/check_deploy_config.py         # سازگاری vercel.json / api/index.py / لایهٔ WSGI
 node scripts/smoke_site.js                     # تست دود صفحهٔ Pages (DOM ساختگی، بدون مرورگر)
 node scripts/smoke_smart.js                    # تست دود وب‌اپ ساده در حالت دمو (۵۱ بررسی)
 node scripts/smoke_mini.js                     # تست دود نسخهٔ جمع‌وجور در حالت دمو (۳۹ بررسی)
@@ -526,6 +559,42 @@ gh api repos/<owner>/<repo>/pages -X POST -f build_type=workflow
 
 > دادهٔ نمونهٔ سایت مصنوعی است و هیچ اطلاعات شخصی واقعی در مخزن commit نمی‌شود؛
 > دادهٔ واقعی اجراها در `data/` می‌ماند که در `.gitignore` است.
+
+---
+
+## ☁️ استقرار ابری (Vercel + Supabase + Codespaces + Gmail)
+
+برای کار **عملیاتی** (نه فقط محلی)، سه لایه داریم که با یک پایگاه‌دادهٔ مشترک به هم وصل‌اند:
+
+| لایه | چیست | فایل‌های کلیدی |
+|---|---|---|
+| اپ | رابط فارسی + همهٔ `/api/*` روی یک تابع serverless | `api/index.py`, `vercel.json`, `leadgen/wsgi.py` |
+| داده | Postgres روی Supabase: اجراها، لیدها، صف، گزارش ارسال‌ها | `supabase/schema.sql`, `leadgen/cloud.py`, `leadgen/pgstore.py` |
+| موتور + ورکر | داکرِ `gosom/google-maps-scraper` در Codespaces، صف‌بردار و ارسال ایمیل | `.devcontainer/*`, `leadgen/{jobs,worker,delivery}.py`, `scripts/engine_proxy.py` |
+
+```bash
+# ۱) پایگاه‌داده: supabase/schema.sql را یک‌بار در SQL Editor اجرا کنید، سپس
+export SUPABASE_URL="https://<ref>.supabase.co" SUPABASE_SERVICE_KEY="<service_role>"
+python3 -m leadgen.cli doctor                       # backend: supabase
+
+# ۲) هم‌ارزی موتورهای داده (SQLite محلی ↔ Postgres ابری) — ۱۳ سناریو
+python3 scripts/cloud_parity.py                     # آفلاین (بدون شبکه؛ همان که CI می‌زند)
+python3 scripts/cloud_parity.py --live --apply      # زنده: فیکسچر را در ابر بنویس و بسنج
+
+# ۳) موتور + ورکر (در Codespaces)
+bash .devcontainer/setup.sh                         # .env + docker compose up -d + بررسی Supabase
+bash .devcontainer/start-worker.sh                  # ورکر صف در پس‌زمینه
+python3 -m leadgen.worker --status                  # وضعیت صف و موتور
+
+# ۴) ایمیل (Gmail)
+python3 scripts/gmail_token.py                      # گرفتن refresh token (یک‌بار)
+LEADGEN_DELIVERY_DRY=1 python3 -m leadgen.delivery --digest --limit 5   # بازبینی بدون ارسال
+```
+
+در رابط‌ها هم همین‌ها دیده می‌شود: بنر **«⏳ در صف»** با جای شما در صف و زمان انتظار، و در
+داشبورد `/studio/` تب **«صف و ارسال»** (آمار صف، کارها با وضعیت فارسی، ورکرهای فعال، فرم
+ارسال گزارش/پیش‌نویس با حالت پیش‌نمایش). راهنمای کامل و رفع اشکال:
+[`docs/CLOUD.md`](docs/CLOUD.md).
 
 ---
 

@@ -46,6 +46,7 @@
     <button class="tab" data-view="leads" role="tab">لیدها</button>
     <button class="tab" data-view="analysis" role="tab">تحلیل</button>
     <button class="tab" data-view="campaign" role="tab">کمپین</button>
+    <button class="tab" data-view="ops" role="tab" title="صف اجراها، ورکرها و ارسال ایمیل">صف و ارسال</button>
     <button class="tab" data-view="import" role="tab">ورود داده</button>
     <button class="tab" data-view="settings" role="tab">راهنما</button>
   </nav>
@@ -413,6 +414,55 @@
         <h2>متن‌های تولیدشده</h2>
         <div class="compliance" id="campCompliance"></div>
         <div id="campList" class="camp-list"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════ صف و ارسال ═══════════════ -->
+  <section class="view" id="view-ops">
+    <div class="grid two">
+      <div class="card">
+        <h2>صف اجراها <small class="hint" id="queueMode"></small></h2>
+        <p class="hint">در استقرار ابری (Vercel + Supabase) اجراها در صف می‌روند و ورکرِ
+          Codespace/داکر آن‌ها را برمی‌دارد. این‌جا وضعیت زندهٔ صف را می‌بینید.</p>
+        <div class="stat-strip" id="queueStats"></div>
+        <div class="actions">
+          <button class="ghost" id="queueRefresh">↻ به‌روزرسانی صف</button>
+          <label class="switch"><input type="checkbox" id="queueAuto" checked><span>به‌روزرسانی خودکار (۵ ثانیه)</span></label>
+        </div>
+        <table class="table" id="jobsTable">
+          <thead><tr><th>اجرا</th><th>وضعیت</th><th>تلاش</th><th>ورکر</th><th>پیام</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <div id="workersBox"></div>
+      </div>
+
+      <div class="card">
+        <h2>ارسال ایمیل (Gmail)</h2>
+        <div class="compliance" id="deliveryStatus">در حال بررسی…</div>
+        <div class="field"><label>گیرنده‌ها (با کاما جدا کنید)</label>
+          <input id="dlvTo" placeholder="you@company.com, sales@company.com"></div>
+        <div class="row">
+          <div class="field half"><label>حداکثر لید در گزارش</label>
+            <input id="dlvLimit" type="number" min="1" max="200" value="12"></div>
+          <div class="field half"><label>فقط بخش</label>
+            <select id="dlvSegment">
+              <option value="">همه لیدها</option>
+              <option value="hot" selected>فقط داغ 🔥</option>
+              <option value="warm">فقط گرم ☀️</option>
+            </select></div>
+        </div>
+        <div class="field"><label>اجرا (اختیاری)</label>
+          <select id="dlvRun" class="inline"><option value="">همهٔ لیدهای پایگاه</option></select></div>
+        <label class="switch"><input type="checkbox" id="dlvDry" checked>
+          <span>فقط پیش‌نمایش (ایمیل ارسال نشود — فایل در سرور ساخته می‌شود)</span></label>
+        <div class="actions">
+          <button class="primary" id="dlvDigest">📧 گزارش لیدهای داغ</button>
+          <button class="ghost" id="dlvDrafts">✉️ پیش‌نویس پیام هر لید</button>
+        </div>
+        <pre class="log" id="deliveryLog" hidden></pre>
+        <h3>آخرین ارسال</h3>
+        <div id="lastDelivery" class="hint">—</div>
       </div>
     </div>
   </section>

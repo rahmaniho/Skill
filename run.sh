@@ -8,6 +8,8 @@
 #   ./run.sh doctor       → بررسی سلامت محیط (موتور، داکر، پایگاه‌داده)
 #   ./run.sh engine       → بالا آوردن موتور واقعی با داکر (docker compose up -d)
 #   ./run.sh pages        → ساخت دادهٔ نمونه + کپی هر دو رابط برای GitHub Pages
+#   ./run.sh cloud [args] → راستی‌آزمایی لایهٔ ابری (هم‌ارزی SQLite↔Postgres + پیکربندی Vercel)
+#   ./run.sh worker [args]→ ورکر صف (معمولاً در Codespaces کنار موتور داکر)
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -59,12 +61,23 @@ case "$CMD" in
     done
     echo "⚠ موتور هنوز پاسخ نمی‌دهد؛ docker compose logs را ببینید." >&2; exit 1
     ;;
+  cloud)
+    shift || true
+    echo "▸ هم‌ارزی جست‌وجو (SQLite ↔ Postgres/Supabase)"
+    python3 scripts/cloud_parity.py "$@"
+    echo "▸ سازگاری پیکربندی استقرار (Vercel + WSGI)"
+    python3 scripts/check_deploy_config.py
+    ;;
+  worker)
+    shift || true
+    exec python3 -m leadgen.worker "$@"
+    ;;
   pages)
     python3 scripts/build_site_sample.py
     python3 scripts/build_pages_app.py
     echo "✓ برای پیش‌نمایش محلی: python3 -m http.server -d site --bind 0.0.0.0 8090"
     ;;
   *)
-    echo "کاربرد: ./run.sh [serve|demo|seed|test|smoke|doctor|engine|pages]" >&2; exit 1
+    echo "کاربرد: ./run.sh [serve|demo|seed|test|smoke|doctor|engine|pages|cloud|worker]" >&2; exit 1
     ;;
 esac

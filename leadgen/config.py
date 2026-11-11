@@ -20,7 +20,34 @@ ENV_KEYS = (
     "LEADGEN_HOST",
     "LEADGEN_PORT",
     "LEADGEN_DATA_DIR",
+    "LEADGEN_ROOT_UI",
     "ENRICH_WORKERS",
+    # ── لایهٔ عملیاتی ابری ────────────────────────────────────────────────────
+    "LEADGEN_DB",            # sqlite | supabase
+    "SUPABASE_URL",          # https://<ref>.supabase.co
+    "SUPABASE_SERVICE_KEY",  # کلید service_role (فقط سمت سرور)
+    "SUPABASE_ANON_KEY",     # کلید anon (فقط وقتی RLS را خودتان باز کرده‌اید)
+    "SUPABASE_SCHEMA",       # پیش‌فرض public
+    "LEADGEN_QUEUE",         # auto | always | never — صف اجراها برای ورکر
+    "WORKER_ID",             # شناسهٔ ورکر (پیش‌فرض: نام میزبان)
+    "WORKER_POLL_SECONDS",   # فاصلهٔ بررسی صف
+    "WORKER_MAX_JOBS",       # سقف اجرا در هر چرخهٔ ورکر (۰ = نامحدود)
+    "WORKER_MAX_ATTEMPTS",   # تلاش مجدد پیش از شکست قطعی
+    "APP_BASE_URL",          # آدرس عمومی اپ (برای لینک‌های ایمیل)
+    # ── تحویل خروجی (ایمیل) ──────────────────────────────────────────────────
+    "DIGEST_TO",             # گیرنده‌های digest (با کاما جدا شوند)
+    "DIGEST_FROM",           # فرستندهٔ نمایشی
+    "DIGEST_SUBJECT",        # موضوع پیش‌فرض
+    "DIGEST_MAX_LEADS",      # چند لید داغ در ایمیل listed شود
+    "GMAIL_SENDER",          # آدرس Gmail
+    "GMAIL_APP_PASSWORD",    # رمز برنامه (مسیر SMTP)
+    "GMAIL_REFRESH_TOKEN",   # مسیر Gmail API (HTTPS — روی Vercel تنها راه است)
+    "GMAIL_CLIENT_ID",
+    "GMAIL_CLIENT_SECRET",
+    "SMTP_HOST",
+    "SMTP_PORT",
+    "SMTP_USER",
+    "SMTP_PASSWORD",
 )
 
 
@@ -80,6 +107,113 @@ DATA_DIR = (ROOT / (env("LEADGEN_DATA_DIR", "data") or "data")).resolve()
 EXPORT_DIR = DATA_DIR / "exports"
 DB_PATH = DATA_DIR / "leadgen.db"
 
+# ── پایگاه‌دادهٔ ابری (Supabase/Postgres) ────────────────────────────────────
+# LEADGEN_DB=supabase یا صرفاً وجود SUPABASE_URL → داده‌ها در Postgres ابری
+# نگه داشته می‌شوند تا اپ روی Vercel و ورکر داخل Codespace یک دادهٔ مشترک ببینند.
+SUPABASE_URL = env("SUPABASE_URL").rstrip("/")
+SUPABASE_SERVICE_KEY = env("SUPABASE_SERVICE_KEY")
+SUPABASE_ANON_KEY = env("SUPABASE_ANON_KEY")
+SUPABASE_SCHEMA = env("SUPABASE_SCHEMA", "public") or "public"
+SUPABASE_KEY = SUPABASE_SERVICE_KEY or SUPABASE_ANON_KEY
+
+
+def _default_db_backend() -> str:
+    explicit = env("LEADGEN_DB").lower()
+    if explicit in ("sqlite", "supabase", "postgres", "pg"):
+        return "supabase" if explicit != "sqlite" else "sqlite"
+    return "supabase" if (SUPABASE_URL and SUPABASE_KEY) else "sqlite"
+
+
+DB_BACKEND = _default_db_backend()
+
+
+def supabase_ready() -> bool:
+    return bool(DB_BACKEND == "supabase" and SUPABASE_URL and SUPABASE_KEY)
+
+
+# ── صف اجراها (ورکر جدا از وب) ───────────────────────────────────────────────
+# auto    = وقتی پایگاه‌داده ابری است یا ورکر جدا خواسته شده، اجراها به صف می‌روند
+# always  = همیشه صف (حالت سرورلس: Vercel)
+# never   = اجرای همزمان داخل همان فرایند (حالت محلی/تک‌کاربره)
+QUEUE_MODE = (env("LEADGEN_QUEUE", "auto").lower() or "auto")
+WORKER_ID = env("WORKER_ID") or f"worker-{os.uname().nodename if hasattr(os, 'uname') else 'local'}"
+WORKER_POLL_SECONDS = max(1, env_int("WORKER_POLL_SECONDS", 5))
+WORKER_MAX_JOBS = env_int("WORKER_MAX_JOBS", 0)
+WORKER_MAX_ATTEMPTS = max(1, env_int("WORKER_MAX_ATTEMPTS", 3))
+APP_BASE_URL = env("APP_BASE_URL").rstrip("/")
+
+
+def queue_enabled() -> bool:
+    if QUEUE_MODE == "always":
+        return True
+    if QUEUE_MODE == "never":
+        return False
+    return supabase_ready() or env("LEADGEN_WORKER") == "1"
+
+
+# ── تحویل خروجی (ایمیل) ──────────────────────────────────────────────────────
+DIGEST_TO = [x.strip() for x in env("DIGEST_TO").split(",") if x.strip()]
+DIGEST_FROM = env("DIGEST_FROM") or env("GMAIL_SENDER") or env("SMTP_USER")
+DIGEST_SUBJECT = env("DIGEST_SUBJECT") or "گزارش لیدهای داغ — LeadGen"
+DIGEST_MAX_LEADS = max(1, env_int("DIGEST_MAX_LEADS", 12))
+GMAIL_SENDER = env("GMAIL_SENDER")
+GMAIL_APP_PASSWORD = env("GMAIL_APP_PASSWORD")
+GMAIL_REFRESH_TOKEN = env("GMAIL_REFRESH_TOKEN")
+GMAIL_CLIENT_ID = env("GMAIL_CLIENT_ID")
+GMAIL_CLIENT_SECRET = env("GMAIL_CLIENT_SECRET")
+SMTP_HOST = env("SMTP_HOST") or "smtp.gmail.com"
+SMTP_PORT = env_int("SMTP_PORT", 587)
+SMTP_USER = env("SMTP_USER") or GMAIL_SENDER
+SMTP_PASSWORD = env("SMTP_PASSWORD") or GMAIL_APP_PASSWORD
+
+
+def gmail_credentials() -> dict:
+    """اعتبارنامهٔ Gmail API — زنده از محیط خوانده می‌شود (بدون نیاز به ری‌استارت)."""
+    return {"sender": env("GMAIL_SENDER") or GMAIL_SENDER,
+            "app_password": env("GMAIL_APP_PASSWORD") or GMAIL_APP_PASSWORD,
+            "refresh_token": env("GMAIL_REFRESH_TOKEN") or GMAIL_REFRESH_TOKEN,
+            "client_id": env("GMAIL_CLIENT_ID") or GMAIL_CLIENT_ID,
+            "client_secret": env("GMAIL_CLIENT_SECRET") or GMAIL_CLIENT_SECRET}
+
+
+def smtp_credentials() -> dict:
+    """اعتبارنامهٔ SMTP (پیش‌فرض: Gmail با رمز برنامه)."""
+    return {"host": env("SMTP_HOST") or SMTP_HOST,
+            "port": env_int("SMTP_PORT", SMTP_PORT),
+            "user": env("SMTP_USER") or env("GMAIL_SENDER") or SMTP_USER,
+            "password": env("SMTP_PASSWORD") or env("GMAIL_APP_PASSWORD") or SMTP_PASSWORD}
+
+
+def email_transport() -> str:
+    """gmail_api (روی Vercel/ابر) یا smtp (محلی/Codespace) یا none.
+
+    روی توابع serverless فقط `gmail_api` کار می‌کند — خروجی SMTP معمولاً بسته است.
+    """
+    gmail = gmail_credentials()
+    if gmail["refresh_token"] and gmail["client_id"] and gmail["client_secret"]:
+        return "gmail_api"
+    smtp = smtp_credentials()
+    if smtp["user"] and smtp["password"]:
+        return "smtp"
+    return "none"
+
+
+def digest_recipients() -> list[str]:
+    """گیرنده‌های گزارش ایمیلی (زنده از `DIGEST_TO`)."""
+    live = [x.strip() for x in env("DIGEST_TO").split(",") if x.strip()]
+    return live or list(DIGEST_TO)
+
+
+def digest_from() -> str:
+    """آدرس فرستندهٔ گزارش."""
+    return env("DIGEST_FROM") or env("GMAIL_SENDER") or env("SMTP_USER") or DIGEST_FROM
+
+
+def app_base_url() -> str:
+    """نشانی اپ برای لینک‌های داخل ایمیل — بدون اسلش پایانی."""
+    return (env("APP_BASE_URL") or APP_BASE_URL or "").rstrip("/")
+
+
 # ── غنی‌سازی ─────────────────────────────────────────────────────────────────
 ENRICH_WORKERS = env_int("ENRICH_WORKERS", 8)
 
@@ -116,4 +250,14 @@ def summary() -> dict:
         "data_dir": str(DATA_DIR),
         "enrich_workers": ENRICH_WORKERS,
         "lead_fields": LEAD_FIELDS,
+        # لایهٔ عملیاتی
+        "db_backend": DB_BACKEND,
+        "supabase_url": SUPABASE_URL,
+        "supabase_ready": supabase_ready(),
+        "queue_mode": QUEUE_MODE,
+        "queue_enabled": queue_enabled(),
+        "worker_id": WORKER_ID,
+        "app_base_url": APP_BASE_URL,
+        "email_transport": email_transport(),
+        "digest_to": DIGEST_TO,
     }
