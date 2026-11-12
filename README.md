@@ -518,7 +518,7 @@ cp .env.example .env
 ## تست‌ها
 
 ```bash
-python3 -m unittest discover -s tests -v       # ۲۷۷ تست
+python3 -m unittest discover -t . -s tests        # همیشه روی SQLite محلی (۴۲۷ تست)
 python3 scripts/cloud_parity.py                # هم‌ارزی جست‌وجو: SQLite ↔ انتظارهای Postgres (بدون شبکه)
 python3 scripts/check_deploy_config.py         # سازگاری vercel.json / api/index.py / لایهٔ WSGI
 node scripts/smoke_site.js                     # تست دود صفحهٔ Pages (DOM ساختگی، بدون مرورگر)

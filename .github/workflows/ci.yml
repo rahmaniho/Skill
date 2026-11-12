@@ -33,7 +33,7 @@ jobs:
           # لاگ کامل است، ولی وقتی دانلود لاگ GitHub خراب باشد این annotationها
           # تنها راه دیدن علت شکست‌اند؛ پس نام آزمون‌های شکست‌خورده را منتشر می‌کنیم.
           set +e
-          python -m unittest discover -s tests -v > /tmp/tests.log 2>&1
+          python -m unittest discover -t . -s tests -v > /tmp/tests.log 2>&1
           status=$?
           tail -n 80 /tmp/tests.log
           if [ "$status" -ne 0 ]; then
