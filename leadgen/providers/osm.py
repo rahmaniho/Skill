@@ -627,6 +627,10 @@ def overpass_health(*, force: bool = False, probe: bool = True) -> dict:
         payload = {"up": bool(up), "endpoint": endpoint,
                    "ms": int((time.time() - started) * 1000),
                    "error": "" if up else "وضعیت Overpass نامشخص"}
+        if not up:
+            # /status از بعضی شبکه‌ها (مثلاً Vercel) ۵۰۲ می‌دهد در حالی که
+            # interpreter سالم است. پس با یک پرسش کوچک واقعی محک می‌زنیم.
+            raise RuntimeError("status-not-ok")
     except Exception as exc:
         last_ok = float(_OVERPASS_LAST_OK[0] or 0)
         recent_ok = last_ok and (time.time() - last_ok) < 600
@@ -634,15 +638,40 @@ def overpass_health(*, force: bool = False, probe: bool = True) -> dict:
         # که /status کند است ولی همان لحظه ۳۹۲ نتیجهٔ واقعی برگشت. پس تایم‌اوت را
         # «نامعلوم» گزارش می‌کنیم، نه «خراب».
         timed_out = isinstance(exc, TimeoutError) or "timed out" in str(exc).lower()
-        up = True if recent_ok else (None if timed_out else False)
+        probed = False
+        if not recent_ok:
+            probed = _overpass_mini_probe()
+        if recent_ok:
+            up, note = True, "سرویس در ۱۰ دقیقهٔ گذشته پاسخ داده است"
+        elif probed:
+            up, note = True, "سنجیده شد با یک پرسش کوچک واقعی (مسیر /status در این شبکه معتبر نیست)"
+        elif timed_out:
+            up, note = None, "پاسخ وضعیت دیر آمد؛ نامعلوم (جست‌وجوی واقعی همچنان محک است)"
+        else:
+            up, note = False, "Overpass پاسخ نداد"
         payload = {"up": up, "endpoint": endpoint,
                    "ms": int((time.time() - started) * 1000),
-                   "error": "" if recent_ok or timed_out else f"{type(exc).__name__}: {exc}"[:200],
-                   "note": ("سرویس در ۱۰ دقیقهٔ گذشته پاسخ داده است" if recent_ok else
-                            "پاسخ وضعیت دیر آمد؛ نامعلوم (جست‌وجوی واقعی همچنان محک است)"
-                            if timed_out else "")}
+                   "error": "" if (recent_ok or probed or timed_out)
+                   else f"{type(exc).__name__}: {exc}"[:200],
+                   "note": note,
+                   "mini_probe": probed}
     _OVERPASS_HEALTH.update({"ts": now, "payload": payload})
     return dict(payload)
+
+
+def _overpass_mini_probe(timeout: float = 8.0) -> bool:
+    """محک واقعی و ارزان: یک کافه در جعبهٔ کوچک رامسر (اگر سرویس سالم باشد < ۱ ثانیه).
+
+    چرا؟ `/status` گاهی از بعضی شبکه‌ها ۵۰۲ می‌دهد یا کند است، درحالی‌که همان لحظه
+    interpreter پاسخ می‌دهد. سلامت باید با همان مسیری سنجیده شود که کار واقعی از آن
+    می‌گذرد.
+    """
+    query = '[out:json][timeout:8];nwr["amenity"="cafe"](36.900,50.640,36.930,50.670);out 1;'
+    try:
+        data = _overpass_request(query, timeout=timeout, retries=0)
+    except OSMDownError:
+        return False
+    return isinstance(data, dict) and "elements" in data
 
 
 def overpass_limit_for(bbox: list[float] | None, default: int | None = None) -> int:

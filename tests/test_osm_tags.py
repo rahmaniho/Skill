@@ -265,13 +265,25 @@ class OverpassHealthTests(unittest.TestCase):
     def setUp(self):
         osm._OVERPASS_HEALTH.update({"ts": 0.0, "payload": None})
         osm._OVERPASS_LAST_OK[0] = 0.0
+        self._gap = config.OVERPASS_MIN_INTERVAL
+        config.OVERPASS_MIN_INTERVAL = 0.001     # بدون مکث ۱ ثانیه‌ای در آزمون
 
     def tearDown(self):
+        config.OVERPASS_MIN_INTERVAL = self._gap
         osm._OVERPASS_HEALTH.update({"ts": 0.0, "payload": None})
         osm._OVERPASS_LAST_OK[0] = 0.0
 
-    def test_status_timeout_is_unknown_not_down(self):
-        with mock.patch.object(osm.urllib.request, "urlopen", side_effect=TimeoutError("timed out")):
+    def test_status_timeout_falls_back_to_real_mini_query(self):
+        # /status تایم‌اوت می‌دهد ولی پرسش کوچک واقعی جواب دارد → سالم
+        with mock.patch.object(osm.urllib.request, "urlopen", side_effect=TimeoutError("timed out")), \
+                mock.patch.object(osm, "_overpass_mini_probe", return_value=True):
+            payload = osm.overpass_health(force=True)
+        self.assertTrue(payload["up"])
+        self.assertTrue(payload["mini_probe"])
+
+    def test_status_timeout_and_mini_probe_fail_is_unknown(self):
+        with mock.patch.object(osm.urllib.request, "urlopen", side_effect=TimeoutError("timed out")), \
+                mock.patch.object(osm, "_overpass_mini_probe", return_value=False):
             payload = osm.overpass_health(force=True)
         self.assertIsNone(payload["up"])
         self.assertEqual(payload["error"], "")
@@ -285,9 +297,21 @@ class OverpassHealthTests(unittest.TestCase):
 
     def test_connection_refused_is_down(self):
         with mock.patch.object(osm.urllib.request, "urlopen",
-                               side_effect=OSError("Connection refused")):
+                               side_effect=OSError("Connection refused")), \
+                mock.patch.object(osm, "_overpass_mini_probe", return_value=False):
             payload = osm.overpass_health(force=True)
         self.assertFalse(payload["up"])
+
+    def test_status_502_uses_real_query(self):
+        """روی Vercel دیده شد: /status → 502 ولی interpreter سالم بود."""
+        import urllib.error
+        err = urllib.error.HTTPError("https://overpass-api.de/api/status", 502,
+                                     "Bad Gateway", {}, None)
+        with mock.patch.object(osm.urllib.request, "urlopen", side_effect=err), \
+                mock.patch.object(osm, "_overpass_mini_probe", return_value=True):
+            payload = osm.overpass_health(force=True)
+        self.assertTrue(payload["up"])
+        self.assertTrue(payload["mini_probe"])
 
     def test_probe_disabled_returns_unknown_without_network(self):
         with mock.patch.object(osm.urllib.request, "urlopen", side_effect=AssertionError("شبکه")):
