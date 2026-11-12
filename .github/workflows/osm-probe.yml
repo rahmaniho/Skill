@@ -1,0 +1,47 @@
+name: OSM probe
+
+# آزمون دودی موتور دادهٔ واقعی از یک شبکهٔ بیرونی (نزدیک به محیط تولید).
+# اجرای دستی: Actions → OSM probe → Run workflow
+on:
+  workflow_dispatch:
+    inputs:
+      city:
+        description: "شهر برای آزمون (خالی = تهران/رامسر/اوز)"
+        required: false
+        default: ""
+      niche:
+        description: "صنف (مثلاً رستوران، دندانپزشکی)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Probe Overpass + Nominatim
+        env:
+          LEADGEN_DATA_DIR: /tmp/leadgen-probe
+          OSM_MODE: hybrid
+          CITY: ${{ github.event.inputs.city }}
+          NICHE: ${{ github.event.inputs.niche }}
+        run: |
+          set -o pipefail
+          if [ -n "$CITY" ]; then
+            python3 scripts/osm_probe.py --city "$CITY" --niche "$NICHE" --json | tee probe.log
+          else
+            python3 scripts/osm_probe.py --json | tee probe.log
+          fi
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: osm-probe
+          path: probe.log

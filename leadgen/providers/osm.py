@@ -24,7 +24,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from .. import config
+from .. import config, osm_tags
 
 # فاصلهٔ حداقلی بین دو درخواست در *همهٔ* رشته‌های همین پروسه
 _LOCK = threading.Lock()
@@ -109,6 +109,186 @@ def viewbox_param(bbox: list[float]) -> str:
     """[s, n, w, e] → «w,n,e,s» = چپ,بالا,راست,پایین (ترتیب viewbox در Nominatim)."""
     s, n, w, e = (float(x) for x in bbox)
     return f"{w:.6f},{n:.6f},{e:.6f},{s:.6f}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Overpass: خواندن برچسب‌های OSM — صدها کسب‌وکار در یک درخواست
+# ─────────────────────────────────────────────────────────────────────────────
+_OVERPASS_LOCK = threading.Lock()
+_OVERPASS_LAST = [0.0]
+_OVERPASS_HEALTH: dict = {"ts": 0.0, "payload": None}
+
+
+def _overpass_throttle() -> None:
+    gap = float(config.OVERPASS_MIN_INTERVAL or 1.0)
+    with _OVERPASS_LOCK:
+        wait = _OVERPASS_LAST[0] + gap - time.monotonic()
+        if wait > 0:
+            time.sleep(min(wait, 8.0))
+        _OVERPASS_LAST[0] = time.monotonic()
+
+
+def build_overpass_query(filters: list[str], bbox: list[float], *,
+                         limit: int | None = None, timeout: int | None = None) -> str:
+    """ساخت کوئری Overpass برای چند فیلتر تگی داخل یک جعبه.
+
+    bbox داخلی [s, n, w, e] است؛ ترتیب Overpass (s,w,n,e) است.
+    """
+    if not filters:
+        raise ValueError("هیچ فیلتری برای Overpass نبود")
+    s, n, w, e = (float(x) for x in bbox)
+    box = f"({s:.6f},{w:.6f},{n:.6f},{e:.6f})"
+    parts = ";".join(f"nwr{f}{box}" for f in filters)
+    cap = max(1, int(limit or config.OVERPASS_LIMIT))
+    seconds = max(5, int(timeout or config.OVERPASS_TIMEOUT))
+    return f"[out:json][timeout:{seconds}];({parts};);out center {cap};"
+
+
+def _overpass_request(query: str, *, timeout: float) -> dict:
+    """اجرای کوئری روی اولین آینه‌ای که جواب می‌دهد (تحمل خطای سرویس)."""
+    payload = urllib.parse.urlencode({"data": query}).encode("utf-8")
+    errors: list[str] = []
+    for endpoint in config.OVERPASS_ENDPOINTS:
+        _overpass_throttle()
+        req = urllib.request.Request(
+            endpoint, data=payload, method="POST",
+            headers={"User-Agent": USER_AGENT, "Accept": "application/json",
+                     "Content-Type": "application/x-www-form-urlencoded"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout + 10) as resp:
+                raw = resp.read()
+        except urllib.error.HTTPError as exc:
+            errors.append(f"{endpoint.split('/')[2]} HTTP {exc.code}")
+            continue
+        except Exception as exc:                      # شبکه/DNS/تایم‌اوت
+            errors.append(f"{endpoint.split('/')[2]} {type(exc).__name__}")
+            continue
+        try:
+            data = json.loads(raw.decode("utf-8", "replace"))
+        except ValueError:
+            errors.append(f"{endpoint.split('/')[2]} پاسخ JSON نبود")
+            continue
+        remark = str((data or {}).get("remark") or "")
+        if remark and ("error" in remark.lower() or "timed out" in remark.lower()):
+            errors.append(f"{endpoint.split('/')[2]}: {remark[:120]}")
+            continue
+        return data
+    raise OSMDownError("Overpass پاسخ نداد (" + "; ".join(errors[:3]) + ")")
+
+
+def _center_of(element: dict) -> tuple[float, float] | None:
+    center = element.get("center") or {}
+    try:
+        if center.get("lat") is not None:
+            return float(center["lat"]), float(center["lon"])
+        return float(element["lat"]), float(element["lon"])
+    except (KeyError, TypeError, ValueError):
+        bounds = element.get("bounds") or {}
+        try:
+            return ((float(bounds["minlat"]) + float(bounds["maxlat"])) / 2,
+                    (float(bounds["minlon"]) + float(bounds["maxlon"])) / 2)
+        except (KeyError, TypeError, ValueError):
+            return None
+
+
+def row_from_overpass(element: dict, *, input_id: str = "", lang: str = "fa") -> dict | None:
+    """یک المان Overpass → ردیف قرارداد موتور (همتای `row_from_item`)."""
+    tags = element.get("tags") or {}
+    if not isinstance(tags, dict) or not tags:
+        return None
+    name = str(tags.get("name") or tags.get("name:fa") or tags.get("brand") or "").strip()
+    if not name or osm_tags.is_excluded(tags):
+        return None
+    point = _center_of(element)
+    if not point:
+        return None
+    lat, lon = round(point[0], 6), round(point[1], 6)
+    osm_type = str(element.get("type") or "")
+    osm_id = element.get("id")
+    if not osm_type or osm_id is None:
+        return None
+
+    niche_id = osm_tags.niche_for_tags(tags)
+    category = osm_tags.describe(tags)
+
+    def pick(*keys: str) -> str:
+        for key in keys:
+            value = (tags or {}).get(key)
+            if value and str(value).strip():
+                return str(value).strip()
+        return ""
+
+    address = "، ".join(pick("addr:full", "address", "addr:street", "addr:city") for _ in (0,)
+                        if pick("addr:full", "address", "addr:street", "addr:city"))
+    street = pick("addr:street")
+    house = pick("addr:housenumber")
+    address = "، ".join(x for x in (house, street, pick("addr:suburb", "addr:neighbourhood")) if x)
+
+    phone = pick("phone", "contact:phone", "mobile", "contact:mobile")
+    website = pick("website", "contact:website", "url")
+    email = pick("email", "contact:email")
+    description = pick("description", "note", "healthcare:speciality")[:400]
+
+    return {
+        "input_id": input_id,
+        "link": f"https://www.openstreetmap.org/{osm_type}/{osm_id}",
+        "title": name,
+        "category": category,
+        "address": address,
+        "open_hours": pick("opening_hours"),
+        "popular_times": "",
+        "website": website,
+        "phone": phone,
+        "plus_code": "",
+        "review_count": "",
+        "review_rating": "",
+        "reviews_per_rating": "",
+        "latitude": str(lat),
+        "longitude": str(lon),
+        "cid": f"{osm_type}/{osm_id}",
+        "status": "open" if pick("opening_hours") else "",
+        "descriptions": description,
+        "reviews_link": "",
+        "thumbnail": "",
+        "timezone": "",
+        "price_range": pick("price_range"),
+        "data_id": f"osm:{osm_type}/{osm_id}",
+        "place_id": f"osm:{osm_type}/{osm_id}",
+        "images": "",
+        "reservations": "",
+        "order_online": "",
+        "menu": "",
+        "owner": pick("operator", "owner"),
+        "complete_address": address,
+        "about": description,
+        "user_reviews": "",
+        "user_reviews_extended": "",
+        "emails": email,
+        "instagram": pick("contact:instagram", "instagram"),
+        "facebook": pick("contact:facebook", "facebook"),
+        "linkedin": pick("contact:linkedin", "linkedin"),
+        "niche_id": niche_id,
+        "source": "openstreetmap",
+        "source_url": f"https://www.openstreetmap.org/{osm_type}/{osm_id}",
+    }
+
+
+def overpass_search(filters: list[str], *, bbox: list[float], limit: int | None = None,
+                    timeout: float | None = None, input_id: str = "",
+                    lang: str = "fa") -> list[dict]:
+    """یک درخواست Overpass → ردیف‌های کسب‌وکار (بدون تکراری)."""
+    query = build_overpass_query(filters, bbox, limit=limit, timeout=timeout)
+    data = _overpass_request(query, timeout=float(timeout or config.OVERPASS_TIMEOUT))
+    elements = data.get("elements") if isinstance(data, dict) else None
+    rows: dict[str, dict] = {}
+    for element in elements or []:
+        if not isinstance(element, dict):
+            continue
+        row = row_from_overpass(element, input_id=input_id, lang=lang)
+        if row:
+            rows.setdefault(row["place_id"], row)
+    return list(rows.values())
 
 
 def clean_term(keyword: str, place: str = "") -> str:
@@ -283,6 +463,47 @@ def within(row: dict, bbox: list[float], *, margin: float = 0.2) -> bool:
         return False
     dlat, dlon = (n - s) * margin, (e - w) * margin
     return (s - dlat) <= lat <= (n + dlat) and (w - dlon) <= lon <= (e + dlon)
+
+
+def overpass_health(*, force: bool = False) -> dict:
+    """سلامت Overpass (کش ۵ دقیقه‌ای)."""
+    now = time.time()
+    cached = _OVERPASS_HEALTH.get("payload")
+    if cached and not force and now - float(_OVERPASS_HEALTH.get("ts") or 0) < HEALTH_TTL:
+        return dict(cached)
+    started = time.time()
+    endpoint = config.OVERPASS_ENDPOINTS[0] if config.OVERPASS_ENDPOINTS else ""
+    payload: dict
+    try:
+        _overpass_throttle()
+        req = urllib.request.Request(endpoint.replace("/interpreter", "/status"),
+                                     headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            text = resp.read().decode("utf-8", "replace")
+        up = resp.status == 200 and "connected" in text.lower() or "available" in text.lower()
+        payload = {"up": bool(up), "endpoint": endpoint,
+                   "ms": int((time.time() - started) * 1000),
+                   "error": "" if up else "وضعیت Overpass نامشخص"}
+    except Exception as exc:
+        payload = {"up": False, "endpoint": endpoint,
+                   "ms": int((time.time() - started) * 1000),
+                   "error": f"{type(exc).__name__}: {exc}"[:200]}
+    _OVERPASS_HEALTH.update({"ts": now, "payload": payload})
+    return dict(payload)
+
+
+def overpass_limit_for(bbox: list[float] | None, default: int | None = None) -> int:
+    """سقف نتیجه بر اساس وسعت جعبه — برای اینکه یک درخواست استان، سرویس را نکشد."""
+    cap = int(default or config.OVERPASS_LIMIT)
+    if not bbox or len(bbox) != 4:
+        return cap
+    s, n, w, e = (float(x) for x in bbox)
+    span = max(abs(n - s), abs(e - w))
+    if span > 2.5:                 # استان یا بزرگ‌تر
+        return min(cap, 1200)
+    if span > 0.8:
+        return min(cap, 1500)
+    return cap
 
 
 def health(*, force: bool = False) -> dict:

@@ -532,7 +532,64 @@ class OSMEngine:
         rows: list[dict] = []
         errors: list[str] = []
         tried: list[str] = []
+        used_overpass = False
+
+        # ── گذر اول: Overpass (تگ‌محور) — صدها کسب‌وکار در یک درخواست ─────────
+        want_all = bool(body.get("all_business"))
+        if config.OSM_MODE in ("hybrid", "overpass") and bbox:
+            from . import osm_tags
+
+            niche_id = str(getattr(niche_obj, "id", "") or "")
+            span = max(abs(float(bbox[1]) - float(bbox[0])), abs(float(bbox[3]) - float(bbox[2])))
+            with_names = span < 0.6            # جست‌وجوی نام فقط در سطح شهر (نه استان)
+            filters: list[str] = []
+            if want_all:
+                filters = osm_tags.all_business_filters()
+            if not filters:
+                filters = osm_tags.filters_for_terms(category_terms, with_names=with_names)
+            if not filters:
+                filters = osm_tags.filters_for_terms(terms, with_names=with_names)
+            if not filters and niche_id:
+                filters = osm_tags.filters_for_niche(niche_id, with_names=with_names)
+            if filters:
+                left = budget - (time.time() - started)
+                if left >= 6:
+                    if on_progress:
+                        label = ("همهٔ کسب‌وکارها" if want_all
+                                 else f"صنف «{getattr(niche_obj, 'fa', '') or terms[0]}»")
+                        on_progress({"stage": "working", "status": "working", "percent": 6,
+                                     "job_id": body.get("name") or "osm",
+                                     "message": f"[OSM] جست‌وجوی تگ‌محور: {label}"})
+                    try:
+                        found = osm.overpass_search(
+                            filters, bbox=list(bbox),
+                            limit=osm.overpass_limit_for(list(bbox)),
+                            timeout=min(float(config.OVERPASS_TIMEOUT), max(8.0, left - 4)),
+                            input_id=(niche_id or (terms[0] if terms else "")),
+                            lang=lang)
+                    except OSMDownError as exc:
+                        errors.append(f"overpass: {exc}")
+                        found = []
+                    if found:
+                        used_overpass = True
+                        tried.append("overpass")
+                        rows.extend(found)
+                        if on_progress:
+                            on_progress({"stage": "working", "status": "working", "percent": 22,
+                                         "job_id": body.get("name") or "osm",
+                                         "message": f"[OSM] {len(found)} کسب‌وکار از تگ‌های OSM "
+                                                    f"({len(filters)} فیلتر)"})
+                    elif on_progress:
+                        on_progress({"stage": "working", "status": "working", "percent": 14,
+                                     "job_id": body.get("name") or "osm",
+                                     "message": "[OSM] نتیجهٔ تگ‌محور خالی بود؛ جست‌وجوی متنی…"})
+
+        strict_overpass = config.OSM_MODE == "overpass"
         for index, term in enumerate(terms):
+            if strict_overpass and used_overpass:
+                break
+            if used_overpass and len(rows) >= 60:
+                break                        # به‌اندازهٔ کافی از تگ‌ها گرفتیم؛ سهمیهٔ Nominatim نسوزد
             left = budget - (time.time() - started)
             if left < 6:
                 break

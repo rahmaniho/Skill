@@ -320,7 +320,8 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                         keyword_niche[term] = sweep_niche
                         keywords.append(term)
             primary_niche = sweep_niches[0]
-            niche_label = f"همه مشاغل ({len(sweep_niches)} صنف)"
+            niche_label = ("همهٔ کسب‌وکارها (تگ‌محور OSM)" if engine.name == "osm"
+                           else f"همه مشاغل ({len(sweep_niches)} صنف)")
             warnings.append(
                 f"حالت «همه مشاغل»: {len(sweep_niches)} صنف × تا {request.keywords_per_niche} کلیدواژه "
                 f"= {len(keywords)} کلیدواژه. jobها پشت‌سرهم اجرا می‌شوند (هر بار یکی) تا گوگل "
@@ -353,7 +354,10 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
         # ── ۳) jobها ────────────────────────────────────────────────────────
         cells = geo.grid_cells(city["bbox"], request.grid) if request.grid and request.grid > 1 else []
         chunk_size = max(1, request.keywords_per_job)
-        if request.all_niches and len(keywords) > chunk_size:
+        if request.all_niches and engine.name == "osm":
+            # جاروی تگ‌محور: یک درخواست کل شهر را می‌گردد (نه ۹۱ کوئری متنی)
+            chunks = [keywords[:8] or [primary_niche.fa]]
+        elif request.all_niches and len(keywords) > chunk_size:
             chunks = [keywords[i:i + chunk_size] for i in range(0, len(keywords), chunk_size)]
         else:
             # اسکیل کیت: همه کلیدواژه‌ها در یک job (به‌جای شلیک jobهای زیاد)
@@ -389,6 +393,8 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                                    else province_meta.get("en")) or "",
                 "province_bbox": province_meta.get("bbox"),
                 "lang_fa": is_fa,
+                # موتور OSM: یک درخواست تگ‌محور برای همهٔ اصناف (بدون ۹۱ کوئری)
+                "all_business": bool(request.all_niches) and engine.name == "osm",
             }
             if cell:
                 body.update(cell)                 # lat/lon/radius/zoom همان کاشی
@@ -511,7 +517,11 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
         for row in rows:
             row.setdefault("city", place_fa)
             row.setdefault("input_id", row.get("input_id") or (keywords[0] if keywords else ""))
-            source = keyword_niche.get(str(row.get("input_id") or "")) or primary_niche
+            # جاروی تگ‌محور: صنف هر ردیف از برچسب‌های خودش می‌آید
+            provided = str(row.get("niche_id") or "")
+            source = (niches.BY_ID.get(provided)
+                      or keyword_niche.get(str(row.get("input_id") or ""))
+                      or primary_niche)
             row["niche_id"] = source.id
             row["niche_fa"] = source.fa
 
