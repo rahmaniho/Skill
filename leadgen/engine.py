@@ -443,7 +443,8 @@ class DemoEngine:
         # کلیدهای داخلیِ مخصوص موتورهای واقعی نباید خروجی دمو را عوض کنند؛
         # وگرنه با هر تغییر کوچک در پایپ‌لاین، دادهٔ شبیه‌سازی‌شده عوض می‌شود.
         seed_body = {k: v for k, v in body.items()
-                     if k not in ("osm_terms", "province_label", "province_bbox")}
+                     if k not in ("osm_terms", "province_label", "province_bbox",
+                                  "all_business", "tag_filters")}
         seed = self._seed(json.dumps(seed_body, sort_keys=True, ensure_ascii=False, default=str))
         rnd = random.Random(seed)
         job_id = hashlib.sha1(str(seed).encode()).hexdigest()[:8]
@@ -532,7 +533,77 @@ class OSMEngine:
         rows: list[dict] = []
         errors: list[str] = []
         tried: list[str] = []
+        used_overpass = False
+
+        # ── گذر اول: Overpass (تگ‌محور) — صدها کسب‌وکار در یک درخواست ─────────
+        want_all = bool(body.get("all_business"))
+        if config.OSM_MODE in ("hybrid", "overpass") and bbox:
+            from . import osm_tags
+
+            niche_id = str(getattr(niche_obj, "id", "") or "")
+            span = max(abs(float(bbox[1]) - float(bbox[0])), abs(float(bbox[3]) - float(bbox[2])))
+            with_names = span < 0.6            # جست‌وجوی نام فقط در سطح شهر (نه استان)
+            filters: list[str] = []
+            if want_all:
+                filters = osm_tags.all_business_filters()
+            if not filters:
+                filters = osm_tags.filters_for_terms(category_terms, with_names=with_names)
+            if not filters:
+                filters = osm_tags.filters_for_terms(terms, with_names=with_names)
+            if not filters and niche_id:
+                filters = osm_tags.filters_for_niche(niche_id, with_names=with_names)
+            if filters:
+                left = budget - (time.time() - started)
+                if left >= 6:
+                    if on_progress:
+                        label = ("همهٔ کسب‌وکارها" if want_all
+                                 else f"صنف «{getattr(niche_obj, 'fa', '') or terms[0]}»")
+                        on_progress({"stage": "working", "status": "working", "percent": 6,
+                                     "job_id": body.get("name") or "osm",
+                                     "message": f"[OSM] جست‌وجوی تگ‌محور: {label}"})
+                    # در جست‌وجوی «کامل» (depth بالا) یا محدودهٔ بزرگ (استان)، اگر
+                    # نتیجه به سقف Overpass بخورد، محدوده به قطعه‌ها شکسته می‌شود.
+                    deep = int(body.get("depth") or 0) >= 5 or want_all
+                    area_span = max(abs(float(bbox[1]) - float(bbox[0])),
+                                    abs(float(bbox[3]) - float(bbox[2])))
+                    tiles = 4 if ((deep or area_span > 0.8) and left >= 35) else 1
+                    try:
+                        found = osm.overpass_search_area(
+                            filters, bbox=list(bbox),
+                            limit=osm.overpass_limit_for(list(bbox)),
+                            timeout=min(float(config.OVERPASS_TIMEOUT), max(8.0, left - 4)),
+                            input_id=(niche_id or (terms[0] if terms else "")),
+                            lang=lang, tiles=tiles,
+                            max_rows=min(1500, int(config.MAX_LEADS_PER_RUN or 1500)),
+                            budget_s=max(20.0, left - 6))
+                    except OSMDownError as exc:
+                        errors.append(f"overpass: {exc}")
+                        found = []
+                    if found:
+                        used_overpass = True
+                        tried.append("overpass")
+                        rows.extend(found)
+                        if on_progress:
+                            on_progress({"stage": "working", "status": "working", "percent": 22,
+                                         "job_id": body.get("name") or "osm",
+                                         "message": f"[OSM] {len(found)} کسب‌وکار از تگ‌های OSM "
+                                                    f"({len(filters)} فیلتر)"})
+                    elif on_progress:
+                        on_progress({"stage": "working", "status": "working", "percent": 14,
+                                     "job_id": body.get("name") or "osm",
+                                     "message": "[OSM] نتیجهٔ تگ‌محور خالی بود؛ جست‌وجوی متنی…"})
+
+        strict_overpass = config.OSM_MODE == "overpass"
+        # در حالت hybrid: اگر تگ‌ها نتیجهٔ کافی دادند سهمیهٔ Nominatim را نمی‌سوزانیم؛
+        # اگر نتیجه کم بود، حداکثر دو عبارت را برای تکمیل امتحان می‌کنیم.
+        fallback_left = (2 if 0 < len(rows) < 5 else (0 if rows else len(terms)))
         for index, term in enumerate(terms):
+            if strict_overpass and used_overpass:
+                break
+            if used_overpass and (len(rows) >= 60 or fallback_left <= 0):
+                break
+            if used_overpass:
+                fallback_left -= 1
             left = budget - (time.time() - started)
             if left < 6:
                 break
@@ -745,6 +816,30 @@ def make_engine(mode: str | None = None, base_url: str | None = None) -> Engine:
     if osm_engine.health().get("up"):
         return osm_engine
     return DemoEngine()
+
+
+def engine_health(name: str, *, force: bool = False, probe: bool = True) -> dict:
+    """سلامت یک منبع دادهٔ مشخص: osm | nominatim | overpass | places | docker.
+
+    `probe=False` فقط کش را برمی‌گرداند تا پاسخ /api/health همیشه سریع باشد.
+    """
+    key = (name or "").strip().lower()
+    try:
+        if key in ("osm", "nominatim"):
+            from .providers import osm
+            return osm.health(force=force) if probe else {"up": None, "endpoint": config.OSM_ENDPOINT,
+                                                          "note": "سنجیده نشده"}
+        if key == "overpass":
+            from .providers import osm
+            return osm.overpass_health(force=force, probe=probe)
+        if key == "places":
+            from .providers import places
+            return places.health()
+        if key == "docker":
+            return DockerEngine().health()
+    except Exception as exc:                              # noqa: BLE001
+        return {"up": False, "error": f"{type(exc).__name__}: {exc}"[:200]}
+    return {"up": False, "error": f"منبع ناشناخته: {name}"}
 
 
 def engine_status(mode: str | None = None) -> dict:

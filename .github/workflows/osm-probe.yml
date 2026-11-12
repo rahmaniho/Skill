@@ -1,0 +1,91 @@
+name: OSM probe
+
+# آزمون دودی موتور دادهٔ واقعی از یک شبکهٔ بیرونی (نزدیک به محیط تولید).
+# اجرای دستی: Actions → OSM probe → Run workflow
+on:
+  # اجرای دستی: Actions → OSM probe → Run workflow (شهر/صنف دلخواه)
+  workflow_dispatch:
+    inputs:
+      city:
+        description: "شهر برای آزمون (خالی = تهران/رامسر/اوز)"
+        required: false
+        default: ""
+      niche:
+        description: "صنف (مثلاً رستوران، دندانپزشکی)"
+        required: false
+        default: ""
+  # اجرای خودکار وقتی موتور داده تغییر می‌کند
+  push:
+    paths:
+      - ".github/workflows/osm-probe.yml"
+      - "scripts/osm_probe.py"
+      - "leadgen/providers/osm.py"
+      - "leadgen/osm_tags.py"
+      - "leadgen/engine.py"
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Probe Overpass + Nominatim
+        env:
+          LEADGEN_DATA_DIR: /tmp/leadgen-probe
+          OSM_MODE: hybrid
+          CITY: ${{ github.event.inputs.city }}
+          NICHE: ${{ github.event.inputs.niche }}
+        run: |
+          set -o pipefail
+          set +e
+          if [ -n "$CITY" ]; then
+            python3 scripts/osm_probe.py --city "$CITY" --niche "$NICHE" --json 2>&1 | tee probe.log
+          else
+            python3 scripts/osm_probe.py --json 2>&1 | tee probe.log
+          fi
+          echo "PROBE_EXIT=${PIPESTATUS[0]}" >> "$GITHUB_ENV"
+          exit 0    # نتیجه در گام بعدی گزارش می‌شود تا حتی با لاگِ خراب هم دیده شود
+      - name: Report (annotations + summary)
+        if: always()
+        run: |
+          # لاگ آرتیفکت گاهی از GitHub قابل دانلود نیست؛ اینجا همان متن را به‌صورت
+          # annotation منتشر می‌کنیم تا نتیجهٔ واقعی همیشه خواندنی باشد.
+          if [ ! -f probe.log ]; then
+            echo "::error title=probe::probe.log ساخته نشد (اسکریپت پیش از اجرا شکست)"
+          else
+            n=0
+            while IFS= read -r line; do
+              [ -z "$line" ] && continue
+              if printf '%s' "$line" | grep -q '✗'; then
+                echo "::error title=probe-fail::${line}"
+              else
+                echo "::notice title=probe::${line}"
+              fi
+              n=$((n+1))
+              [ "$n" -ge 30 ] && break
+            done < probe.log
+            {
+              echo "### آزمون OSM"
+              echo
+              echo '```'
+              tail -n 40 probe.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Fail when no real result
+        if: always()
+        run: |
+          echo "probe exit: ${PROBE_EXIT:-?}"
+          [ "${PROBE_EXIT:-1}" = "0" ]
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: osm-probe
+          path: probe.log

@@ -13,6 +13,28 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from leadgen import config, engine  # noqa: E402
 from leadgen.providers import osm, places  # noqa: E402
+from unittest import mock  # noqa: E402
+
+
+class NoOverpassMixin:
+    """Overpass را در این آزمون‌ها خاموش می‌کند.
+
+    چرا؟ روی رانر CI اینترنت هست و Overpass واقعاً جواب می‌دهد؛ در سندباکس توسعه
+    نه. بدون این خاموشی، نتیجهٔ آزمون به شبکهٔ محیط وابسته می‌شد (یک بار سبز، یک
+    بار قرمز). مسیر Overpass آزمون‌های قطعی خودش را در tests/test_osm_tags.py دارد.
+    """
+
+    def setUp(self):
+        self._overpass_off = [
+            mock.patch.object(osm, "overpass_search_area", return_value=[]),
+            mock.patch.object(osm, "overpass_search", return_value=[]),
+        ]
+        for patcher in self._overpass_off:
+            patcher.start()
+
+    def tearDown(self):
+        for patcher in self._overpass_off:
+            patcher.stop()
 
 # نمونهٔ واقعی پاسخ Nominatim برای «دندانپزشکی در تهران» (فیلدها کوتاه شده‌اند)
 NOMINATIM_ITEM = {
@@ -42,7 +64,7 @@ PLACES_ITEM = {
 }
 
 
-class OSMProviderTest(unittest.TestCase):
+class OSMProviderTest(NoOverpassMixin, unittest.TestCase):
     def test_row_from_item_maps_every_field(self):
         row = osm.row_from_item(NOMINATIM_ITEM, input_id="دندانپزشکی")
         assert row is not None
@@ -142,7 +164,7 @@ class OSMProviderTest(unittest.TestCase):
         self.assertIn("OSM", str(ctx.exception))
 
 
-class OSMRobustnessTest(unittest.TestCase):
+class OSMRobustnessTest(NoOverpassMixin, unittest.TestCase):
     """سناریوهایی که در تولید واقعاً پیش آمد: شهر کوچک و رابط انگلیسی."""
 
     def test_empty_result_is_not_engine_error_but_empty_result(self):
@@ -233,7 +255,7 @@ class EnginePinTest(unittest.TestCase):
         self.assertEqual("auto", engine._resolve_mode("auto"))
 
 
-class OSMTermsTest(unittest.TestCase):
+class OSMTermsTest(NoOverpassMixin, unittest.TestCase):
     """ترجمهٔ صنف فارسی به اصطلاح دسته‌ای انگلیسی + کلمهٔ کلیدی تنها."""
 
     def test_music_niche_maps_to_osm_categories(self):
@@ -303,7 +325,7 @@ class OSMTermsTest(unittest.TestCase):
         self.assertIn("موسیقی", seen)            # و کلمهٔ کلیدی تنها
 
 
-class EmptyRunPipelineTest(unittest.TestCase):
+class EmptyRunPipelineTest(NoOverpassMixin, unittest.TestCase):
     """اجرای خالی باید «تمام‌شده با صفر لید» ثبت شود، نه «ناموفق»."""
 
     def test_empty_provider_completes_run_gracefully(self):

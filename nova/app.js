@@ -131,9 +131,16 @@
 
   /* ────────────────────────── رابط زنده/نمایشی ────────────────────────── */
   var API = {
-    health: function () {
+    health: function (fresh) {
       if (S.mode === "demo") return Promise.resolve(demoHealth());
-      return jget("api/health");
+      return jget("api/health" + (fresh ? "?fresh=1" : ""));
+    },
+    /* سنجش زندهٔ موتور روی یک شهر/صنف؛ بدون نوشتن در پایگاه‌داده. */
+    diag: function (city, niche, all) {
+      if (S.mode === "demo") return Promise.resolve(demoDiag(city, niche));
+      var qs = "api/diag/osm?city=" + encodeURIComponent(city || "") +
+        "&niche=" + encodeURIComponent(all ? "" : (niche || "")) + (all ? "&all=1" : "");
+      return jget(qs);
     },
     options: function () {
       if (S.mode === "demo") return Promise.resolve(demoOptions());
@@ -210,6 +217,24 @@
       config: { db_backend: "demo", queue_mode: "never" },
       db: { runs: 1, leads: leads.length, hot: hot, contacted: 0, won: 0, with_email: leads.filter(function (l) { return l.email; }).length },
       queue_mode: "never", email_transport: "none", digest_to: []
+    };
+  }
+  /* پاسخ سنجش در حالت نمایشی: صادقانه می‌گوید دادهٔ واقعی نیست. */
+  function demoDiag(city, niche) {
+    var leads = (S.demo ? S.demo.leads : []).filter(function (l) {
+      var okCity = !city || String(l.city || "").indexOf(city) >= 0 || String(l.address || "").indexOf(city) >= 0;
+      var okNiche = !niche || String(l.niche_fa || l.category || "").indexOf(niche) >= 0;
+      return okCity && okNiche;
+    });
+    return {
+      ok: true, demo: true, city: city || "تهران", niche: niche || "همهٔ کسب‌وکارها",
+      rows: leads.length, seconds: 0,
+      with_phone: leads.filter(function (l) { return l.phone; }).length,
+      with_website: leads.filter(function (l) { return l.website; }).length,
+      with_address: leads.filter(function (l) { return l.address; }).length,
+      sample: leads.slice(0, 3).map(function (l) {
+        return { title: l.title, category: l.niche_fa || l.category, link: "" };
+      })
     };
   }
   function demoCatalog() {
@@ -869,8 +894,73 @@
         : eng.active === "docker" ? "دادهٔ این نسخه از موتور گوگل‌مپ (اسکرپر) می‌آید."
         : "این نسخه روی دادهٔ نمونه کار می‌کند تا موتور واقعی وصل شود.";
     }
+    paintCoverage();
     $("verTxt").textContent = "نُوا — رابط نسل بعدِ شکار مشتری · ساخته‌شده روی موتور گوگل‌مپ";
   }
+  /* پوشش تگ‌محور: چند صنف و چند فیلتر OSM در دسترس است + وضعیت Overpass. */
+  function paintCoverage() {
+    var box = $("coverageTxt");
+    if (!box) return;
+    var h = S.health || {};
+    var tags = h.tag_map || {};
+    var src = h.sources || {};
+    var ov = src.overpass || {};
+    var parts = [];
+    if (tags.niches) parts.push(fa(tags.niches) + " صنف با تگ اختصاصی");
+    if (tags.filters) parts.push(fa(tags.filters) + " فیلتر نقشه");
+    if (tags.all_business) parts.push("جاروی همهٔ کسب‌وکارها");
+    var line = parts.length ? "پوشش: " + parts.join(" · ") : "پوشش: نامعلوم";
+    if (ov.mode) {
+      line += " · " + (ov.up === false ? "نقشهٔ Overpass فعلاً جواب نمی‌دهد؛ مسیر جایگزین کار می‌کند" :
+        ov.up === true ? "Overpass آماده است" :
+        ov.mode === "overpass" ? "فقط مسیر Overpass" : "حالت " + ov.mode);
+    }
+    if (h.engine && !h.engine.live) line += " — الان دادهٔ نمایشی است.";
+    box.textContent = line;
+  }
+  function fmtProbe(d) {
+    if (!d || d.ok === false) {
+      return '<p class="muted">پاسخی نیامد: ' + esc((d && (d.error || d.message)) || "خطای نامشخص") + "</p>";
+    }
+    var chips = [
+      fa(d.rows || 0) + " کسب‌وکار",
+      "⏱ " + fa(d.seconds || 0) + " ثانیه",
+      "📞 " + fa(d.with_phone || 0),
+      "🌐 " + fa(d.with_website || 0)
+    ];
+    var head = '<div class="probe-h">' + chips.map(function (c) {
+      return '<span class="chip">' + esc(c) + "</span>";
+    }).join("") + "</div>";
+    var note = d.demo ? '<p class="muted">حالت نمایشی — این عددها نمونهٔ داخل برنامه‌اند، نه نقشهٔ واقعی.</p>' : "";
+    var rows = (d.sample || []).map(function (r) {
+      var name = esc(r.title || "—");
+      if (r.link) name = '<a href="' + esc(r.link) + '" target="_blank" rel="noopener">' + name + "</a>";
+      return "<li>" + name + ' <small class="muted">' + esc(r.category || "—") + "</small></li>";
+    }).join("");
+    return note + head + (rows ? "<ol>" + rows + "</ol>" : '<p class="muted">در این محدوده چیزی پیدا نشد.</p>');
+  }
+  function runProbe() {
+    var btn = $("probeBtn"), out = $("probeOut");
+    if (!btn || !out) return;
+    var city = (S.area && (S.area.label || S.area.city)) || "تهران";
+    var all = !S.niche || !S.niche.query;
+    var niche = all ? "" : (S.niche.label || S.niche.query);
+    btn.disabled = true;
+    btn.textContent = "⏳ دارم از نقشه می‌پرسم…";
+    out.hidden = false;
+    out.innerHTML = '<p class="muted">یک درخواست واقعی به Overpass می‌رود؛ چند ثانیه صبر کن.</p>';
+    API.diag(city, niche, all).then(function (d) {
+      out.innerHTML = fmtProbe(d);
+      N.toast(d && d.ok && !d.demo ? "زنده جواب داد ✅" : "پاسخ آمد", d && d.ok ? "ok" : "warn");
+    }, function (err) {
+      out.innerHTML = '<p class="muted">' + esc(err.message || "خطا") + "</p>";
+      N.toast("سنجش زنده نشد", "warn");
+    }).then(function () {
+      btn.disabled = false;
+      btn.textContent = "🛰 یه پرسش زنده از نقشه";
+    });
+  }
+
   function paintChips() {
     var h = S.health || {};
     var eng = h.engine || {};
@@ -1065,6 +1155,7 @@
       }
       if (act === "open-run") { if (S.run) openRun(S.run.run_id); return; }
       if (act === "to-leads") { S.filters.run_id = S.run ? S.run.run_id : ""; N.setTab("leads"); return; }
+      if (act === "probe") { runProbe(); return; }
       if (act === "engine") { engineSheet(); return; }
       if (act === "db") { engineSheet(); return; }
       if (act === "about") { aboutSheet(); return; }
@@ -1091,7 +1182,8 @@
     N.sheet("مغز برنامه", '<div class="sheet-section"><b>موتور جست‌وجو</b>' +
       '<p class="muted" style="margin:0">' + esc(eng.reason || "موتور واقعی = داکرِ گوگل‌مپ؛ اگه بالا نباشه، حالت نمایشی با دادهٔ نمونه کار می‌کنه.") + "</p>" +
       '<div class="chips"><span class="chip">حالت: ' + esc(eng.active || "—") + "</span>" +
-      '<span class="chip">پایگاه: ' + esc((h.config || {}).db_backend || "—") + "</span></div>" +
+      '<span class="chip">پایگاه: ' + esc((h.config || {}).db_backend || "—") + "</span>" +
+      ((h.tag_map || {}).niches ? '<span class="chip">پوشش: ' + fa(h.tag_map.niches) + " صنف</span>" : "") + "</div>" +
       '<label class="switch"><input type="checkbox" id="engineSheetDemo" ' + ($("demoMode").checked ? "checked" : "") + "><i></i><span>همین‌جا حالت نمایشی رو روشن/خاموش کن</span></label></div>",
       function (body) {
         body.querySelector("#engineSheetDemo").addEventListener("change", function (ev) {
@@ -1135,6 +1227,10 @@
           /* کاربر دمو خواسته؛ همون می‌مونه */ }
         paintChips();
         if (!$("view-more").hidden) renderHealth();
+        if (!$("view-more").hidden && !h.tag_map) {
+          /* کارت پوشش/سنجش به فهرست تگ‌ها و وضعیت Overpass نیاز دارد */
+          API.health(true).then(function (hh) { S.health = hh; renderHealth(); }, function () {});
+        }
       }, function () {
         S.mode = "demo";
         $("demoMode").checked = true;

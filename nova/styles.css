@@ -653,3 +653,11 @@ a { color: var(--brand); text-decoration: none; }
   .main { padding: 0; margin: 0; max-width: none; }
   .lead { break-inside: avoid; box-shadow: none; }
 }
+
+/* نتیجهٔ سنجش زندهٔ موتور (صفحهٔ «بیشتر») */
+.probe-out { margin-top: 10px; font-size: 13px; line-height: 2; }
+.probe-out .probe-h { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+.probe-out .chip { font-size: 11px; }
+.probe-out ol { margin: 6px 0 0; padding-inline-start: 18px; }
+.probe-out li { margin: 2px 0; }
+.probe-out a { color: inherit; text-decoration: underline dotted; }

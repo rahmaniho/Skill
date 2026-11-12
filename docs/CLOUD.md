@@ -285,6 +285,15 @@ python3 scripts/cloud_parity.py                # آفلاین، بدون شبک�
 python3 scripts/cloud_parity.py --live         # در برابر Supabase واقعی
 python3 scripts/cloud_parity.py --rebuild      # وقتی عمدی تغییر دادید: انتظارها را بسازید و commit کنید
 
+# سلامت منابع داده (سریع: فقط کش) و سنجش واقعی
+curl -s "$APP/api/health" | python3 -m json.tool | grep -A3 '"overpass"'
+curl -s "$APP/api/health?fresh=1" | python3 -m json.tool | grep -A3 '"overpass"'
+
+# «همین حالا، همین شهر، همین صنف واقعاً نتیجه می‌دهد؟» (بدون نوشتن در پایگاه‌داده)
+curl -s "$APP/api/diag/osm?city=تهران&niche=دندانپزشکی" | python3 -m json.tool
+curl -s "$APP/api/diag/osm?city=اوز&all=1"                  # جاروی همهٔ اصناف
+curl -s "$APP/api/diag/osm?city=مشهد&niche=کافه&deep=1"     # با شکستن محدودهٔ شلوغ
+
 # آزمون‌ها
 python3 -m unittest discover -s tests
 python3 scripts/check_deploy_config.py         # سازگاری vercel.json/api/index.py/WSGI
@@ -312,6 +321,8 @@ parity این را به‌عنوان یادداشت نشان می‌دهد، ن�
 | موتور `422` می‌دهد | `lat/lon` عدد فرستاده شده یا `max_time` کم | رشته بفرستید؛ `max_time` به ثانیه |
 | ایمیل `skipped` / `transport: none` | متغیرهای Gmail نیست یا `DIGEST_TO` خالی | `/api/delivery/status` را ببینید و راهنمایش را دنبال کنید |
 | `invalid_grant` از Gmail | refresh token باطل شده (تغییر رمز/لغو دسترسی) | `scripts/gmail_token.py` را دوباره اجرا کنید |
+| `/api/diag/osm` صفر برمی‌گرداند | صنف/شهر اشتباه، یا Overpass شلوغ (۴۲۹/۵۰۴) | `?all=1` را امتحان کنید؛ `sources.overpass.up` و `error` را ببینید؛ کش ۱۵ دقیقه‌ای را با `OVERPASS_CACHE_TTL=0` خاموش کنید |
+| جست‌وجو «نیمه» برمی‌گردد | نتیجه به سقف `out … LIMIT` خورده | `?deep=1` (یا جست‌وجوی «کامل» در UI) محدوده را ۲×۲ می‌شکند |
 | UI در صف گیر کرده ولی ورکر تمام کرده | پیشرفت در DB تازه‌تر از حافظه است | تازه‌سازی کنید؛ قاعدهٔ کد: «تازه‌ترین `ts` برنده است» |
 | پیش‌نمایش Vercel صفحهٔ ورود Vercel می‌دهد | `ssoProtection` روی پروژه | Production را باز کنید یا محافظ را بردارید |
 | `500 FUNCTION_INVOCATION_FAILED` | پاسخ WSGI نامعتبر: `status` با پیشوند «HTTP/1.1» یا هدرهای hop-by-hop | `leadgen/wsgi.py` این‌ها را نرمال می‌کند؛ در کد تازه خودتان این کار را نکنید |

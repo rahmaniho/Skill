@@ -320,7 +320,8 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                         keyword_niche[term] = sweep_niche
                         keywords.append(term)
             primary_niche = sweep_niches[0]
-            niche_label = f"همه مشاغل ({len(sweep_niches)} صنف)"
+            niche_label = ("همهٔ کسب‌وکارها (تگ‌محور OSM)" if engine.name == "osm"
+                           else f"همه مشاغل ({len(sweep_niches)} صنف)")
             warnings.append(
                 f"حالت «همه مشاغل»: {len(sweep_niches)} صنف × تا {request.keywords_per_niche} کلیدواژه "
                 f"= {len(keywords)} کلیدواژه. jobها پشت‌سرهم اجرا می‌شوند (هر بار یکی) تا گوگل "
@@ -353,7 +354,10 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
         # ── ۳) jobها ────────────────────────────────────────────────────────
         cells = geo.grid_cells(city["bbox"], request.grid) if request.grid and request.grid > 1 else []
         chunk_size = max(1, request.keywords_per_job)
-        if request.all_niches and len(keywords) > chunk_size:
+        if request.all_niches and engine.name == "osm":
+            # جاروی تگ‌محور: یک درخواست کل شهر را می‌گردد (نه ۹۱ کوئری متنی)
+            chunks = [keywords[:8] or [primary_niche.fa]]
+        elif request.all_niches and len(keywords) > chunk_size:
             chunks = [keywords[i:i + chunk_size] for i in range(0, len(keywords), chunk_size)]
         else:
             # اسکیل کیت: همه کلیدواژه‌ها در یک job (به‌جای شلیک jobهای زیاد)
@@ -389,6 +393,8 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                                    else province_meta.get("en")) or "",
                 "province_bbox": province_meta.get("bbox"),
                 "lang_fa": is_fa,
+                # موتور OSM: یک درخواست تگ‌محور برای همهٔ اصناف (بدون ۹۱ کوئری)
+                "all_business": bool(request.all_niches) and engine.name == "osm",
             }
             if cell:
                 body.update(cell)                 # lat/lon/radius/zoom همان کاشی
@@ -495,6 +501,8 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
         # سقف نهایی بعد از امتیازدهی اعمال می‌شود تا «بهترین‌ها» بمانند نه «اولین‌ها».
         # اینجا فقط یک سقف محافظه‌کارانه می‌گذاریم تا هزینه غنی‌سازی منفجر نشود.
         pre_cap = max(request.limit * 3, 600) if request.limit else 0
+        if config.MAX_LEADS_PER_RUN:
+            pre_cap = min(pre_cap, config.MAX_LEADS_PER_RUN) if pre_cap else config.MAX_LEADS_PER_RUN
         if pre_cap and len(rows) > pre_cap:
             warnings.append(f"{len(rows) - pre_cap} ردیف برای کنترل هزینه غنی‌سازی موقتاً کنار "
                             f"گذاشته شد؛ سقف نهایی ({request.limit}) بعد از امتیازدهی اعمال می‌شود.")
@@ -511,7 +519,11 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
         for row in rows:
             row.setdefault("city", place_fa)
             row.setdefault("input_id", row.get("input_id") or (keywords[0] if keywords else ""))
-            source = keyword_niche.get(str(row.get("input_id") or "")) or primary_niche
+            # جاروی تگ‌محور: صنف هر ردیف از برچسب‌های خودش می‌آید
+            provided = str(row.get("niche_id") or "")
+            source = (niches.BY_ID.get(provided)
+                      or keyword_niche.get(str(row.get("input_id") or ""))
+                      or primary_niche)
             row["niche_id"] = source.id
             row["niche_fa"] = source.fa
 
@@ -522,11 +534,17 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
         if want_enrich and rows:
             _progress(on_progress, run_id, {"stage": "enrich", "status": "enriching", "percent": 76,
                                              "message": "غنی‌سازی: ایمیل عمیق، شبکه‌های اجتماعی و سیگنال‌های سایت"})
+            # بودجهٔ زمانی غنی‌سازی: تا کل اجرا (مثلاً روی Vercel) از سقف تابع بیرون نزند
             enrich_stats = enrich.enrich_rows(
                 rows, socials=request.socials, deep_emails=request.deep_emails and request.emails,
                 signals=request.signals, allow_network=allow_network,
+                budget_s=config.ENRICH_BUDGET,
                 on_progress=lambda p: _progress(on_progress, run_id, {**p, "stage": "enrich"}),
             )
+            if enrich_stats.get("skipped_due_time"):
+                warnings.append(
+                    f"به دلیل محدودیت زمان، {enrich_stats['skipped_due_time']} کسب‌وکار بدون "
+                    f"واکشی سایت ذخیره شد (تلفن/نشانی/لوکیشن کامل است).")
             if allow_network and enrich_stats.get("emails_after", 0) > enrich_stats.get("emails_before", 0):
                 gained = enrich_stats["emails_after"] - enrich_stats["emails_before"]
                 warnings.append(f"پاس عمیق ایمیل {gained} ایمیل جدید از صفحه‌های تماس/درباره پیدا کرد.")

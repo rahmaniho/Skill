@@ -121,6 +121,20 @@ OSM_ENDPOINT = (env("OSM_ENDPOINT") or "https://nominatim.openstreetmap.org").rs
 OSM_MIN_INTERVAL = max(1.0, env_float("OSM_MIN_INTERVAL", 1.1))
 OSM_LIMIT = max(1, min(40, env_int("OSM_LIMIT", 40)))
 OSM_COUNTRY = env("OSM_COUNTRY", "ir").lower()
+# Overpass: خواندن مستقیم برچسب‌های OSM — صدها کسب‌وکار در یک درخواست، بدون کلید.
+# حالت hybrid: اول Overpass (پوشش بالا)، بعد Nominatim (برای چیزهایی که تگ ندارند).
+OSM_MODE = (env("OSM_MODE", "hybrid") or "hybrid").lower()
+OVERPASS_ENDPOINTS = [
+    url.strip().rstrip("/")
+    for url in (env("OVERPASS_ENDPOINT")
+                or "https://overpass-api.de/api/interpreter,https://overpass.kumi.systems/api/interpreter").split(",")
+    if url.strip()
+]
+OVERPASS_MIN_INTERVAL = max(0.5, env_float("OVERPASS_MIN_INTERVAL", 1.0))
+OVERPASS_LIMIT = max(50, min(5000, env_int("OVERPASS_LIMIT", 800)))
+OVERPASS_TIMEOUT = max(8, min(90, env_int("OVERPASS_TIMEOUT", 30)))
+# کش نتیجهٔ Overpass: جست‌وجوی تکراری (همان شهر/صنف) بدون فشار دوباره به سرویس
+OVERPASS_CACHE_TTL = max(0, min(86400, env_int("OVERPASS_CACHE_TTL", 900)))
 PLACES_API_KEY = env("PLACES_API_KEY") or env("GOOGLE_MAPS_API_KEY")
 SELF_DRIVE = env("SELF_DRIVE", "1") != "0"
 
@@ -248,6 +262,10 @@ def app_base_url() -> str:
 
 # ── غنی‌سازی ─────────────────────────────────────────────────────────────────
 ENRICH_WORKERS = env_int("ENRICH_WORKERS", 8)
+# سقف زمانی غنی‌سازی (ثانیه) — روی Vercel کل اجرا باید زیر ۶۰ ثانیه بماند
+ENRICH_BUDGET = max(3, env_int("ENRICH_BUDGET", 22))
+# سقف لید در هر اجرا (۰ = بی‌سقف) — برای اینکه یک جاروی شهر، صف/پایگاه‌داده را خفه نکند
+MAX_LEADS_PER_RUN = max(0, env_int("MAX_LEADS_PER_RUN", 900))
 
 USER_AGENT = "leadgen-studio/1.0 (built on Mahanaicoach/google-maps-scraper-kit)"
 
@@ -281,6 +299,8 @@ def summary() -> dict:
         "port": PORT,
         "data_dir": str(DATA_DIR),
         "enrich_workers": ENRICH_WORKERS,
+        "enrich_budget": ENRICH_BUDGET,
+        "max_leads_per_run": MAX_LEADS_PER_RUN,
         "lead_fields": LEAD_FIELDS,
         # لایهٔ عملیاتی
         "db_backend": DB_BACKEND,
@@ -294,6 +314,10 @@ def summary() -> dict:
         "digest_to": DIGEST_TO,
         # موتورهای واقعی و محافظ‌ها
         "osm_endpoint": OSM_ENDPOINT,
+        "osm_mode": OSM_MODE,
+        "overpass_endpoints": OVERPASS_ENDPOINTS,
+        "overpass_limit": OVERPASS_LIMIT,
+        "overpass_cache_ttl": OVERPASS_CACHE_TTL,
         "places_key_set": bool(PLACES_API_KEY),
         "self_drive": SELF_DRIVE,
         "access_code_set": bool(ACCESS_CODE),

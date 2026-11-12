@@ -13,6 +13,7 @@ import time
 import unittest
 import urllib.error
 import urllib.parse
+from unittest import mock
 import urllib.request
 import zipfile
 from io import BytesIO
@@ -387,6 +388,54 @@ class ApiTestCase(unittest.TestCase):
             config_mod.QUEUE_MODE = original
             with storage._connect() as conn:
                 conn.execute("delete from jobs")
+
+    # ── سنجش زندهٔ OSM ──────────────────────────────────────────────────────
+    def test_health_lists_sources_and_tag_coverage(self):
+        status, data = self.get("/api/health")
+        self.assertEqual(status, 200)
+        self.assertIn("sources", data)
+        self.assertIn("overpass", data["sources"])
+        self.assertEqual(data["sources"]["overpass"]["mode"], "hybrid")
+        self.assertGreaterEqual(data["tag_map"]["niches"], 80)
+        self.assertGreaterEqual(data["tag_map"]["filters"], 100)
+
+    def test_diag_reports_real_shape_for_city_and_niche(self):
+        from leadgen.providers import osm
+        row = {"title": "کافه تست", "category": "کافه", "latitude": "35.70", "longitude": "51.40",
+               "phone": "+982112345678", "website": "", "instagram": "cafetest",
+               "address": "تهران، خیابان ولیعصر"}
+        query = urllib.parse.urlencode({"city": "تهران", "niche": "کافه", "limit": 50})
+        with mock.patch.object(osm, "overpass_search", return_value=[row, dict(row)]) as search:
+            status, data = self.get(f"/api/diag/osm?{query}")
+        self.assertEqual(status, 200)
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["city_key"], "tehran")
+        self.assertGreaterEqual(data["filters"], 1)
+        self.assertEqual(data["rows"], 2)
+        self.assertEqual(data["with_phone"], 2)
+        self.assertEqual(data["with_social"], 2)
+        self.assertLessEqual(len(data["sample"]), 12)
+        self.assertEqual(data["sample"][0]["title"], "کافه تست")
+        self.assertIn("bbox", data)
+        self.assertEqual(len(data["bbox"]), 4)
+        self.assertTrue(search.called)
+
+    def test_diag_reports_error_instead_of_crashing(self):
+        from leadgen.providers import osm
+        query = urllib.parse.urlencode({"city": "رامسر", "niche": "رستوران"})
+        with mock.patch.object(osm, "overpass_search", side_effect=RuntimeError("overpass down")):
+            status, data = self.get(f"/api/diag/osm?{query}")
+        self.assertEqual(status, 200)
+        self.assertFalse(data["ok"])
+        self.assertIn("overpass down", data["error"])
+        self.assertEqual(data["rows"], 0)
+
+    def test_diag_unknown_city_is_reported(self):
+        query = urllib.parse.urlencode({"city": "ناکجاآباد", "niche": "کافه"})
+        status, data = self.get(f"/api/diag/osm?{query}")
+        self.assertEqual(status, 200)
+        self.assertFalse(data["ok"])
+        self.assertIn("پیدا نشد", data["error"])
 
 
 if __name__ == "__main__":
