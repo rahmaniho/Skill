@@ -268,6 +268,8 @@ ENRICH_WORKERS = env_int("ENRICH_WORKERS", 8)
 ENRICH_BUDGET = max(3, env_int("ENRICH_BUDGET", 22))
 # سقف لید در هر اجرا (۰ = بی‌سقف) — برای اینکه یک جاروی شهر، صف/پایگاه‌داده را خفه نکند
 MAX_LEADS_PER_RUN = max(0, env_int("MAX_LEADS_PER_RUN", 900))
+# جست‌وجوی سطح «استان»: چند شهر پرجمعیت استان پوشش داده شود؟ (۰ = فقط مرکز استان)
+PROVINCE_SWEEP_CITIES = max(0, min(20, env_int("PROVINCE_SWEEP_CITIES", 5)))
 
 USER_AGENT = "leadgen-studio/1.0 (built on Mahanaicoach/google-maps-scraper-kit)"
 
@@ -303,6 +305,7 @@ def summary() -> dict:
         "enrich_workers": ENRICH_WORKERS,
         "enrich_budget": ENRICH_BUDGET,
         "max_leads_per_run": MAX_LEADS_PER_RUN,
+        "province_sweep_cities": PROVINCE_SWEEP_CITIES,
         "lead_fields": LEAD_FIELDS,
         # لایهٔ عملیاتی
         "db_backend": DB_BACKEND,

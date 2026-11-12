@@ -600,6 +600,44 @@ def _score(needle: str, hay: str) -> float:
     return ratio * 0.75 if ratio >= 0.62 else 0.0
 
 
+def province_boxes(province: str, limit: int = 5) -> list[dict]:
+    """شهرهای پرجمعیت یک استان به‌همراه جعبهٔ جغرافیایی‌شان.
+
+    چرا؟ پیش‌تر انتخاب «استان» فقط مرکز استان را می‌گشت (شعاع ۳۰ کیلومتر)؛ پس
+    جست‌وجوی «کل استان» عملاً همان «شهر مرکز» بود. با این فهرست، موتور واقعی
+    هر شهر را جدا می‌گردد و پوشش استان چند برابر می‌شود.
+    """
+    p = PROVINCES.get(province or "")
+    if not p:
+        return []
+    seen: set[str] = set()
+    rows: list[dict] = []
+    for key in p.get("cities") or []:
+        if key in seen:
+            continue
+        seen.add(key)
+        meta = _city(key)
+        if not meta or not meta.get("lat"):
+            continue
+        box = None
+        try:
+            city_entry = geo.CITIES.get(key)
+            if city_entry and len(city_entry) > 3 and city_entry[3]:
+                box = [float(x) for x in city_entry[3]]
+        except Exception:                             # noqa: BLE001 — فقط دادهٔ کمکی
+            box = None
+        if not box:
+            box = geo.default_bbox(meta["lat"], meta["lon"], 0.06)
+        rows.append({
+            "id": key, "fa": meta.get("fa") or meta.get("label") or key,
+            "label": meta.get("label") or key,
+            "lat": float(meta["lat"]), "lon": float(meta["lon"]),
+            "pop": int(meta.get("pop") or 0), "bbox": box,
+        })
+    rows.sort(key=lambda row: -row["pop"])
+    return rows[:max(0, int(limit))] if limit and limit > 0 else rows
+
+
 def resolve(province: str = "", city: str = "", district: str = "", street: str = "",
             lat: float | None = None, lon: float | None = None, lang: str = "fa") -> dict:
     """انتخاب‌های کاربر → یک نقطه + شعاع + برچسب خوانا.

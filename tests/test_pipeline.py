@@ -587,3 +587,98 @@ class ConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class ProvinceSweepPipelineTest(unittest.TestCase):
+    """انتخاب استان در رابط → چند جعبهٔ شهری به موتور واقعی داده می‌شود."""
+
+    def test_province_request_passes_city_boxes_and_warns(self):
+        captured: list[dict] = []
+
+        class FakeEngine:
+            name = "osm"
+            live = True
+
+            def health(self):
+                return {"up": True}
+
+            def run_job(self, body, on_progress=None):
+                captured.append(body)
+                return "fake-job", []
+
+        original = pipeline.make_engine
+        pipeline.make_engine = lambda mode=None: FakeEngine()
+        try:
+            request = pipeline.ScrapeRequest.from_dict({
+                "niche_query": "کافه", "province": "gilan", "engine_mode": "osm",
+                "lang": "fa", "limit": 20, "depth": 2})
+            result = pipeline.run_scrape(request)
+        finally:
+            pipeline.make_engine = original
+        self.assertTrue(captured, "موتور باید صدا زده شود")
+        boxes = captured[0].get("sweep_boxes") or []
+        self.assertGreater(len(boxes), 1, "استان باید چند شهر را بگردد")
+        for box in boxes:
+            self.assertEqual(len(box["bbox"]), 4)
+            self.assertTrue(box["fa"])
+        self.assertTrue(any("جست‌وجوی استانی" in w for w in result.warnings), result.warnings)
+        self.assertEqual(result.run.get("status"), "done")
+
+    def test_short_budget_reduces_city_count(self):
+        """با بودجهٔ ۳۰ ثانیه‌ای (تابع serverless) تعداد شهرها کم می‌شود تا هر شهر وقت داشته باشد."""
+        captured: list[dict] = []
+
+        class FakeEngine:
+            name = "osm"
+            live = True
+
+            def health(self):
+                return {"up": True}
+
+            def run_job(self, body, on_progress=None):
+                captured.append(body)
+                return "fake-job", []
+
+        original = pipeline.make_engine
+        pipeline.make_engine = lambda mode=None: FakeEngine()
+        try:
+            short = pipeline.ScrapeRequest.from_dict({
+                "niche_query": "کافه", "province": "tehran-province", "engine_mode": "osm",
+                "lang": "fa", "limit": 20, "max_time": 30})
+            pipeline.run_scrape(short)
+            long = pipeline.ScrapeRequest.from_dict({
+                "niche_query": "کافه", "province": "tehran-province", "engine_mode": "osm",
+                "lang": "fa", "limit": 20, "max_time": 60})
+            pipeline.run_scrape(long)
+        finally:
+            pipeline.make_engine = original
+        short_boxes = captured[0].get("sweep_boxes") or []
+        long_boxes = captured[1].get("sweep_boxes") or []
+        self.assertGreaterEqual(len(short_boxes), 2)
+        self.assertLessEqual(len(short_boxes), 3)
+        self.assertGreater(len(long_boxes), len(short_boxes))
+
+    def test_city_request_has_no_sweep(self):
+        captured: list[dict] = []
+
+        class FakeEngine:
+            name = "osm"
+            live = True
+
+            def health(self):
+                return {"up": True}
+
+            def run_job(self, body, on_progress=None):
+                captured.append(body)
+                return "fake-job", []
+
+        original = pipeline.make_engine
+        pipeline.make_engine = lambda mode=None: FakeEngine()
+        try:
+            request = pipeline.ScrapeRequest.from_dict({
+                "niche_query": "کافه", "city_query": "رشت", "engine_mode": "osm",
+                "lang": "fa", "limit": 10, "depth": 2})
+            pipeline.run_scrape(request)
+        finally:
+            pipeline.make_engine = original
+        self.assertEqual(captured[0].get("sweep_boxes"), [])

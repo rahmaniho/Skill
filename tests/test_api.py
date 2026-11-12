@@ -389,6 +389,49 @@ class ApiTestCase(unittest.TestCase):
             with storage._connect() as conn:
                 conn.execute("delete from jobs")
 
+    # ── تپش صف از بیرون (کرون) ──────────────────────────────────────────────
+    def _queue_tick_module(self):
+        import importlib.util
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parent.parent / "scripts" / "queue_tick.py"
+        spec = importlib.util.spec_from_file_location("leadgen_queue_tick", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_20_queue_tick_script_drains_a_queued_job(self):
+        """کرون بیرونی باید بتواند کار در صف را تمام کند (بدون مرورگر باز)."""
+        from leadgen import config as config_mod
+
+        module = self._queue_tick_module()
+        original = config_mod.QUEUE_MODE
+        with storage._connect() as conn:
+            conn.execute("delete from jobs")
+        try:
+            config_mod.QUEUE_MODE = "always"
+            status, queued = self.post("/api/runs", {
+                "niche_query": "کافه", "city_query": "تهران", "engine_mode": "demo",
+                "limit": 4, "depth": 2})
+            self.assertEqual(status, 202)
+            self.assertEqual(queued["status"], "queued")
+
+            payload = module.tick(self.base, budget=25)
+            self.assertFalse(payload.get("idle"))
+            self.assertEqual(payload.get("_http"), 200)
+            self.assertTrue(payload.get("ok"))
+            self.assertEqual(payload.get("run_id"), queued["run_id"])
+            self.assertGreaterEqual(payload.get("total", 0), 1)
+            self.assertIn("انجام شد", module.describe(payload))
+
+            idle = module.tick(self.base, budget=20)
+            self.assertTrue(idle.get("idle"))
+            self.assertIn("بیکار", module.describe(idle))
+        finally:
+            config_mod.QUEUE_MODE = original
+            with storage._connect() as conn:
+                conn.execute("delete from jobs")
+
     # ── سنجش زندهٔ OSM ──────────────────────────────────────────────────────
     def test_health_lists_sources_and_tag_coverage(self):
         status, data = self.get("/api/health")

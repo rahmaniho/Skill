@@ -1,0 +1,54 @@
+name: Queue tick
+
+# صف را از بیرون جلو می‌برد: اجراهای در صف حتی وقتی هیچ مرورگری باز نیست،
+# با موتور واقعی (OSM/Places) تمام می‌شوند. این همان قطعه‌ای است که محصول را
+# از «دمو» به «سرویس عملیاتی» می‌برد.
+on:
+  schedule:
+    - cron: "*/10 * * * *"      # هر ۱۰ دقیقه
+  workflow_dispatch:
+    inputs:
+      budget:
+        description: "بودجهٔ زمانی هر تپش (ثانیه، ۱۲–۵۵)"
+        required: false
+        default: "45"
+      repeat:
+        description: "تعداد تپش پشت‌سرهم (برای خالی‌کردن صف)"
+        required: false
+        default: "4"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: queue-tick
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Tick the queue
+        env:
+          # با یک Secret/Variable می‌توانید اپ دیگری را نشانه بگیرید
+          APP_BASE_URL: ${{ vars.LEADGEN_APP_URL || 'https://leadgen-studio-umber.vercel.app' }}
+          TICK_BUDGET: ${{ github.event.inputs.budget || '45' }}
+          LEADGEN_ACCESS_CODE: ${{ secrets.LEADGEN_ACCESS_CODE }}
+          REPEAT: ${{ github.event.inputs.repeat || '3' }}
+        run: |
+          set +e
+          python3 scripts/queue_tick.py --budget "${TICK_BUDGET}" --repeat "${REPEAT:-3}" | tee tick.log
+          status=${PIPESTATUS[0]}
+          {
+            echo "### تپش صف"
+            echo
+            echo '```'
+            tail -n 20 tick.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
