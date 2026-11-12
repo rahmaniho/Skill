@@ -473,6 +473,21 @@ class DemoEngine:
 # ─────────────────────────────────────────────────────────────────────────────
 # موتورهای واقعیِ بدون داکر (OSM / Google Places) — برای اجرای زنده روی Vercel
 # ─────────────────────────────────────────────────────────────────────────────
+def share_for_box(box_left: float, phase_budget: float, remaining: int,
+                  single: bool) -> float:
+    """سهم زمانی Overpass برای یک شهر — با ذخیرهٔ زمان برای مسیر متنی.
+
+    چرا؟ Overpass از شبکهٔ سرورلس اغلب پاسخ نمی‌دهد و اگر تمام بودجهٔ شهر را
+    بخورد، جست‌وجوی متنی (که سریع و پایدار است) هرگز اجرا نمی‌شود؛ نتیجه: صفر لید
+    در شهری که داده دارد. پس همیشه چند ثانیه برای مسیر جایگزین کنار می‌گذاریم.
+    """
+    reserve = 9.0 if single else 6.0
+    ceiling = max(8.0, float(box_left) - reserve)
+    if single:
+        return max(8.0, min(ceiling, float(phase_budget), float(box_left) * 0.6))
+    return max(8.0, min(ceiling, float(phase_budget) / max(1, remaining) * 1.15))
+
+
 class OSMEngine:
     """دادهٔ واقعی OpenStreetMap (Nominatim) — بدون داکر و بدون کلید."""
 
@@ -625,8 +640,7 @@ class OSMEngine:
                         if box_left < 6:
                             break
                         remaining = len(targets) - box_index + 1
-                        share = max(8.0, min(box_left - 3,
-                                             phase_budget / remaining * 1.15))
+                        share = share_for_box(box_left, phase_budget, remaining, len(targets) == 1)
                         box_span = max(abs(box[1] - box[0]), abs(box[3] - box[2]))
                         box_tiles = 4 if (deep and share >= 25 and box_span > 0.15) else 1
                         if on_progress and len(targets) > 1:
