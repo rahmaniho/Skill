@@ -225,6 +225,11 @@ async function main() {
   check("boot: کارت‌های لید رندر شد", el("leadList").innerHTML.includes('class="lead"'),
     el("leadList").innerHTML.slice(0, 60));
   check("boot: شمارندهٔ لید", el("leadCount").textContent.includes("لید"), el("leadCount").textContent);
+  /* دادهٔ نمونه فقط «هندل» اینستاگرام دارد (siteco) → باید لینک مطلق اینستاگرام شود */
+  check("boot: لینک اینستاگرام مطلق است",
+    /href="https:\/\/instagram\.com\/[^"]+"/.test(el("leadList").innerHTML) ||
+    !/instagram/.test(el("leadList").innerHTML),
+    (el("leadList").innerHTML.match(/href="[^"]*instagram[^"]*"/) || ["(هیچ)"])[0]);
   check("boot: چیپ‌های بخش‌بندی", el("segChips").innerHTML.includes("data-seg"));
   check("boot: سقوط به حالت نمایشی بدون سرور", el("demoMode").checked === true || LIVE !== "");
 
