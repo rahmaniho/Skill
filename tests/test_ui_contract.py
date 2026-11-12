@@ -144,6 +144,48 @@ if __name__ == "__main__":
     unittest.main(verbosity=2)
 
 
+class QueueLabelContractTests(unittest.TestCase):
+    """جدول صف باید بگوید هر کار «چه چیزی» می‌سازد، نه فقط شناسهٔ اجرا."""
+
+    def test_job_rows_explain_the_request(self):
+        import json as json_mod
+        import shutil
+        import subprocess
+
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node در دسترس نیست")
+        script = r"""
+const fs = require("fs");
+const src = fs.readFileSync(process.argv[1], "utf8");
+const body = src.match(/function jobRequestFa\(job\) \{[\s\S]*?\n\}/)[0];
+eval(body);
+process.stdout.write(JSON.stringify([
+  jobRequestFa({id: "enrich-r14yazd-a", request: {task: "enrich", target_run: "20261112-r14yazd"}}),
+  jobRequestFa({id: "r15", request: {niche_query: "کافه", city_query: "یزد"}}),
+  jobRequestFa({id: "r16", request: {city_query: "خوزستان", province: "khuzestan"}}),
+  jobRequestFa({id: "r17", request: {niche_query: "رستوران", city_query: "اهواز", all_niches: true}}),
+  jobRequestFa({id: "r18", request: {}}),
+]));
+"""
+        result = subprocess.run([node, "-e", script, str(ROOT / "web" / "app.js")],
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        values = json_mod.loads(result.stdout)
+        self.assertEqual(values[0], "✨ غنی‌سازی اجرای 20261112-r14yazd")
+        self.assertEqual(values[1], "کافه · یزد")
+        self.assertEqual(values[2], "همهٔ کسب‌وکارها · خوزستان")
+        self.assertEqual(values[3], "رستوران · اهواز · همهٔ صنف‌ها")
+        self.assertEqual(values[4], "همهٔ کسب‌وکارها · —")
+
+    def test_jobs_table_has_the_request_column(self):
+        html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+        head = html.split('id="jobsTable"')[1].split("</thead>")[0]
+        self.assertIn("درخواست", head)
+        self.assertEqual(head.count("<th>"), 6)
+        self.assertEqual(head.count("<th>"), head.count("</th>"))
+
+
 class OpsCronSqlTests(unittest.TestCase):
     """فایل زمان‌بندی Supabase باید همان قراردادی را داشته باشد که اپ انتظار دارد."""
 
