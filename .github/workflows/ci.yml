@@ -84,10 +84,18 @@ jobs:
             sleep 0.5
           done
           STATUS=0
-          SMOKE_LIVE=http://127.0.0.1:8123 node scripts/smoke_mini.js || STATUS=$?
-          SMOKE_LIVE=http://127.0.0.1:8123 node scripts/smoke_nova.js || STATUS=$?
+          SMOKE_LIVE=http://127.0.0.1:8123 node scripts/smoke_mini.js > /tmp/smoke-mini.log 2>&1 || STATUS=$?
+          SMOKE_LIVE=http://127.0.0.1:8123 node scripts/smoke_nova.js > /tmp/smoke-nova.log 2>&1 || STATUS=$?
           kill "$SERVER_PID" 2>/dev/null || true
-          if [ "$STATUS" -ne 0 ]; then tail -40 /tmp/leadgen-server.log; fi
+          cat /tmp/smoke-mini.log
+          cat /tmp/smoke-nova.log
+          if [ "$STATUS" -ne 0 ]; then
+            # شکست‌ها را به‌صورت annotation منتشر می‌کند تا بدون لاگ هم دیده شود
+            grep -E "✗|❌|شکست|Error|error" /tmp/smoke-mini.log /tmp/smoke-nova.log | head -25 \
+              | while IFS= read -r line; do echo "::error title=smoke::$line"; done
+            echo "--- server log tail ---"
+            tail -40 /tmp/leadgen-server.log
+          fi
           exit "$STATUS"
 
       - name: Pages copies of the web UIs are in sync
