@@ -567,15 +567,19 @@ class OSMEngine:
                     area_span = max(abs(float(bbox[1]) - float(bbox[0])),
                                     abs(float(bbox[3]) - float(bbox[2])))
                     tiles = 4 if ((deep or area_span > 0.8) and left >= 35) else 1
+                    # بودجهٔ این مرحله حداکثر ~۶۰٪ زمانِ باقی‌مانده است تا اگر Overpass
+                    # کند بود، مسیر جایگزین (Nominatim) و ذخیره/خروجی هم وقت داشته باشند.
+                    phase_budget = max(8.0, min(left - 6, left * 0.6))
                     try:
                         found = osm.overpass_search_area(
                             filters, bbox=list(bbox),
                             limit=osm.overpass_limit_for(list(bbox)),
-                            timeout=min(float(config.OVERPASS_TIMEOUT), max(8.0, left - 4)),
+                            timeout=min(float(config.OVERPASS_TIMEOUT),
+                                        max(6.0, phase_budget - 2)),
                             input_id=(niche_id or (terms[0] if terms else "")),
                             lang=lang, tiles=tiles,
                             max_rows=min(1500, int(config.MAX_LEADS_PER_RUN or 1500)),
-                            budget_s=max(20.0, left - 6))
+                            budget_s=phase_budget)
                     except OSMDownError as exc:
                         errors.append(f"overpass: {exc}")
                         found = []

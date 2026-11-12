@@ -22,6 +22,13 @@ os.environ["ENGINE_MODE"] = "demo"
 from leadgen import (analytics, campaign, config, engine as engine_mod, enrich,  # noqa: E402
                      exports, geo, niches, pipeline, scoring, storage)
 
+# اگر ماژول آزمون دیگری پیش از این، `leadgen.config` را import کرده باشد، متغیر محیطی
+# دیگر اثر ندارد؛ پس مسیرها را مستقیم روی ماژول می‌گذاریم تا این آزمون همیشه روی
+# پایگاه‌دادهٔ موقت خودش اجرا شود (نه data/ واقعی یا باقی‌ماندهٔ اجراهای قبلی).
+config.DATA_DIR = _TMP
+config.DB_PATH = _TMP / "leadgen.db"
+config.EXPORT_DIR = _TMP / "exports"
+
 
 class GeoTests(unittest.TestCase):
     def test_offline_lookup_persian_and_latin(self):
@@ -345,6 +352,9 @@ class ExportsTests(unittest.TestCase):
 class StorageTests(unittest.TestCase):
     def setUp(self):
         storage.init_db()
+        # ردیف‌های ثابتِ همین آزمون باید از صفر شروع شوند (وابستگی به ترتیب اجرا ممنوع)
+        for run_id in ("test-run-1", "test-run-2"):
+            storage.delete_run(run_id)
 
     def test_run_and_lead_round_trip_with_persian(self):
         run_id = storage.create_run({"id": "test-run-1", "niche_fa": "کافه", "city": "تهران",
