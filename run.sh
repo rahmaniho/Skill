@@ -4,7 +4,7 @@
 #   ./run.sh demo         → ساخت یک اجرای نمونه فوری (بدون داکر) و چاپ مسیر فایل‌ها
 #   ./run.sh seed         → ساخت دادهٔ نمونهٔ منطقه‌محور (۷ اجرا در ۵ محدوده) برای نمایش/توسعه
 #   ./run.sh test         → اجرای همه تست‌های پایتون
-#   ./run.sh smoke        → تست سریع رابط‌ها بدون مرورگر (site + smart + mini)
+#   ./run.sh smoke        → تست سریع رابط‌ها بدون مرورگر (site + smart + nova + mini)
 #   ./run.sh doctor       → بررسی سلامت محیط (موتور، داکر، پایگاه‌داده)
 #   ./run.sh engine       → بالا آوردن موتور واقعی با داکر (docker compose up -d)
 #   ./run.sh pages        → ساخت دادهٔ نمونه + کپی هر دو رابط برای GitHub Pages
@@ -40,6 +40,7 @@ case "$CMD" in
   smoke)
     node scripts/smoke_site.js
     node scripts/smoke_smart.js
+    node scripts/smoke_nova.js
     node scripts/smoke_mini.js
     echo "✓ هر سه رابط بدون خطا اجرا شدند"
     ;;

@@ -54,12 +54,21 @@ jobs:
           node --check smart/app.js
           node --check smart/campaign.js
           node --check mini/app.js
+          node --check nova/ui.js
+          node --check nova/app.js
+          node --check nova/sw.js
 
       - name: Static site smoke test (fake DOM)
         run: node scripts/smoke_site.js
 
       - name: Simple UI smoke test (fake DOM, demo mode)
         run: node scripts/smoke_smart.js
+
+      - name: Next-gen UI smoke test (fake DOM, demo mode)
+        run: node scripts/smoke_nova.js
+
+      - name: PWA icons are reproducible
+        run: python scripts/make_icons.py --check
 
       - name: Compact UI smoke test (fake DOM, demo mode)
         run: node scripts/smoke_mini.js
@@ -76,6 +85,7 @@ jobs:
           done
           STATUS=0
           SMOKE_LIVE=http://127.0.0.1:8123 node scripts/smoke_mini.js || STATUS=$?
+          SMOKE_LIVE=http://127.0.0.1:8123 node scripts/smoke_nova.js || STATUS=$?
           kill "$SERVER_PID" 2>/dev/null || true
           if [ "$STATUS" -ne 0 ]; then tail -40 /tmp/leadgen-server.log; fi
           exit "$STATUS"

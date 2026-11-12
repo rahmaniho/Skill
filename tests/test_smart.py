@@ -269,8 +269,8 @@ class SmartApiTestCase(unittest.TestCase):
         return status, raw
 
     # ── فایل‌های ایستا ────────────────────────────────────────────────────
-    def test_01_root_serves_simple_ui(self):
-        status, raw = self.get("/")
+    def test_01_smart_ui_served(self):
+        status, raw = self.get("/smart/")
         self.assertEqual(status, 200)
         html = raw.decode("utf-8")
         self.assertIn('dir="rtl"', html)
@@ -281,7 +281,7 @@ class SmartApiTestCase(unittest.TestCase):
         self.assertIn("campaign.js", html)
 
     def test_02_smart_assets_served(self):
-        for asset in ("/styles.css", "/app.js", "/campaign.js", "/favicon.svg"):
+        for asset in ("/smart/styles.css", "/smart/app.js", "/smart/campaign.js", "/smart/favicon.svg"):
             status, raw = self.get(asset)
             self.assertEqual(status, 200, asset)
             self.assertGreater(len(raw), 200, asset)

@@ -331,7 +331,19 @@ class WsgiRewriteTests(unittest.TestCase):
         code, _, body, _ = self.collect("__lg_path=%2F")
         self.assertEqual(200, code)
         self.assertIn(b"<!doctype html>", body.lower())
-        self.assertIn(b"queueLine", body)
+        self.assertIn(b"tabbar", body)                    # رابط نسل بعد (نُوا) روی /
+        self.assertIn(b"manifest.webmanifest", body)
+
+    def test_smart_and_nova_prefixes_through_the_rewrite(self):
+        code, _, body, _ = self.collect("__lg_path=%2Fsmart%2F")
+        self.assertEqual(200, code)
+        self.assertIn(b"queueLine", body)                 # رابط ساده همچنان سر جاشه
+        code, _, body, _ = self.collect("__lg_path=%2Fnova%2F")
+        self.assertEqual(200, code)
+        self.assertIn(b"tabbar", body)
+        code, headers, body, _ = self.collect("__lg_path=%2Fmanifest.webmanifest")
+        self.assertEqual(200, code)
+        self.assertIn("application/manifest+json", dict(headers)["Content-Type"])
 
     def test_mini_ui_through_the_rewrite(self):
         code, _, body, _ = self.collect("__lg_path=%2Fmini%2F")
