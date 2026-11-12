@@ -636,6 +636,18 @@ function renderAnalysis(a, run) {
     .map(([k, label, color]) => `<span><i style="background:${color}"></i>${label}: ${fa(seg[k].count)} (میانگین ${fa(seg[k].avg_score)})</span>`)
     .join("");
   $("#mapChart").innerHTML = scatterMap(a.map);
+
+  // پوشش شهرها: فقط وقتی جست‌وجو استانی چندشهری بوده نمایش داده می‌شود.
+  const cities = Array.isArray(a.cities) ? a.cities : [];
+  const card = $("#cityCoverageCard");
+  if (cities.length) {
+    card.hidden = false;
+    $("#cityChart").innerHTML = barChart(cities.map((c) => ({
+      label: `${c.city || "شهر"}${c.rows ? "" : " ✕"}`, value: c.rows,
+    })), "ok");
+  } else {
+    card.hidden = true;
+  }
 }
 
 function barChart(items, tone = "") {

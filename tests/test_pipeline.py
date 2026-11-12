@@ -673,7 +673,13 @@ class ProvinceSweepPipelineTest(unittest.TestCase):
                     {"city": "رشت", "rows": 12, "via": "overpass"},
                     {"city": "لاهیجان", "rows": 0, "via": ""},
                 ]
-                return "fake-job", []
+                return "fake-job", [{
+                    "place_id": "osm:node/1", "title": "کافه نمونه", "category": "کافه",
+                    "latitude": "37.28", "longitude": "49.59", "phone": "01332222222",
+                    "website": "", "instagram": "", "facebook": "", "linkedin": "",
+                    "address": "رشت", "input_id": "cafe", "source": "openstreetmap",
+                    "city": "رشت",
+                }]
 
         original = pipeline.make_engine
         pipeline.make_engine = lambda mode=None: FakeEngine()
@@ -687,6 +693,12 @@ class ProvinceSweepPipelineTest(unittest.TestCase):
         joined = " ".join(result.warnings)
         self.assertIn("پوشش استانی", joined)
         self.assertIn("لاهیجان", joined)
+        # پوشش شهرها در بستهٔ آمار می‌ماند (داشبورد آن را به‌صورت نمودار نشان می‌دهد)
+        cities = result.analytics.get("cities") or []
+        self.assertEqual({c["city"] for c in cities}, {"رشت", "لاهیجان"})
+        lahijan = next(c for c in cities if c["city"] == "لاهیجان")
+        self.assertEqual(lahijan["rows"], 0)
+        self.assertEqual(lahijan["via"], "")
 
     def test_city_request_has_no_sweep(self):
         captured: list[dict] = []
