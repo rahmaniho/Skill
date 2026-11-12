@@ -202,6 +202,16 @@
       if (S.mode === "demo") return Promise.resolve({ ok: true });
       return jsend("api/runs/" + encodeURIComponent(id), "DELETE", {});
     },
+    enrich: function (runId, opts) {
+      if (S.mode === "demo") return Promise.resolve({ ok: true, demo: true, checked: 0,
+        email: { before: 0, after: 0 }, social: { before: 0, after: 0 } });
+      return jsend("api/runs/" + encodeURIComponent(runId) + "/enrich", "POST",
+                   opts || { queue: true, budget: 30 });
+    },
+    runDetail: function (runId) {
+      if (S.mode === "demo") return Promise.resolve({ run: {}, analytics: {} });
+      return jget("api/runs/" + encodeURIComponent(runId));
+    },
     exportHref: function (runId, fmt) {
       var href = "api/runs/" + encodeURIComponent(runId) + "/export?fmt=" + (fmt || "xlsx") + "&cols=contact";
       return code() ? href + "&code=" + encodeURIComponent(code()) : href;
@@ -518,12 +528,53 @@
         list.insertAdjacentHTML("beforeend", leads.map(function (l) { return leadCard(normLead(l), S.view === "list"); }).join(""));
       }
       S.offset += leads.length;
+      syncEnrichButton();
       $("leadCount").textContent = (S.filters.run_id ? "لیدهای این کار: " : "") + fa(S.total) + " لید پیدا شده" +
         (S.total > S.offset ? " · " + fa(S.offset) + " تا نشون داده شده" : "");
       $("leadMore").hidden = S.offset >= S.total;
       renderLeadChips();
     }, function (e) {
       list.innerHTML = '<div class="empty"><span class="ico">⚠️</span><b>نشده که بگیرم</b><span>' + esc(e.message) + "</span></div>";
+    });
+  }
+
+  /* ── «کامل‌ترش کن»: غنی‌سازی مجدد لیدهای همین اجرا (بدون اسکراپ) ── */
+  function syncEnrichButton() {
+    var btn = $("enrichBtn");
+    if (!btn) return;
+    btn.hidden = !(S.filters.run_id && S.mode !== "demo");
+  }
+
+  function enrichCurrentRun() {
+    var runId = S.filters.run_id;
+    var btn = $("enrichBtn");
+    if (!runId) { N.toast("اول یک کار (اجرا) را انتخاب کن", "err"); return; }
+    var label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "⏳ دارم سایت‌ها را می‌گردم…";
+    N.toast("رفت توی صف — چند لحظه صبر کن", "ok");
+    API.enrich(runId, { queue: true, budget: 30 }).then(function () {
+      var tries = 0;
+      (function follow() {
+        tries += 1;
+        API.runDetail(runId).then(function (j) {
+          var notes = ((j.analytics || {}).warnings || []).filter(function (w) {
+            return w.indexOf("غنی‌سازی مجدد") === 0;
+          });
+          if (notes.length) {
+            N.toast(notes[notes.length - 1], "ok");
+            loadLeads();
+            return;
+          }
+          if (tries < 20) setTimeout(follow, 3000);
+          else N.toast("هنوز تمام نشده — چند دقیقه بعد دوباره ببین", "ok");
+        }, function () { if (tries < 20) setTimeout(follow, 3000); });
+      })();
+    }, function (e) {
+      N.toast(e.message, "err");
+    }).then(function () {
+      btn.disabled = false;
+      btn.textContent = label;
     });
   }
 
@@ -1118,6 +1169,7 @@
       loadLeads(false);
     });
     $("leadMore").addEventListener("click", function () { loadLeads(true); });
+    if ($("enrichBtn")) $("enrichBtn").addEventListener("click", enrichCurrentRun);
 
     /* داک */
     $("dockBtn").addEventListener("click", function () { if (S.run) openRun(S.run.run_id); });
