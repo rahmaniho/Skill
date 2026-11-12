@@ -372,13 +372,22 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
         if (engine.name == "osm" and request.province and request.area_level == "province"
                 and not (request.district or request.street)
                 and int(getattr(config, "PROVINCE_SWEEP_CITIES", 0) or 0) > 0):
-            sweep_boxes = regions.province_boxes(
-                request.province, limit=int(config.PROVINCE_SWEEP_CITIES))
+            wanted = int(config.PROVINCE_SWEEP_CITIES)
+            # تعداد شهر باید با بودجهٔ زمانی بخواند: هر شهر تقریباً ۸–۱۰ ثانیه.
+            # (روی تابع serverless بودجه ~۳۰ ثانیه است؛ روی CLI/داکر بیشتر.)
+            try:
+                time_budget = float(request.max_time or 60)
+            except (TypeError, ValueError):
+                time_budget = 60.0
+            if time_budget < 55:
+                wanted = max(2, min(wanted, int(time_budget // 10)))
+            sweep_boxes = regions.province_boxes(request.province, limit=wanted)
             if len(sweep_boxes) > 1:
                 province_fa = province_meta.get("fa") or request.province
                 warnings.append(
                     f"جست‌وجوی استانی: {len(sweep_boxes)} شهر پرجمعیت «{province_fa}» پوشش "
-                    f"داده می‌شود (قابل تنظیم با PROVINCE_SWEEP_CITIES).")
+                    f"داده می‌شود (قابل تنظیم با PROVINCE_SWEEP_CITIES؛ با بودجهٔ زمانی "
+                    f"{int(time_budget)} ثانیه).")
             else:
                 sweep_boxes = []
 
