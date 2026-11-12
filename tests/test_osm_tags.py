@@ -221,7 +221,7 @@ class OverpassCacheAndTilingTests(unittest.TestCase):
         calls = []
 
         def fake_search(filters, *, bbox, limit=None, timeout=None, input_id="", lang="fa",
-                        cache=True):
+                        cache=True, force=False, budget_s=None):
             calls.append(list(bbox))
             if len(calls) == 1:
                 return [{"place_id": f"osm:node/{i}"} for i in range(limit)]
@@ -239,7 +239,7 @@ class OverpassCacheAndTilingTests(unittest.TestCase):
         calls = []
 
         def fake_search(filters, *, bbox, limit=None, timeout=None, input_id="", lang="fa",
-                        cache=True):
+                        cache=True, force=False, budget_s=None):
             calls.append(list(bbox))
             return [{"place_id": f"osm:node/{i}"} for i in range(limit)]
 
@@ -257,6 +257,16 @@ class OverpassCacheAndTilingTests(unittest.TestCase):
                                             bbox=[35.6, 35.8, 51.3, 51.5], limit=100, tiles=4)
         self.assertEqual(request.call_count, 1)
         self.assertEqual(len(rows), 1)
+
+
+class MirrorConfigTests(unittest.TestCase):
+    def test_at_least_two_https_mirrors(self):
+        endpoints = config.OVERPASS_ENDPOINTS
+        self.assertGreaterEqual(len(endpoints), 2)
+        for url in endpoints:
+            self.assertTrue(url.startswith("https://"), url)
+            self.assertTrue(url.endswith("/interpreter") or "/interpreter" in url, url)
+        self.assertEqual(len(set(endpoints)), len(endpoints), "آینهٔ تکراری")
 
 
 class OverpassHealthTests(unittest.TestCase):
@@ -318,3 +328,41 @@ class OverpassHealthTests(unittest.TestCase):
             payload = osm.overpass_health(probe=False)
         self.assertIsNone(payload["up"])
         self.assertIn("سنجیده نشده", payload["note"])
+
+
+class OverpassDownCacheTests(unittest.TestCase):
+    """وقتی Overpass کامل شکست می‌خورد، جست‌وجوی بعدی نباید دوباره ده‌ها ثانیه معطل شود."""
+
+    def setUp(self):
+        osm.cache_clear()
+        osm._OVERPASS_DOWN_UNTIL[0] = 0.0
+        self._gap = config.OVERPASS_MIN_INTERVAL
+        config.OVERPASS_MIN_INTERVAL = 0.001
+
+    def tearDown(self):
+        config.OVERPASS_MIN_INTERVAL = self._gap
+        osm._OVERPASS_DOWN_UNTIL[0] = 0.0
+        osm.cache_clear()
+
+    def test_second_search_fails_fast_without_network(self):
+        with mock.patch.object(osm.urllib.request, "urlopen",
+                               side_effect=OSError("network down")) as net:
+            with self.assertRaises(osm.OSMDownError):
+                osm.overpass_search(['["amenity"="cafe"]'], bbox=[35.6, 35.8, 51.3, 51.5],
+                                    limit=50)
+            first_calls = net.call_count
+            with self.assertRaises(osm.OSMDownError):
+                osm.overpass_search(['["amenity"="cafe"]'], bbox=[35.6, 35.8, 51.3, 51.5],
+                                    limit=50)
+            self.assertEqual(net.call_count, first_calls, "نباید دوباره شبکه را امتحان کند")
+        self.assertFalse(osm.overpass_available())
+
+    def test_force_bypasses_down_marker(self):
+        osm._OVERPASS_DOWN_UNTIL[0] = __import__("time").monotonic() + 60
+        payload = {"elements": [{"type": "node", "id": 1, "lat": 35.7, "lon": 51.4,
+                                 "tags": {"amenity": "cafe", "name": "کافه"}}]}
+        with mock.patch.object(osm, "_overpass_request", return_value=payload):
+            rows = osm.overpass_search(['["amenity"="cafe"]'], bbox=[35.6, 35.8, 51.3, 51.5],
+                                       limit=50, force=True)
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(osm.overpass_available())      # موفقیت، علامت خرابی را پاک می‌کند

@@ -119,6 +119,10 @@ _OVERPASS_LAST = [0.0]
 _OVERPASS_HEALTH: dict = {"ts": 0.0, "payload": None}
 # آخرین جست‌وجوی موفق: نقطهٔ /status گاهی کند/بی‌جواب است ولی سرویس سالم است.
 _OVERPASS_LAST_OK = [0.0]
+# اگر اتصال کامل شکست خورد، مدتی از پرسیدن دوباره صرف‌نظر می‌کنیم تا هر جست‌وجو
+# ده‌ها ثانیه معطل نشود و مسیر جایگزین (Nominatim) سریع جواب دهد.
+_OVERPASS_DOWN_UNTIL = [0.0]
+OVERPASS_DOWN_SECONDS = 180.0
 
 
 def _overpass_throttle() -> None:
@@ -160,7 +164,8 @@ def _endpoints_in_order() -> list[str]:
     return fresh + cooled          # اگر همه سرد بودند، باز هم همان‌ها را امتحان می‌کنیم
 
 
-def _overpass_request(query: str, *, timeout: float, retries: int = 1) -> dict:
+def _overpass_request(query: str, *, timeout: float, retries: int = 1,
+                      deadline_s: float | None = None) -> dict:
     """اجرای کوئری روی آینه‌ها با تلاش دوبارهٔ کوتاه (تحمل خطای سرویس شلوغ).
 
     Overpass یک سرویس عمومی است؛ پاسخ 429/504 در ساعات شلوغ طبیعی است. یک تلاش
@@ -170,7 +175,7 @@ def _overpass_request(query: str, *, timeout: float, retries: int = 1) -> dict:
     errors: list[str] = []
     # سقف زمانی کلِ این فراخوانی: یک جست‌وجو نباید ده‌ها ثانیه در انتظار بماند.
     # (تلاش دوباره فقط وقتی معنا دارد که زمان باقی مانده باشد.)
-    deadline = time.monotonic() + max(8.0, float(timeout) + 10)
+    deadline = time.monotonic() + max(6.0, float(deadline_s or (timeout + 10)))
     for endpoint in _endpoints_in_order():
         host = endpoint.split("/")[2] if "//" in endpoint else endpoint
         for attempt in range(retries + 1):
@@ -211,7 +216,9 @@ def _overpass_request(query: str, *, timeout: float, retries: int = 1) -> dict:
                 break
             _OVERPASS_COOLDOWN.pop(endpoint, None)
             _OVERPASS_LAST_OK[0] = time.time()
+            _OVERPASS_DOWN_UNTIL[0] = 0.0
             return data
+    _OVERPASS_DOWN_UNTIL[0] = time.monotonic() + OVERPASS_DOWN_SECONDS
     raise OSMDownError("Overpass پاسخ نداد (" + "; ".join(errors[:4]) + ")")
 
 
@@ -329,15 +336,23 @@ def cache_clear() -> None:
         _OVERPASS_CACHE.clear()
 
 
+def overpass_available() -> bool:
+    """آیا Overpass تا این لحظه «پاسخ‌گو» بوده است؟ (برای پرهیز از انتظار تکراری)"""
+    return _OVERPASS_DOWN_UNTIL[0] <= time.monotonic()
+
+
 def overpass_search(filters: list[str], *, bbox: list[float], limit: int | None = None,
                     timeout: float | None = None, input_id: str = "",
-                    lang: str = "fa", cache: bool = True) -> list[dict]:
+                    lang: str = "fa", cache: bool = True, force: bool = False,
+                    budget_s: float | None = None) -> list[dict]:
     """یک درخواست Overpass → ردیف‌های کسب‌وکار (بدون تکراری، با کش کوتاه‌مدت).
 
     کش برای تکرار جست‌وجو (کاربر بعدی، اجرای دوباره، آزمون رابط) است؛ هم سرعت
     را بالا می‌برد و هم ادب استفاده از سرویس عمومی Overpass را رعایت می‌کند.
     """
     cap = int(limit or config.OVERPASS_LIMIT)
+    if not force and not overpass_available():
+        raise OSMDownError("Overpass در ۳ دقیقهٔ گذشته پاسخ نداد؛ مسیر جایگزین استفاده می‌شود")
     ttl = float(getattr(config, "OVERPASS_CACHE_TTL", 0) or 0)
     key = _cache_key(filters, bbox, cap, lang) if (cache and ttl > 0) else ""
     if key:
@@ -346,7 +361,8 @@ def overpass_search(filters: list[str], *, bbox: list[float], limit: int | None 
         if hit and (time.time() - hit[0]) < ttl:
             return [dict(row, input_id=input_id) for row in hit[1]]
     query = build_overpass_query(filters, bbox, limit=cap, timeout=timeout)
-    data = _overpass_request(query, timeout=float(timeout or config.OVERPASS_TIMEOUT))
+    data = _overpass_request(query, timeout=float(timeout or config.OVERPASS_TIMEOUT),
+                             deadline_s=budget_s)
     elements = data.get("elements") if isinstance(data, dict) else None
     rows: dict[str, dict] = {}
     for element in elements or []:
@@ -356,6 +372,9 @@ def overpass_search(filters: list[str], *, bbox: list[float], limit: int | None 
         if row:
             rows.setdefault(row["place_id"], row)
     out = list(rows.values())
+    if out:                      # پاسخ سالم = سرویس بالاست (مسیر کش/تست هم همین را می‌بیند)
+        _OVERPASS_DOWN_UNTIL[0] = 0.0
+        _OVERPASS_LAST_OK[0] = time.time()
     if key and out:
         with _OVERPASS_CACHE_LOCK:
             if len(_OVERPASS_CACHE) >= OVERPASS_CACHE_MAX:
@@ -391,7 +410,7 @@ def overpass_search_area(filters: list[str], *, bbox: list[float], limit: int | 
     budget = float(budget_s or min(90.0, per_call * 2.5))
     base_limit = overpass_limit_for(bbox, limit)
     first = overpass_search(filters, bbox=bbox, limit=base_limit, timeout=per_call,
-                            input_id=input_id, lang=lang)
+                            input_id=input_id, lang=lang, budget_s=budget)
     span = max(abs(float(bbox[1]) - float(bbox[0])), abs(float(bbox[3]) - float(bbox[2])))
     # «بُرش» وقتی رخ می‌دهد که یا نتیجه دقیقاً به سقف خورده، یا محدوده بزرگ است.
     truncated = len(first) >= base_limit
@@ -408,7 +427,7 @@ def overpass_search_area(filters: list[str], *, bbox: list[float], limit: int | 
         try:
             found = overpass_search(filters, bbox=piece, limit=base_limit,
                                     timeout=min(per_call, left - 2),
-                                    input_id=input_id, lang=lang)
+                                    input_id=input_id, lang=lang, budget_s=left)
         except OSMDownError:
             continue
         for row in found:
@@ -659,7 +678,7 @@ def overpass_health(*, force: bool = False, probe: bool = True) -> dict:
     return dict(payload)
 
 
-def _overpass_mini_probe(timeout: float = 8.0) -> bool:
+def _overpass_mini_probe(timeout: float = 6.0) -> bool:
     """محک واقعی و ارزان: یک کافه در جعبهٔ کوچک رامسر (اگر سرویس سالم باشد < ۱ ثانیه).
 
     چرا؟ `/status` گاهی از بعضی شبکه‌ها ۵۰۲ می‌دهد یا کند است، درحالی‌که همان لحظه
@@ -668,7 +687,7 @@ def _overpass_mini_probe(timeout: float = 8.0) -> bool:
     """
     query = '[out:json][timeout:8];nwr["amenity"="cafe"](36.900,50.640,36.930,50.670);out 1;'
     try:
-        data = _overpass_request(query, timeout=timeout, retries=0)
+        data = _overpass_request(query, timeout=timeout, retries=0, deadline_s=8.0)
     except OSMDownError:
         return False
     return isinstance(data, dict) and "elements" in data

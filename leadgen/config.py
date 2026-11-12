@@ -127,7 +127,9 @@ OSM_MODE = (env("OSM_MODE", "hybrid") or "hybrid").lower()
 OVERPASS_ENDPOINTS = [
     url.strip().rstrip("/")
     for url in (env("OVERPASS_ENDPOINT")
-                or "https://overpass-api.de/api/interpreter,https://overpass.kumi.systems/api/interpreter").split(",")
+                or "https://overpass-api.de/api/interpreter,"
+                   "https://overpass.kumi.systems/api/interpreter,"
+                   "https://overpass.private.coffee/api/interpreter").split(",")
     if url.strip()
 ]
 OVERPASS_MIN_INTERVAL = max(0.5, env_float("OVERPASS_MIN_INTERVAL", 1.0))
