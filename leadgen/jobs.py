@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 
 from . import config
 from .storage import (  # noqa: F401  — بازصادرات برای استفادهٔ مستقیم
@@ -61,6 +62,24 @@ def enqueue_run(request_dict: dict, *, run_id: str | None = None, priority: int 
     job_id = enqueue_job(run_id, payload, priority=priority)
     return {"run_id": run_id, "job_id": job_id, "status": "queued",
             "queue": queue_stats() if config.supabase_ready() else {}}
+
+
+def enqueue_enrich(target_run_id: str, *, budget: float = 25.0, limit: int = 0,
+                   priority: int = 5) -> dict:
+    """«غنی‌سازی مجدد» را در صف می‌گذارد تا با کرون/ورکر (بدون مرورگر) اجرا شود.
+
+    چرا صف؟ اجرای بزرگ (مثلاً ۲۰۰ لید) در یک تابع ۶۰ثانیه‌ای جا نمی‌شود؛ کار در
+    صف می‌رود و هر تپش بخشی از آن را جلو می‌برد. کار، ردیف run برای خودش نمی‌سازد
+    (اجرای مقصد از قبل هست) تا فهرست اجراها شلوغ نشود.
+    """
+    from . import storage
+
+    job_id = f"enrich-{target_run_id}-{uuid.uuid4().hex[:6]}"
+    payload = {"task": "enrich", "target_run": target_run_id, "run_id": job_id,
+               "enrich_budget": float(budget), "limit": int(limit)}
+    storage.enqueue_job(job_id, payload, priority=priority)
+    return {"queued": True, "job_id": job_id, "target_run": target_run_id,
+            "budget": float(budget), "status": "queued"}
 
 
 def queue_mode_active() -> bool:

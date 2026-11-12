@@ -460,6 +460,43 @@ class ApiTestCase(unittest.TestCase):
 
         storage.delete_run(run_id)
 
+    def test_20c_enrich_can_be_queued_and_ticked_without_a_browser(self):
+        """اجرای بزرگ: غنی‌سازی به صف می‌رود و همان تپش (کرون) تمامش می‌کند."""
+        from leadgen import config as config_mod, enrich as enrich_mod, worker as worker_mod
+
+        status, imported = self.post("/api/import", {
+            "rows": [{"name": "کافه صف", "website": "https://queued-cafe.ir", "city": "یزد"}],
+            "niche_query": "کافه", "city": "یزد"})
+        self.assertEqual(status, 200)
+        run_id = imported["run_id"]
+
+        status, queued = self.post(f"/api/runs/{run_id}/enrich", {"queue": True, "budget": 20})
+        self.assertEqual(status, 202, queued)
+        self.assertTrue(queued["queued"])
+        job_id = queued["job_id"]
+
+        html = '<a href="mailto:hi@queued-cafe.ir">mail</a>'
+        original_queue = config_mod.QUEUE_MODE
+        try:
+            config_mod.QUEUE_MODE = "always"
+            with mock.patch.object(enrich_mod, "_fetch_cached", return_value=html), \
+                    mock.patch.object(enrich_mod, "_fetch_html", return_value=html):
+                status, ticked = self.get("/api/worker/tick?budget=45")
+        finally:
+            config_mod.QUEUE_MODE = original_queue
+        self.assertEqual(status, 200)
+        self.assertEqual(ticked.get("job_id"), job_id)
+        self.assertEqual(ticked.get("task"), "enrich")
+        self.assertTrue(ticked.get("ok"))
+        lead = storage.all_leads_for_export(run_id)[0]
+        self.assertEqual(lead["email_primary"], "hi@queued-cafe.ir")
+        storage.delete_run(run_id)
+
+    def test_20d_unknown_run_cannot_be_queued_for_enrich(self):
+        status, data = self.post("/api/runs/does-not-exist/enrich", {"queue": True})
+        self.assertEqual(status, 404)
+        self.assertIn("پیدا نشد", data["error"])
+
     # ── تپش صف از بیرون (کرون) ──────────────────────────────────────────────
     def _queue_tick_module(self):
         import importlib.util
