@@ -13,6 +13,24 @@
   const fa = (v) => String(v ?? "").replace(/\d/g, (d) => FA[+d]);
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  function socialHref(platform, value) {
+    var base = { instagram: "https://instagram.com/", facebook: "https://facebook.com/",
+                 linkedin: "https://linkedin.com/company/" }[platform] || "";
+    var v = String(value == null ? "" : value).trim();
+    if (!v) return "";
+    if (/^https?:\/\//i.test(v)) return v;
+    if (/^(www\.)?(instagram\.com|instagr\.am|facebook\.com|fb\.com|fb\.me|linkedin\.com)\//i.test(v)) {
+      return "https://" + v.replace(/^https?:\/\//i, "");
+    }
+    return base + v.replace(/^@+/, "").replace(/[?#].*$/, "").replace(/\/+$/, "");
+  }
+  function socialName(platform, value) {
+    var v = String(value == null ? "" : value).trim();
+    if (!v) return "";
+    var m = v.match(/(?:instagram|facebook|linkedin)\.com\/(?:company\/)?([^/?#]+)/i);
+    return m ? "@" + m[1] : ("@" + v.replace(/^@+/, ""));
+  }
+
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 
@@ -804,7 +822,7 @@
 
   function cardHtml(l) {
     const socials = [
-      l.instagram ? `<a href="https://instagram.com/${encodeURIComponent(l.instagram)}" target="_blank" rel="noopener" title="اینستاگرام">📸</a>` : "",
+      l.instagram ? `<a href="${esc(socialHref("instagram", l.instagram))}" target="_blank" rel="noopener" title="اینستاگرام">📸</a>` : "",
       l.facebook ? `<a href="https://facebook.com/${encodeURIComponent(l.facebook)}" target="_blank" rel="noopener" title="فیسبوک">👥</a>` : "",
       l.linkedin ? `<a href="https://linkedin.com/in/${encodeURIComponent(l.linkedin)}" target="_blank" rel="noopener" title="لینکدین">💼</a>` : "",
     ].join(" ");
@@ -914,7 +932,7 @@
           ${lead.emails && lead.emails !== lead.email_primary ? `<br><small class="mono">${esc(lead.emails)}</small>` : ""}</dd>
         <dt>وب‌سایت</dt><dd>${lead.website ? `<a class="mono" href="${esc(lead.website)}" target="_blank" rel="noopener">${esc(lead.website)}</a>` : '<span class="badge nosite">ندارد — فرصت فروش سایت</span>'}</dd>
         <dt>شبکه اجتماعی</dt><dd>${[
-          lead.instagram && `<a href="https://instagram.com/${esc(lead.instagram)}" target="_blank" rel="noopener">اینستاگرام</a>`,
+          lead.instagram && `<a href="${esc(socialHref("instagram", lead.instagram))}" target="_blank" rel="noopener">اینستاگرام</a>`,
           lead.facebook && `<a href="https://facebook.com/${esc(lead.facebook)}" target="_blank" rel="noopener">فیسبوک</a>`,
           lead.linkedin && `<a href="https://linkedin.com/in/${esc(lead.linkedin)}" target="_blank" rel="noopener">لینکدین</a>`,
         ].filter(Boolean).join(" · ") || "—"}</dd>
@@ -1027,7 +1045,7 @@
     }
     if (state.channel === "phone" && lead.phone) actions.push(`<a class="act primary" href="tel:${esc(lead.phone)}">📞 تماس</a>`);
     if (state.channel === "instagram" && lead.instagram) {
-      actions.push(`<a class="act" target="_blank" rel="noopener" href="https://instagram.com/${esc(lead.instagram)}">📸 پروفایل</a>`);
+      actions.push(`<a class="act" target="_blank" rel="noopener" href="${esc(socialHref("instagram", lead.instagram))}">📸 پروفایل</a>`);
     }
     actions.push(`<button class="act" id="copyMsg">📋 کپی متن</button>`);
     $("msgActions").innerHTML = actions.join("");

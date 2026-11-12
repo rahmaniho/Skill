@@ -5,6 +5,7 @@
   "use strict";
   var N = globalThis.Nova;
   var $ = N.$, esc = N.esc, fa = N.fa, num = N.num, pct = N.pct, ago = N.ago, clock = N.clock;
+  var socialHref = N.socialHref, socialName = N.socialName;
 
   /* ────────────────────────── حالت برنامه ────────────────────────── */
   var S = {
@@ -463,7 +464,7 @@
     if (l.phone) acts.push('<a class="act act-primary" href="tel:' + esc(l.phone) + '" data-stop>📞 زنگ بزن</a>');
     if (l.email) acts.push('<a class="act" href="mailto:' + esc(l.email) + '" data-stop>✉️ ایمیل</a>');
     if (l.website) acts.push('<a class="act" href="' + esc(/^https?:/.test(l.website) ? l.website : "https://" + l.website) + '" target="_blank" rel="noopener" data-stop>🌐 سایت</a>');
-    if (l.instagram) acts.push('<a class="act" href="' + esc(l.instagram) + '" target="_blank" rel="noopener" data-stop>📸</a>');
+    if (l.instagram) acts.push('<a class="act" href="' + esc(socialHref("instagram", l.instagram)) + '" target="_blank" rel="noopener" data-stop>📸</a>');
     var mh = mapsHref(l);
     if (mh) acts.push('<a class="act" href="' + esc(mh) + '" target="_blank" rel="noopener" data-stop>🗺 نقشه</a>');
     acts.push('<button class="act" data-act="copy" data-val="' + esc(l.phone || l.email || l.title) + '" data-stop>📋 کپی</button>');
@@ -539,7 +540,7 @@
       if (l.phone) contacts += row("📞", "تلفن", l.phone, "tel:" + l.phone);
       if (l.email) contacts += row("✉️", "ایمیل", l.email, "mailto:" + l.email);
       if (l.website) contacts += row("🌐", "سایت", l.website, /^https?:/.test(l.website) ? l.website : "https://" + l.website);
-      if (l.instagram) contacts += row("📸", "اینستاگرام", l.instagram, l.instagram);
+      if (l.instagram) contacts += row("📸", "اینستاگرام", socialName("instagram", l.instagram), socialHref("instagram", l.instagram));
       if (l.facebook) contacts += row("📘", "فیسبوک", l.facebook, l.facebook);
       if (l.linkedin) contacts += row("💼", "لینکدین", l.linkedin, l.linkedin);
       var mh = mapsHref(l);

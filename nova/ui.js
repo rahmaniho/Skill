@@ -13,6 +13,24 @@
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
     });
   }
+  function socialHref(platform, value) {
+    var base = { instagram: "https://instagram.com/", facebook: "https://facebook.com/",
+                 linkedin: "https://linkedin.com/company/" }[platform] || "";
+    var v = String(value == null ? "" : value).trim();
+    if (!v) return "";
+    if (/^https?:\/\//i.test(v)) return v;
+    if (/^(www\.)?(instagram\.com|instagr\.am|facebook\.com|fb\.com|fb\.me|linkedin\.com)\//i.test(v)) {
+      return "https://" + v.replace(/^https?:\/\//i, "");
+    }
+    return base + v.replace(/^@+/, "").replace(/[?#].*$/, "").replace(/\/+$/, "");
+  }
+  function socialName(platform, value) {
+    var v = String(value == null ? "" : value).trim();
+    if (!v) return "";
+    var m = v.match(/(?:instagram|facebook|linkedin)\.com\/(?:company\/)?([^/?#]+)/i);
+    return m ? "@" + m[1] : ("@" + v.replace(/^@+/, ""));
+  }
+
   function fa(v) {
     if (v == null || v === "") return "";
     return String(v).replace(/[0-9]/g, function (d) { return FA[+d]; })
@@ -196,6 +214,7 @@
 
   WIN.Nova = {
     $: $, esc: esc, fa: fa, num: num, pct: pct, ago: ago, clock: clock,
+    socialHref: socialHref, socialName: socialName,
     toast: toast, sheet: sheet, sheetHide: sheetHide, sheetIsOpen: function () { return !!sheetOpen; },
     setTab: setTab, onTab: function (fn) { onTab = fn; },
     applyTheme: applyTheme, loadTheme: loadTheme,

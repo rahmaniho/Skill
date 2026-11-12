@@ -30,6 +30,27 @@ const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) =>
 const fa = (n) => Number(n || 0).toLocaleString("fa-IR");
 const num = (n) => Number(n || 0).toLocaleString("en-US");
 
+// آدرس کامل شبکه اجتماعی از هندل یا لینک: «cafesaadeh»، «instagram.com/cafesaadeh»
+// یا خودِ لینک کامل → همیشه یک URL مطلق و درست (قبلاً لینک‌های کامل دوباره پیشوند می‌گرفتند).
+function socialHref(platform, value) {
+  const base = { instagram: "https://instagram.com/", facebook: "https://facebook.com/",
+                 linkedin: "https://linkedin.com/company/" }[platform] || "";
+  let v = String(value == null ? "" : value).trim();
+  if (!v) return "";
+  if (/^https?:\/\//i.test(v)) return v;
+  if (/^(www\.)?(instagram\.com|instagr\.am|facebook\.com|fb\.com|fb\.me|linkedin\.com)\//i.test(v)) {
+    return "https://" + v.replace(/^https?:\/\//i, "");
+  }
+  v = v.replace(/^@+/, "").replace(/[?#].*$/, "").replace(/\/+$/, "");
+  return base + v;
+}
+function socialName(platform, value) {
+  const v = String(value == null ? "" : value).trim();
+  if (!v) return "";
+  const m = v.match(/(?:instagram|facebook|linkedin)\.com\/(?:company\/)?([^/?#]+)/i);
+  return m ? "@" + m[1] : ("@" + v.replace(/^@+/, ""));
+}
+
 function toast(message, kind = "ok") {
   const el = document.createElement("div");
   el.className = `toast ${kind}`;
@@ -465,7 +486,7 @@ function renderLeads(rows) {
       <td>
         ${r.website ? `<a href="${esc(r.website)}" target="_blank" rel="noopener">سایت ↗</a>` : `<span class="badge muted">بدون سایت</span>`}
         <div class="camp-meta">
-          ${r.instagram ? `<a href="https://instagram.com/${esc(r.instagram)}" target="_blank" rel="noopener">IG</a> ` : ""}
+          ${r.instagram ? `<a href="${esc(socialHref("instagram", r.instagram))}" target="_blank" rel="noopener">IG</a> ` : ""}
           ${r.facebook ? `<a href="${esc(r.facebook)}" target="_blank" rel="noopener">FB</a> ` : ""}
           ${r.linkedin ? `<a href="${esc(r.linkedin)}" target="_blank" rel="noopener">IN</a> ` : ""}
           ${r.maps_link ? `<a href="${esc(r.maps_link)}" target="_blank" rel="noopener" title="لوکیشن دقیق روی نقشه">📍 نقشه</a>` : ""}
@@ -546,7 +567,7 @@ async function openDrawer(leadId) {
         <dt>تلفن</dt><dd class="mono" dir="ltr">${esc(lead.phone || "—")}</dd>
         <dt>ایمیل</dt><dd class="mono" dir="ltr">${esc(lead.emails || "—")}</dd>
         <dt>وب‌سایت</dt><dd>${lead.website ? `<a href="${esc(lead.website)}" target="_blank" rel="noopener" dir="ltr">${esc(lead.domain || lead.website)}</a>` : "—"}</dd>
-        <dt>اینستاگرام</dt><dd>${lead.instagram ? `<a href="https://instagram.com/${esc(lead.instagram)}" target="_blank" rel="noopener" dir="ltr">${esc(lead.instagram)}</a>` : "—"}</dd>
+        <dt>اینستاگرام</dt><dd>${lead.instagram ? `<a href="${esc(socialHref("instagram", lead.instagram))}" target="_blank" rel="noopener" dir="ltr">${esc(socialName("instagram", lead.instagram))}</a>` : "—"}</dd>
         <dt>فیسبوک</dt><dd>${lead.facebook ? `<a href="${esc(lead.facebook)}" target="_blank" rel="noopener" dir="ltr">پروفایل ↗</a>` : "—"}</dd>
         <dt>لینکدین</dt><dd>${lead.linkedin ? `<a href="${esc(lead.linkedin)}" target="_blank" rel="noopener" dir="ltr">پروفایل ↗</a>` : "—"}</dd>
         <dt>نشانی</dt><dd>${esc(lead.address || "—")}</dd>
