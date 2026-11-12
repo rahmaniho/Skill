@@ -625,6 +625,33 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
         if request.limit and len(rows) > request.limit:
             rows = rows[:request.limit]           # rows مرتب‌شده بر اساس امتیاز است
 
+        # ── ۶٫۵) تازه یا تکراری؟ ─────────────────────────────────────────────
+        # اجرای دوبارهٔ همان شهر/صنف نباید «۴۵ لید جدید» جا بزند؛ باید بگوید
+        # کدام‌ها تازه‌اند. برچسب روی signals می‌نشیند (بدون تغییر schema).
+        history = {}
+        try:
+            history = storage.seen_places([r.get("place_id") for r in rows if r.get("place_id")],
+                                          exclude_run=run_id)
+        except Exception as exc:  # noqa: BLE001 — این تزئین نباید اجرا را بشکند
+            warnings.append(f"بررسی سابقهٔ لیدها انجام نشد ({exc}).")
+        fresh = repeat = 0
+        for row in rows:
+            seen_in = history.get(str(row.get("place_id") or ""))
+            if not isinstance(row.get("signals"), dict):
+                row["signals"] = {}
+            if seen_in:
+                row["signals"]["repeat"] = True
+                row["signals"]["first_seen_run"] = seen_in
+                repeat += 1
+            else:
+                row["signals"].pop("repeat", None)
+                row["signals"].pop("first_seen_run", None)
+                fresh += 1
+        if repeat:
+            warnings.append(
+                f"{fresh} نتیجه از {len(rows)} تازه بود؛ {repeat} مورد در اجراهای قبلی هم "
+                f"دیده شده بود (در فهرست با نشان «قبلاً دیده شده» مشخص‌اند).")
+
         # ── ۷) ذخیره ────────────────────────────────────────────────────────
         storage.save_leads(run_id, rows)
         saved_rows = storage.all_leads_for_export(run_id)   # با idهای پایگاه‌داده
@@ -640,6 +667,7 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
             "job_ids": job_ids, "status": "done",
         })
         stats_pack = analytics.build(saved_rows, run_full, niche)
+        stats_pack["fresh"] = {"new": fresh, "repeat": repeat}
         # هشدارهای اجرا را هم نگه می‌داریم؛ وگرنه بعد از بسته شدن مرورگر هیچ‌جا نمی‌ماند.
         stats_pack["warnings"] = list(warnings)
         if sweep_boxes and coverage:

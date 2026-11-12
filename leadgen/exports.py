@@ -12,6 +12,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+from typing import Any
 import time
 import zipfile
 from pathlib import Path
@@ -40,6 +41,7 @@ EXPORT_COLUMNS: list[tuple[str, str]] = [
     ("pitch", "زاویه پیشنهاد"),
     ("gaps_fa", "شکاف‌های دیجیتال"),
     ("tags", "برچسب‌ها"),
+    ("signals.first_seen_run", "اولین‌بار در اجرای"),
     ("status_fa", "وضعیت پیگیری"),
     ("note", "یادداشت"),
 ]
@@ -172,6 +174,11 @@ CAMPAIGN_COLUMNS: list[tuple[str, str]] = [
 
 def _value(row: dict, key: str) -> str:
     value = row.get(key, "")
+    if value in (None, "") and "." in key:      # مسیر تودرتو مثل signals.first_seen_run
+        node: Any = row
+        for part in key.split("."):
+            node = node.get(part) if isinstance(node, dict) else None
+        value = node if node is not None else ""
     if value is None:
         return ""
     if isinstance(value, (list, tuple)):

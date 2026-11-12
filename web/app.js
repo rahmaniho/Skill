@@ -476,6 +476,7 @@ function renderLeads(rows) {
       <td><span class="score ${esc(r.segment || "cold")}">${fa(r.score || 0)}</span></td>
       <td>
         <b>${esc(r.title || "—")}</b>
+        ${(r.signals || {}).repeat ? `<span class="badge muted" title="اولین‌بار در اجرای ${esc((r.signals || {}).first_seen_run || "—")} دیده شد">🔁 قبلاً دیده شده</span>` : ""}
         <div class="camp-meta">${esc(r.category || "")} ${r.address ? "· " + esc(r.address) : ""}</div>
         <div class="tag-list">${(r.tags || []).slice(0, 3).map((t) => `<span class="badge muted">${esc(t)}</span>`).join("")}</div>
       </td>
