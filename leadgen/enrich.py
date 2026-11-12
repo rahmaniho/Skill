@@ -26,6 +26,18 @@ EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 MAILTO_RE = re.compile(r"mailto:([^\"'>\s?]+)", re.I)
 HREF_RE = re.compile(r"<a\s[^>]*?href\s*=\s*[\"']([^\"']+)[\"'][^>]*>(.*?)</a>", re.I | re.S)
 
+# ایمیل‌های «مبهم» که سایت‌ها برای فرار از هرزنامه می‌نویسند: info [at] site [dot] com
+OBFUSCATED_RE = re.compile(
+    r"([A-Za-z0-9._%+-]{2,64})\s*[\[(]\s*(?:at|@|اَت)\s*[\])]\s*"
+    r"([A-Za-z0-9-]{2,63}(?:\.[A-Za-z0-9-]{2,63})*)\s*[\[(]\s*(?:dot|\.)\s*[\])]\s*"
+    r"([A-Za-z]{2,10})", re.I)
+
+SOCIAL_HOSTS = {
+    "instagram": ("instagram.com", "instagr.am"),
+    "facebook": ("facebook.com", "fb.com", "fb.me"),
+    "linkedin": ("linkedin.com", "lnkd.in"),
+}
+
 SOCIAL_RE = {
     "instagram": re.compile(r"https?://(?:www\.)?instagram\.com/([A-Za-z0-9_.]+)", re.I),
     "facebook": re.compile(r"https?://(?:www\.|m\.|web\.)?facebook\.com/([A-Za-z0-9_.\-]+)", re.I),
@@ -96,6 +108,9 @@ def extract_emails(html: str, site_url: str = "", limit: int = 3) -> list[str]:
     """ایمیل‌ها از mailto و متن صفحه؛ هرزنامه‌ها حذف و ایمیل هم‌دامنه اولویت دارد."""
     site = host_of(site_url)
     found: list[str] = []
+    # «info [at] site [dot] com» → info@site.com (خیلی از سایت‌های ایرانی همین را می‌نویسند)
+    for local, domain, tld in OBFUSCATED_RE.findall(html or ""):
+        found.append(f"{local}@{domain}.{tld}".lower())
     for raw in MAILTO_RE.findall(html or "") + EMAIL_RE.findall(html or ""):
         email = urllib.parse.unquote(raw).strip().lower()
         local, _, domain = email.rpartition("@")
@@ -153,6 +168,47 @@ def detect_signals(html: str) -> dict[str, bool]:
 
 
 # ── نرمال‌سازی ────────────────────────────────────────────────────────────────
+CHANNELS = ("website", "email_primary", "phone", "social", "location", "address")
+
+
+def social_from_url(row: dict) -> None:
+    """اگر «وب‌سایت» خودش پروفایل شبکه اجتماعی بود، همان را در ستون درستش بگذار.
+
+    در دادهٔ واقعی بارها دیده شده: `website = https://instagram.com/cafe…` ولی
+    ستون instagram خالی است؛ نتیجه: لید «بدون شبکه اجتماعی» شمرده می‌شود و کانال
+    تماس اشتباه انتخاب می‌شود.
+    """
+    for field in ("website", "link"):
+        url = str(row.get(field) or "").strip()
+        if not url:
+            continue
+        host = host_of(url)
+        for platform, hosts in SOCIAL_HOSTS.items():
+            if any(host == h or host.endswith("." + h) for h in hosts):
+                href = url if url.startswith("http") else "https://" + url
+                if not row.get(platform):
+                    row[platform] = href
+                break
+
+
+def refresh_flags(row: dict) -> dict:
+    """پرچم‌های «دارد/ندارد» و درصد کامل بودن را از داده بازمی‌سازد.
+
+    یک تعریف واحد برای همهٔ مسیرها (موتور، غنی‌سازی، غنی‌سازی مجدد)؛ قبلاً بعد از
+    پیدا شدن ایمیل، درصد کامل بودن با مخرج ۴ به‌جای ۶ حساب می‌شد و عدد پرت می‌داد.
+    """
+    row["has_website"] = bool(row.get("website"))
+    row["has_email"] = bool(row.get("email_primary"))
+    row["has_phone"] = bool(row.get("phone"))
+    row["has_social"] = any(row.get(k) for k in ("instagram", "facebook", "linkedin"))
+    channels = sum([row["has_website"], row["has_email"], row["has_phone"],
+                    row["has_social"], bool(row.get("has_location") or row.get("location")),
+                    bool(row.get("address"))])
+    row["contact_channels"] = channels
+    row["completeness"] = round(100 * channels / len(CHANNELS))
+    return row
+
+
 def normalize_phone(phone: str) -> str:
     """یک‌دست‌سازی شماره: حذف نویز، فرمت بین‌المللی در صورت امکان، تشخیص موبایل ایران."""
     raw = (phone or "").strip()
@@ -245,15 +301,8 @@ def normalize_row(row: dict) -> dict:
     if "status" in out and str(out.get("status")) not in (
             "new", "contacted", "replied", "qualified", "won", "lost", "unsubscribed"):
         out["place_status"] = str(out.pop("status"))
-    out["has_website"] = bool(out["website"])
-    out["has_email"] = bool(out["email_primary"])
-    out["has_phone"] = bool(out["phone"])
-    out["has_social"] = any(out.get(k) for k in ("instagram", "facebook", "linkedin"))
-    # کامل بودن اطلاعات: ۶ کانال/فیلد کلیدی (سایت، ایمیل، تلفن، شبکه اجتماعی، لوکیشن، نشانی)
-    out["contact_channels"] = sum([out["has_website"], out["has_email"], out["has_phone"],
-                                   out["has_social"], out["has_location"], bool(out["address"])])
-    out["completeness"] = round(100 * out["contact_channels"] / 6)
-    return out
+    social_from_url(out)
+    return refresh_flags(out)
 
 
 # ── اجرای موازی غنی‌سازی ──────────────────────────────────────────────────────
@@ -290,28 +339,27 @@ def enrich_rows(rows: list[dict], *, socials: bool = True, deep_emails: bool = T
         home = _fetch_cached(row["website"])
         if not home:
             return
-        # ایمیل عمیق
-        if deep_emails and not row.get("email_primary"):
-            found = extract_emails(home, row["website"])
-            if not found:
-                pages = "".join(_fetch_html(u, timeout=8) for u in contact_links(home, row["website"]))
-                found = extract_emails(pages, row["website"])
+        need_email = deep_emails and not row.get("email_primary")
+        need_social = socials and not any(row.get(k) for k in ("instagram", "facebook", "linkedin"))
+        # صفحه‌های «تماس/درباره» یک‌بار گرفته می‌شوند و هم برای ایمیل هم شبکه اجتماعی
+        # استفاده می‌شوند (قبلاً فقط وقتی ایمیل پیدا نمی‌شد و فقط برای ایمیل).
+        pages = home
+        if need_email or (need_social and socials):
+            links = contact_links(home, row["website"])
+            pages = home + "".join(_fetch_html(u, timeout=6) for u in links)
+        if need_email:
+            found = extract_emails(home, row["website"]) or extract_emails(pages, row["website"])
             if found:
                 row["emails"] = ", ".join(found)
                 row["email_primary"] = found[0]
-                row["has_email"] = True
-                row["contact_channels"] = sum([row["has_website"], row["has_email"], row["has_phone"], row["has_social"]])
-                row["completeness"] = round(100 * row["contact_channels"] / 4)
-        # شبکه‌های اجتماعی
         if socials:
-            found_socials = find_socials(home)
-            for key, value in found_socials.items():
+            for key, value in find_socials(pages).items():
                 if value and not row.get(key):
                     row[key] = value
-            row["has_social"] = any(row.get(k) for k in ("instagram", "facebook", "linkedin"))
-        # سیگنال‌های سایت
         if signals:
             row["signals"] = detect_signals(home)
+        social_from_url(row)
+        refresh_flags(row)
 
     done = 0
     def guarded(row: dict) -> None:

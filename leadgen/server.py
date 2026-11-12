@@ -665,6 +665,21 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/worker/tick" and method == "POST":
             return self._worker_tick(query)
 
+        match = re.fullmatch(r"/api/runs/([\w\-]+)/enrich", path)
+        if match and method == "POST":
+            body = self._read_json()
+            # بودجه داخل سقف تابع serverless می‌ماند؛ بار بعدی بقیه را کامل می‌کند.
+            budget = max(5, min(45, _int(body.get("budget"), 25)))
+            limit = max(0, min(400, _int(body.get("limit"), 0)))
+            try:
+                result = pipeline.enrich_run(
+                    match.group(1), budget_s=float(budget), limit=limit,
+                    socials=body.get("socials", True) is not False,
+                    emails=body.get("emails", True) is not False)
+            except engine_mod.EngineError as exc:
+                raise ApiError(str(exc), 404)
+            return self._json(result)
+
         match = re.fullmatch(r"/api/runs/([\w\-]+)/rescore", path)
         if match and method == "POST":
             body = self._read_json()

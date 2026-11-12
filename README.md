@@ -230,6 +230,7 @@ python3 -m leadgen.cli export <run-id> --fmt xlsx --segment hot --cols contact
 python3 -m leadgen.cli campaign <run-id> --channel whatsapp --out messages.csv
 python3 -m leadgen.cli score-file my-leads.csv --profile marketing   # فهرست موجود شما
 python3 -m leadgen.cli rescore <run-id> --profile b2b_supply         # بدون اسکراپ دوباره
+curl -X POST "$APP/api/runs/<run-id>/enrich" -d '{"budget":25}'      # ایمیل/شبکه اجتماعی بیشتر
 ```
 
 کلیدهای پرکاربرد `run`:
@@ -389,6 +390,7 @@ python3 -m leadgen.cli run --all-niches --city "مشهد" --groups "خدمات �
 | GET | `/api/runs/{id}/export?fmt=xlsx\|csv\|json` | خروجی فایل (با `segment`، `what=campaign`، `full=1`، **`cols=lead\|contact\|location\|all`**) |
 | GET | `/api/runs/{id}/campaign?channel=email\|whatsapp\|sms\|instagram` | متن کمپین |
 | POST | `/api/runs/{id}/rescore` | امتیازدهی مجدد با پروفایل دیگر |
+| POST | `/api/runs/{id}/enrich` | **غنی‌سازی مجدد** لیدهای ذخیره‌شده (ایمیل/شبکه اجتماعی از سایت خودشان، بدون اسکراپ؛ بدنه: `{budget:25, limit:0, socials:true, emails:true}`) |
 | GET | `/api/leads/{id}` | جزئیات لید + breakdown امتیاز + همه متن‌های کمپین |
 | PATCH | `/api/leads/{id}` | تغییر وضعیت پیگیری + یادداشت |
 | POST | `/api/import` | ورود CSV/JSON/multipart → امتیازدهی فوری |

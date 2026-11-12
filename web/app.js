@@ -375,6 +375,26 @@ async function loadRuns() {
     };
   } catch (err) { toast(err.message, "err"); }
 }
+async function reEnrichRun() {
+  const runId = state.currentRun || $("#leadRunSelect").value;
+  if (!runId) return toast("اول یک اجرا انتخاب کن", "err");
+  const btn = $("#enrichRun");
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "⏳ در حال بررسی سایت‌ها…";
+  try {
+    const r = await api(`/api/runs/${runId}/enrich`, { method: "POST", body: { budget: 25 } });
+    toast(`ایمیل ${fa(r.email.before)}→${fa(r.email.after)} · شبکه اجتماعی ${fa(r.social.before)}→${fa(r.social.after)}`, "ok");
+    await loadLeads();
+    await loadAnalysis();
+  } catch (err) {
+    toast(err.message, "err");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
 function renderGlobalStats(stats) {
   if (!stats) return;
   $("#globalStats").innerHTML = `
@@ -489,6 +509,8 @@ $$(".bulk [data-export]").forEach((btn) => btn.addEventListener("click", () => {
   if (kind === "campaign") return download(`/api/runs/${state.currentRun}/export?what=campaign&channel=${$("#campChannel").value || "email"}`, `campaign-${state.currentRun}.csv`);
   download(`/api/runs/${state.currentRun}/export?fmt=${kind}&cols=${cols}`, `leads-${state.currentRun}.${kind === "xlsx" ? "xlsx" : kind}`);
 }));
+const enrichButton = $("#enrichRun");
+if (enrichButton) enrichButton.addEventListener("click", reEnrichRun);
 
 /* ── کشوی جزئیات ─────────────────────────────────────────────────────────── */
 async function openDrawer(leadId) {

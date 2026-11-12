@@ -773,6 +773,81 @@ def rescore_run(run_id: str, profile: str, on_progress: ProgressFn | None = None
             "hot": seg["hot"]["count"], "profile": profile}
 
 
+def enrich_run(run_id: str, *, budget_s: float = 20.0, limit: int = 0,
+               socials: bool = True, emails: bool = True,
+               on_progress: ProgressFn | None = None) -> dict:
+    """غنی‌سازی مجدد لیدهای یک اجرای ذخیره‌شده — بدون اسکراپ دوباره.
+
+    چرا لازم است؟ لیدهای OSM اغلب سایت دارند ولی ایمیل/شبکه اجتماعی‌شان در همان
+    اجرا استخراج نشده (بودجهٔ زمانی تپش کوتاه بود). حالا کاربر می‌تواند بعداً
+    همان اجرا را «کامل‌تر» کند؛ ردیف‌های کامل‌شده دوباره واکشی نمی‌شوند، پس اجرای
+    دوباره ارزان و ایمن است (idempotent).
+    """
+    storage.init_db()
+    run = storage.get_run(run_id)
+    if not run:
+        raise EngineError(f"اجرای {run_id} پیدا نشد.")
+    rows = storage.all_leads_for_export(run_id)
+    if not rows:
+        raise EngineError("این اجرا لیدی ندارد.")
+
+    before = {"email": sum(1 for r in rows if r.get("email_primary")),
+              "social": sum(1 for r in rows if any(r.get(k) for k in
+                                                   ("instagram", "facebook", "linkedin")))}
+    # نامزدها: سایت دارند و یا ایمیل ندارند یا شبکه اجتماعی؛ بقیه کاری برای انجام ندارند
+    todo = [r for r in rows
+            if r.get("website")
+            and (not r.get("email_primary") or not any(
+                r.get(k) for k in ("instagram", "facebook", "linkedin")))]
+    if limit and limit > 0:
+        todo = todo[:int(limit)]
+
+    _progress(on_progress, run_id, {
+        "stage": "enrich", "status": "enriching", "percent": 20,
+        "message": f"غنی‌سازی مجدد {len(todo)} کسب‌وکار (از {len(rows)} لید)"})
+    stats = enrich.enrich_rows(todo, socials=socials, deep_emails=emails, signals=False,
+                               allow_network=True, budget_s=budget_s,
+                               on_progress=lambda p: _progress(on_progress, run_id,
+                                                               {**p, "stage": "enrich"}))
+    if todo:
+        storage.save_leads(run_id, todo)
+
+    # همهٔ ردیف‌ها یک‌بار دیگر نرمال می‌شوند (پرچم/درصد/شبکه از آدرس سایت) و
+    # امتیاز با همان پروفایل قبلی بازمحاسبه می‌شود تا شکاف‌ها و بخش‌ها درست بمانند.
+    saved = storage.all_leads_for_export(run_id)
+    saved = [enrich.normalize_row(r) for r in saved]
+    profile = run.get("profile") or "generic"
+    niche = niches.find_niche(run.get("niche_id") or run.get("niche_fa") or "")
+    saved = scoring.score_all(saved, profile=profile, niche=niche)
+    storage.save_leads(run_id, saved)
+
+    saved = storage.all_leads_for_export(run_id)
+    after = {"email": sum(1 for r in saved if r.get("email_primary")),
+             "social": sum(1 for r in saved if any(r.get(k) for k in
+                                                   ("instagram", "facebook", "linkedin")))}
+    seg = analytics.segments(saved)
+    pack = analytics.build(saved, dict(run, profile=profile, hot=seg["hot"]["count"],
+                                      warm=seg["warm"]["count"], cold=seg["cold"]["count"]), niche)
+    old_pack = run.get("analytics") or {}
+    for key in ("cities", "warnings"):        # بستهٔ قبلی را از دست نمی‌دهیم
+        if old_pack.get(key):
+            pack[key] = old_pack[key]
+    note = (f"غنی‌سازی مجدد: ایمیل {before['email']}→{after['email']}، "
+            f"شبکه اجتماعی {before['social']}→{after['social']} "
+            f"({len(todo)} کسب‌وکار بررسی شد).")
+    pack["warnings"] = list(pack.get("warnings") or []) + [note]
+    storage.update_run(run_id, analytics=pack, hot=seg["hot"]["count"],
+                       warm=seg["warm"]["count"], cold=seg["cold"]["count"],
+                       avg_score=pack["avg_score"])
+    _progress(on_progress, run_id, {"stage": "done", "status": "done", "percent": 100,
+                                    "message": note})
+    return {"ok": True, "run_id": run_id, "checked": len(todo), "total": len(saved),
+            "email": {"before": before["email"], "after": after["email"]},
+            "social": {"before": before["social"], "after": after["social"]},
+            "skipped_due_time": int(stats.get("skipped_due_time") or 0),
+            "note": note, "analytics": pack}
+
+
 def import_leads(rows: list[dict], *, niche_query: str = "", city: str = "",
                  profile: str = "generic", source: str = "import") -> dict:
     """فهرست موجود (CSV/JSON) را می‌گیرد و همان لایه هوش را رویش اجرا می‌کند.
