@@ -383,8 +383,19 @@ async function reEnrichRun() {
   btn.disabled = true;
   btn.textContent = "⏳ در حال بررسی سایت‌ها…";
   try {
-    const r = await api(`/api/runs/${runId}/enrich`, { method: "POST", body: { budget: 25 } });
-    toast(`ایمیل ${fa(r.email.before)}→${fa(r.email.after)} · شبکه اجتماعی ${fa(r.social.before)}→${fa(r.social.after)}`, "ok");
+    // اول صف: کار در پایگاه‌داده می‌ماند و کرون/ورکر (بدون مرورگر) تمامش می‌کند؛
+    // خودِ تپش هم اگر ورکر فعالی نباشد همین‌جا اجرا می‌شود.
+    const queued = await api(`/api/runs/${runId}/enrich`, { method: "POST", body: { queue: true, budget: 30 } });
+    toast("غنی‌سازی در صف رفت — چند لحظه بعد نتیجه را می‌بینید", "ok");
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const detail = await api(`/api/runs/${runId}`);
+      const notes = ((detail.analytics || {}).warnings || []).filter((w) => w.includes("غنی‌سازی مجدد"));
+      if (notes.length) {
+        toast(notes[notes.length - 1], "ok");
+        break;
+      }
+    }
     await loadLeads();
     await loadAnalysis();
   } catch (err) {
@@ -392,6 +403,7 @@ async function reEnrichRun() {
   } finally {
     btn.disabled = false;
     btn.textContent = label;
+    if (queued && queued.job_id) toast("برای دیدن کارهای صف به تب «عملیات» سر بزنید", "ok");
   }
 }
 

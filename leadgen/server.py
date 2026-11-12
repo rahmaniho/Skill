@@ -670,6 +670,13 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_json()
             # بودجه داخل سقف تابع serverless می‌ماند؛ بار بعدی بقیه را کامل می‌کند.
             budget = max(5, min(45, _int(body.get("budget"), 25)))
+            if body.get("queue") is True or _flag(query, "queue") is True:
+                # اجرای بزرگ‌تر از سقف تابع: کار به صف می‌رود و کرون/ورکر تمامش می‌کند
+                if not storage.get_run(match.group(1)):
+                    raise ApiError("اجرای موردنظر پیدا نشد.", 404)
+                return self._json(jobs.enqueue_enrich(
+                    match.group(1), budget=float(budget),
+                    limit=_int(body.get("limit"), 0)), 202)
             limit = max(0, min(400, _int(body.get("limit"), 0)))
             try:
                 result = pipeline.enrich_run(
@@ -1160,16 +1167,21 @@ class Handler(BaseHTTPRequestHandler):
         # سهم غنی‌سازی، واکشی سایت‌ها برای پیدا کردن ایمیل و شبکه‌های اجتماعی است؛
         # بدون آن، لیدهای OSM معمولاً بدون ایمیل می‌مانند. با بودجهٔ محدود و
         # «توقف در مهلت» (enrich.py) داخل سقف ۶۰ثانیه‌ای تابع جا می‌شود.
-        enrich_budget = 12.0 if budget >= 40 else 0.0
-        engine_budget = max(12, int(budget - (enrich_budget + 12)))
-        request["max_time"] = min(_int(request.get("max_time"), 60), engine_budget)
-        request["enrich_live"] = bool(enrich_budget)
-        if enrich_budget:
-            request["enrich_budget"] = enrich_budget
+        task = str(request.get("task") or "").strip().lower()
+        if task == "enrich":
+            # کار غنی‌سازی مجدد بودجهٔ خودش را دارد؛ موتور اجرا نمی‌شود.
+            request["enrich_budget"] = max(8.0, min(40.0, float(budget) - 10.0))
         else:
-            request.pop("enrich_budget", None)
-        if _int(request.get("limit"), 0):
-            request["limit"] = min(_int(request.get("limit"), 40), 60)
+            enrich_budget = 12.0 if budget >= 40 else 0.0
+            engine_budget = max(12, int(budget - (enrich_budget + 12)))
+            request["max_time"] = min(_int(request.get("max_time"), 60), engine_budget)
+            request["enrich_live"] = bool(enrich_budget)
+            if enrich_budget:
+                request["enrich_budget"] = enrich_budget
+            else:
+                request.pop("enrich_budget", None)
+            if _int(request.get("limit"), 0):
+                request["limit"] = min(_int(request.get("limit"), 40), 60)
         job["request"] = request
 
         result = worker_mod.process_job(job, quiet=True)

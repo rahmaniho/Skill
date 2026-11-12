@@ -65,6 +65,8 @@ def process_job(job: dict, *, engine_mode: str | None = None, quiet: bool = Fals
     job_id = job["id"]
     run_id = job.get("run_id") or job_id
     request_dict = dict(job.get("request") or {})
+    if str(request_dict.get("task") or "").strip().lower() == "enrich":
+        return _process_enrich_job(job, request_dict, quiet=quiet)
     request_dict["run_id"] = run_id
     if engine_mode:
         request_dict["engine_mode"] = engine_mode
@@ -111,6 +113,47 @@ def process_job(job: dict, *, engine_mode: str | None = None, quiet: bool = Fals
             traceback.print_exc()
         return {"job_id": job_id, "run_id": run_id, "ok": False, "error": detail,
                 "seconds": round(time.time() - started, 1)}
+
+
+def _process_enrich_job(job: dict, request_dict: dict, *, quiet: bool = False) -> dict:
+    """کارِ «غنی‌سازی مجدد»: لیدهای یک اجرای موجود را کامل‌تر می‌کند."""
+    job_id = job["id"]
+    target = str(request_dict.get("target_run") or "").strip()
+    budget = float(request_dict.get("enrich_budget") or 25.0)
+    limit = int(request_dict.get("limit") or 0)
+    started = time.time()
+    if not target:
+        storage.finish_job(job_id, "failed", "شناسهٔ اجرای مقصد داده نشده")
+        return {"job_id": job_id, "ok": False, "task": "enrich",
+                "error": "شناسهٔ اجرای مقصد داده نشده"}
+    _log(f"✨ غنی‌سازی مجدد اجرای {target} (کار {job_id}، بودجهٔ {budget:.0f} ثانیه)", quiet=quiet)
+    state: dict = {"_last_sent": 0.0}
+
+    def on_progress(payload: dict) -> None:
+        state.update({k: v for k, v in (payload or {}).items() if not k.startswith("_")})
+        _throttled_heartbeat(job_id, state)
+
+    try:
+        result = pipeline.enrich_run(target, budget_s=budget, limit=limit,
+                                     on_progress=on_progress)
+    except Exception as exc:
+        detail = f"{type(exc).__name__}: {exc}"
+        storage.finish_job(job_id, "failed", detail)
+        _log(f"✖ غنی‌سازی مجدد شکست خورد — {detail}", quiet=quiet)
+        return {"job_id": job_id, "run_id": target, "ok": False, "task": "enrich",
+                "error": detail, "seconds": round(time.time() - started, 1)}
+    storage.finish_job(job_id, "done")
+    summary = {
+        "job_id": job_id, "run_id": target, "ok": True, "task": "enrich",
+        "total": result.get("total", 0), "hot": 0,
+        "seconds": round(time.time() - started, 1), "engine": "enrich",
+        "empty": not result.get("total"),
+        "warnings": [result.get("note", "")], "exports": [],
+        "checked": result.get("checked", 0),
+        "email": result.get("email", {}), "social": result.get("social", {}),
+    }
+    _log(f"✔ غنی‌سازی مجدد — {result.get('note', '')}", quiet=quiet)
+    return summary
 
 
 def _deliver_after_run(summary: dict, *, quiet: bool = False) -> None:
