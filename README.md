@@ -690,7 +690,9 @@ curl -s "http://localhost:8000/api/diag/osm?city=اوز&all=1&deep=1"   # جار
 ```
 
 پاسخ: `rows`، `seconds`، `filters`، `bbox`، `with_phone/with_website/with_address/with_social`،
-`categories` و `sample` (تا ۱۲ ردیف). همین سنجش در رابط «نُوا» هم هست:
+`categories` و `sample` (تا ۱۲ ردیف). پارامترهای اختیاری: `limit` (۲۰–۸۰۰)، `deep=1`
+(شکستن محدوده)، `timeout` (۸–۴۵ ثانیه؛ پیش‌فرض ۲۲ — تا داخل سقف ۶۰ثانیه‌ای تابع
+serverless بماند). همین سنجش در رابط «نُوا» هم هست:
 **بیشتر → دادهٔ واقعی → «یه پرسش زنده از نقشه»**.
 
 > `GET /api/health` عمداً سریع است و فقط کش را می‌خواند؛ برای سنجش واقعی

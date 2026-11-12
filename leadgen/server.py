@@ -883,16 +883,19 @@ class Handler(BaseHTTPRequestHandler):
             label = niche_obj.fa
         limit = max(20, min(_int(query.get("limit", 300), 300), 800))
         deep = _flag(query, "deep") is True
+        # تابع serverless سقف زمانی دارد؛ سنجش زنده هم باید داخل همان سقف بماند،
+        # وگرنه به‌جای «جواب واقعی» یک 504 می‌بینیم. پیش‌فرض ۲۲ ثانیه، قابل تنظیم.
+        probe_timeout = min(45, max(8, _int(query.get("timeout", 22), 22)))
         started = time.time()
         try:
             if deep:          # جاروی کامل: اگر نتیجه به سقف خورد، محدوده قطعه‌قطعه می‌شود
                 rows = osm_provider.overpass_search_area(
                     filters, bbox=bbox, limit=osm_provider.overpass_limit_for(bbox, limit),
-                    input_id="diag", tiles=4, max_rows=4000,
-                    budget_s=min(75.0, float(config.OVERPASS_TIMEOUT) * 2.5))
+                    input_id="diag", tiles=4, max_rows=4000, timeout=probe_timeout,
+                    budget_s=float(probe_timeout) + 12)
             else:
                 rows = osm_provider.overpass_search(filters, bbox=bbox, limit=limit,
-                                                   input_id="diag")
+                                                   input_id="diag", timeout=probe_timeout)
             error = ""
         except Exception as exc:                          # noqa: BLE001 — گزارش روشن
             rows, error = [], f"{type(exc).__name__}: {exc}"[:300]
@@ -906,6 +909,7 @@ class Handler(BaseHTTPRequestHandler):
             "province": area.get("province", ""), "niche": label,
             "mode": config.OSM_MODE, "bbox": [round(x, 4) for x in bbox],
             "filters": len(filters), "rows": len(rows), "seconds": elapsed, "deep": deep,
+            "timeout": probe_timeout,
             "with_phone": sum(1 for r in rows if r.get("phone")),
             "with_website": sum(1 for r in rows if r.get("website")),
             "with_address": sum(1 for r in rows if r.get("address")),
