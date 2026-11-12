@@ -47,7 +47,11 @@ def _throttled_heartbeat(job_id: str, state: dict):
     if terminal or fresh and (jumped or changed or percent >= 100):
         payload = {k: v for k, v in state.items() if not k.startswith("_")}
         try:
-            storage.heartbeat_job(job_id, payload, payload.get("status"))
+            # «status» در payload پیشرفت یعنی مرحلهٔ اجرا («working»، «enrich»…) و
+            # نباید در ستون jobs.status نوشته شود؛ وگرنه کار به وضعیت نامعتبر
+            # «working» می‌رفت، از شمارش/بازپس‌گیری صف بیرون می‌افتاد و صف
+            # برای همیشه «خالی» دیده می‌شد. وضعیت کار را فقط claim/finish می‌نویسند.
+            storage.heartbeat_job(job_id, payload, None)
         except Exception:  # pragma: no cover - شبکه ناپایدار؛ اجرا نباید بمیرد
             pass
         state["_last_sent"] = now

@@ -148,6 +148,22 @@ class LiveQueueTest(unittest.TestCase):
         self.assertEqual(run["run_id"], result["run_id"])
 
     # ── محافظ‌ها ─────────────────────────────────────────────────────────────
+    def test_03d_progress_heartbeat_never_sets_job_status(self):
+        """heartbeat فقط پیشرفت را می‌نویسد، نه وضعیت کار («working» ممنوع)."""
+        from leadgen import storage, worker
+
+        calls = []
+        original = storage.heartbeat_job          # worker از مسیر storage صدا می‌زند
+        storage.heartbeat_job = lambda job_id, progress=None, status=None: calls.append(
+            (job_id, status)) or True
+        try:
+            worker._throttled_heartbeat("job-9", {"stage": "working", "status": "working",
+                                                  "percent": 50})
+        finally:
+            storage.heartbeat_job = original
+        self.assertTrue(calls)
+        self.assertEqual(None, calls[0][1])
+
     def test_03c_empty_run_message_is_actionable(self):
         """اجرای خالی (محدودهٔ بدون داده) پیام راهنما می‌دهد، نه «۰ لید» خشک."""
         message = server_mod.Handler._tick_message({"ok": True, "total": 0, "empty": True})

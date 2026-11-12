@@ -451,7 +451,10 @@ declare
 begin
     update public.jobs
        set updated_at = now(),
-           status = coalesce(p_status, status)
+           -- فقط وضعیت‌های معتبر کار؛ payload پیشرفت «working»/«enrich» می‌فرستد
+           -- و پیش‌تر همین باعث می‌شد کار از شمارش و بازپس‌گیری صف بیرون بیفتد.
+           status = case when p_status in ('pending', 'running', 'done', 'failed')
+                         then p_status else status end
      where id = p_id;
     get diagnostics v_found = row_count;
 
@@ -535,7 +538,7 @@ begin
     with stale as (
         select id, attempts, max_attempts
         from public.jobs
-        where status = 'running'
+        where status in ('running', 'working')
           and coalesce(started_at, extract(epoch from now()))
               < extract(epoch from now()) - greatest(coalesce(p_seconds, 1800), 30)
     ), fixed as (
@@ -566,13 +569,16 @@ stable
 as $$
     select jsonb_build_object(
         'pending', (select count(*)::integer from public.jobs where status = 'pending'),
-        'running', (select count(*)::integer from public.jobs where status = 'running'),
+        -- 'working' وضعیت قدیمیِ پیشرفت بود که در ستون کار نوشته می‌شد؛
+        -- تا پاک‌سازی کامل، همان «در حال اجرا» شمرده می‌شود.
+        'running', (select count(*)::integer from public.jobs where status in ('running', 'working')),
         'done',    (select count(*)::integer from public.jobs where status = 'done'),
         'failed',  (select count(*)::integer from public.jobs where status = 'failed'),
         'oldest_wait_s', coalesce((select round(max(extract(epoch from now()) - created_at)::numeric, 0)::integer
                                    from public.jobs where status = 'pending'), 0),
         'workers', coalesce((select jsonb_agg(distinct worker) from public.jobs
-                             where status = 'running' and worker is not null), '[]'::jsonb));
+                             where status in ('running', 'working') and worker is not null),
+                            '[]'::jsonb));
 $$;
 
 -- ── نوشتن/به‌روزرسانی اجرا ──────────────────────────────────────────────────
