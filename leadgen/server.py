@@ -87,6 +87,71 @@ _PROGRESS_LOCK = threading.Lock()
 MAX_PROGRESS = 400
 
 
+# ── محافظ‌های تجاری ───────────────────────────────────────────────────────────
+# مسیرهای عمومی که رابط برای بالا آمدن لازم دارد (حتی وقتی کد دسترسی گذاشته شده)
+_PUBLIC_API = ("/api/health", "/api/meta", "/api/engine", "/api/worker",
+               "/api/smart/", "/api/regions", "/api/cities", "/api/catalog")
+_RUN_HITS: dict[str, list[float]] = {}
+_HITS_LOCK = threading.Lock()
+WORKER_ONLINE_SECONDS = 180          # اگر کار در حال اجرا جدیدتر از این باشد، ورکر زنده است
+
+
+def _client_ip(handler) -> str:
+    forwarded = (handler.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+    return forwarded or (handler.client_address[0] if handler.client_address else "?")
+
+
+def _access_ok(handler, path: str, query: dict) -> bool:
+    """اگر LEADGEN_ACCESS_CODE گذاشته شده باشد، همهٔ APIهای داده قفل می‌شوند."""
+    if not config.ACCESS_CODE:
+        return True
+    if path.startswith(_PUBLIC_API):
+        return True
+    given = (handler.headers.get("X-Leadgen-Code") or query.get("code") or "").strip()
+    return bool(given) and given == config.ACCESS_CODE
+
+
+def _rate_hit(ip: str) -> bool:
+    """سقف اجرا در ساعت برای هر IP (بهترین‌تلاش، در حافظهٔ همین نمونه)."""
+    limit = config.RATE_RUNS_PER_HOUR
+    if not limit:
+        return True
+    now = time.time()
+    with _HITS_LOCK:
+        hits = [t for t in _RUN_HITS.get(ip, []) if now - t < 3600]
+        if len(hits) >= limit:
+            _RUN_HITS[ip] = hits
+            return False
+        hits.append(now)
+        _RUN_HITS[ip] = hits
+        if len(_RUN_HITS) > 5000:                  # جلوگیری از رشد بی‌مرز حافظه
+            for key in list(_RUN_HITS)[:2500]:
+                _RUN_HITS.pop(key, None)
+    return True
+
+
+def worker_online() -> bool:
+    """آیا ورکر بیرونی (Codespace/Actions) همین حالا روی کاری کار می‌کند؟"""
+    try:
+        running = storage.list_jobs("running", limit=5)
+    except Exception:
+        return False
+    now = time.time()
+    for job in running:
+        stamp = job.get("updated_at") or job.get("started_at") or 0
+        try:
+            if now - float(stamp) < WORKER_ONLINE_SECONDS:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def self_drive_allowed() -> bool:
+    """اجرای صف از سمت رابط مجاز است؟ (وقتی ورکر بیرونی نیست و SELF_DRIVE روشن است)"""
+    return bool(config.SELF_DRIVE and jobs.queue_mode_active())
+
+
 def record_progress(run_id: str, payload: dict) -> None:
     with _PROGRESS_LOCK:
         _PROGRESS[run_id] = {**payload, "ts": time.time()}
@@ -109,7 +174,7 @@ def _persisted_progress(run_id: str) -> dict:
     payload.setdefault("status", run.get("status"))
     if run.get("status") == "queued":
         position = jobs.queue_position(run_id) or {}
-        payload.setdefault("message", position.get("message") or "در صف اجرا — منتظر ورکر…")
+        payload.setdefault("message", position.get("message") or "در صف اجرا — منتظر موتور…")
         payload["queue"] = position
     return payload
 
@@ -125,9 +190,9 @@ def get_progress(run_id: str) -> dict:
         local = dict(_PROGRESS.get(run_id) or {})
     persisted = _persisted_progress(run_id)
     if not persisted:
-        return local
+        return _with_self_drive(local)
     if not local:
-        return persisted
+        return _with_self_drive(persisted)
 
     def stamp(payload: dict) -> float:
         try:
@@ -135,7 +200,18 @@ def get_progress(run_id: str) -> dict:
         except (TypeError, ValueError):
             return 0.0
 
-    return persisted if stamp(persisted) >= stamp(local) else local
+    return _with_self_drive(persisted if stamp(persisted) >= stamp(local) else local)
+
+
+def _with_self_drive(payload: dict) -> dict:
+    """اگر کاری در صف مانده و ورکر بیرونی نیست، به رابط بگو خودش موتور را بیدار کند."""
+    if not payload:
+        return payload
+    if str(payload.get("status") or "") in ("queued", "pending") and \
+            self_drive_allowed() and not worker_online():
+        payload = dict(payload)
+        payload["action"] = "tick"
+    return payload
 
 
 MIME = {
@@ -275,6 +351,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _route_get(self) -> None:
         path, query = self._path, self._query
+        if path.startswith("/api/") and not _access_ok(self, path, query):
+            raise ApiError("🔒 برای دیدن داده‌ها کد دسترسی لازم است.", 401)
         storage.init_db()
 
         # رابط نسل بعد (پیش‌فرض) روی / ؛ داشبورد حرفه‌ای روی /studio/
@@ -285,6 +363,11 @@ class Handler(BaseHTTPRequestHandler):
                     "/manifest.webmanifest", "/favicon.svg", "/demo-data.json") \
                 or path.startswith("/assets/") or path.startswith("/icons/"):
             return self._static(path.lstrip("/"), root_dir)
+        # صفحه‌های حقوقی (برای عرضهٔ تجاری و نصب به‌عنوان اپ لازم‌اند)
+        if path in ("/terms", "/terms/", "/terms.html"):
+            return self._static("terms.html", NOVA_DIR)
+        if path in ("/privacy", "/privacy/", "/privacy.html"):
+            return self._static("privacy.html", NOVA_DIR)
         if path in ("/nova", "/nova/", "/nova/index.html"):
             return self._static("index.html", NOVA_DIR)
         if path.startswith("/nova/"):
@@ -415,6 +498,22 @@ class Handler(BaseHTTPRequestHandler):
         if match:
             return self._json({"progress": get_progress(match.group(1))})
 
+        if path == "/api/worker":
+            stats = storage.queue_stats()
+            active_engine = pipeline.engine_status(None)
+            return self._json({
+                "queue_active": jobs.queue_mode_active(),
+                "self_drive": self_drive_allowed(),
+                "worker_online": worker_online(),
+                "engine": active_engine.get("active"),
+                "engine_reason": active_engine.get("reason"),
+                "live_data": bool(active_engine.get("live")),
+                "stats": stats,
+                "note": ("همین رابط صف را اجرا می‌کند (بدون ورکر بیرونی)" if
+                         self_drive_allowed() and not worker_online() else
+                         "ورکر بیرونی فعال است" if worker_online() else "ورکر بیرونی تنظیم نشده"),
+            })
+
         if path == "/api/queue":
             return self._json(self._queue_snapshot(query))
 
@@ -472,10 +571,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def _route_write(self, method: str = "POST") -> None:
         path, query = self._path, self._query
+        if path.startswith("/api/") and not _access_ok(self, path, query):
+            raise ApiError("🔒 برای این کار کد دسترسی لازم است.", 401)
         storage.init_db()
 
         if path == "/api/runs" and method == "POST":
+            if not _rate_hit(_client_ip(self)):
+                raise ApiError(
+                    f"سقف اجرا در ساعت پر شد ({config.RATE_RUNS_PER_HOUR} اجرا). "
+                    "کمی بعد دوباره امتحان کن.", 429)
             return self._start_run(self._read_json())
+
+        if path == "/api/worker/tick" and method == "POST":
+            return self._worker_tick(query)
 
         match = re.fullmatch(r"/api/runs/([\w\-]+)/rescore", path)
         if match and method == "POST":
@@ -825,6 +933,56 @@ class Handler(BaseHTTPRequestHandler):
                                "«لغو دریافت» را در هر پیام نگه دارید (GDPR / CCPA / CAN-SPAM). "
                                "از ارسال انبوه بدون شخصی‌سازی خودداری کنید.")})
 
+    def _worker_tick(self, query: dict) -> None:
+        """یک کار از صف را همین‌جا (در تابع serverless) اجرا می‌کند.
+
+        چرا؟ روی Vercel نه داکری هست و نه پروسهٔ همیشه‌روشن؛ پس رابط کاربری،
+        وقتی اجرایی در صف است، این نقطه را صدا می‌زند تا کار با موتور واقعیِ
+        بدون داکر (OSM/Places) اجرا شود. با ورکر بیرونی (Codespace/Actions) هم
+        تداخل ندارد چون کار با قفل اتمی claim می‌شود.
+        """
+        from . import worker as worker_mod
+
+        if not jobs.queue_mode_active():
+            return self._json({"processed": 0, "idle": True, "note": "حالت صف فعال نیست"}, 200)
+
+        budget = max(12, min(52, _int(query.get("budget"), 42)))
+        started = time.time()
+        reclaimed = storage.requeue_stale_jobs(90)
+        job = storage.claim_job(worker=f"tick-{config.WORKER_ID}")
+        if not job:
+            return self._json({
+                "processed": 0, "idle": True, "reclaimed": reclaimed,
+                "queue": storage.queue_stats(), "seconds": round(time.time() - started, 1),
+                "note": "کاری در صف نبود (یا کار دیگری همین حالا برداشته شد).",
+            }, 200)
+
+        request = dict(job.get("request") or {})
+        # بودجهٔ زمانی: بخشی برای غنی‌سازی/امتیاز/ذخیره نگه می‌داریم
+        engine_budget = max(12, budget - 14)
+        request["max_time"] = min(_int(request.get("max_time"), 60), engine_budget)
+        request["enrich_live"] = False          # غنی‌سازی زنده در تابع ۶۰ثانیه‌ای جا نمی‌شود
+        if _int(request.get("limit"), 0):
+            request["limit"] = min(_int(request.get("limit"), 40), 60)
+        job["request"] = request
+
+        result = worker_mod.process_job(job, quiet=True)
+        result.update({
+            "processed": 1, "seconds": round(time.time() - started, 1),
+            "reclaimed": reclaimed, "queue": storage.queue_stats(),
+            "engine": pipeline.engine_status(None).get("active"),
+        })
+        record_progress(result.get("run_id") or job.get("run_id") or job["id"], {
+            "stage": "done" if result.get("ok") else "failed",
+            "status": "done" if result.get("ok") else "failed", "percent": 100,
+            "message": (f"تکمیل شد — {result.get('total', 0)} لید ({result.get('hot', 0)} داغ)"
+                        if result.get("ok") else f"خطا: {result.get('error', 'نامشخص')}"),
+            "stats": {"total": result.get("total", 0), "hot": result.get("hot", 0)},
+            "error": "" if result.get("ok") else str(result.get("error") or ""),
+            "run_id": result.get("run_id") or job.get("run_id") or job["id"],
+        })
+        return self._json(result, 200 if result.get("ok") else 200)
+
     def _queue_snapshot(self, query: dict) -> dict:
         """وضعیت صف برای داشبورد: آمار + کارها + جای اجراها."""
         stats = storage.queue_stats()
@@ -834,6 +992,8 @@ class Handler(BaseHTTPRequestHandler):
             "active": jobs.queue_mode_active(),
             "backend": config.DB_BACKEND,
             "worker": config.WORKER_ID,
+            "worker_online": worker_online(),
+            "self_drive": self_drive_allowed(),
             "stats": stats,
             "jobs": storage.list_jobs(None, limit=limit),
             "engine": pipeline.engine_status(None),
@@ -866,6 +1026,12 @@ class Handler(BaseHTTPRequestHandler):
         })
         # ── حالت صف (ابر/serverless): ورکر جداگانه اجرا را برمی‌دارد ────────────
         if jobs.queue_mode_active():
+            if config.MAX_PENDING_JOBS:
+                pending = int((storage.queue_stats() or {}).get("pending", 0) or 0)
+                if pending >= config.MAX_PENDING_JOBS:
+                    raise ApiError(
+                        f"الان {pending} کار در صف است (سقف {config.MAX_PENDING_JOBS}). "
+                        "چند دقیقهٔ دیگر امتحان کن.", 429)
             queued = jobs.enqueue_run(request_dict, run_id=preview_id)
             position = jobs.queue_position(preview_id) or {}
             record_progress(preview_id, {

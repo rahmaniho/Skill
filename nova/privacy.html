@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>حریم خصوصی — نُوا</title>
+<link rel="icon" href="./favicon.svg" type="image/svg+xml">
+<style>
+  :root { color-scheme: light dark; --ink:#0d1022; --muted:#5b6076; --bg:#f6f7fb; --card:#fff; --line:#e6e8f0; --brand:#4f46e5; }
+  @media (prefers-color-scheme: dark) { :root { --ink:#eef0f7; --muted:#a7abc0; --bg:#0d1022; --card:#161a33; --line:#262b4a; --brand:#8b8cf7; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:"Vazirmatn","Segoe UI",Tahoma,system-ui,sans-serif; line-height:1.95; }
+  main { max-width: 760px; margin: 0 auto; padding: 28px 20px 64px; }
+  h1 { font-size: 1.7rem; margin: .2rem 0 1rem; }
+  h2 { font-size: 1.12rem; margin: 1.6rem 0 .5rem; color: var(--brand); }
+  .muted { color: var(--muted); font-size: .92rem; }
+  .card { background: var(--card); border:1px solid var(--line); border-radius: 18px; padding: 20px 22px; }
+  a { color: var(--brand); }
+  ul { padding-inline-start: 1.2rem; }
+  .back { display:inline-block; margin-bottom: 14px; text-decoration:none; font-weight: 600; }
+  .tag { display:inline-block; font-size:.78rem; background: rgba(79,70,229,.12); color:var(--brand); border-radius: 999px; padding: 3px 10px; }
+  table { width:100%; border-collapse: collapse; margin-top: .4rem; }
+  td, th { border-bottom: 1px solid var(--line); padding: 8px 6px; text-align: start; font-size: .95rem; }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" href="./">← برگرد به نُوا</a>
+  <div class="card">
+    <span class="tag">نسخهٔ ۱٫۰</span>
+    <h1>حریم خصوصی</h1>
+    <p class="muted">خلاصه در یک خط: نُوا دادهٔ کسب‌وکارها را جمع می‌کند و چیزی دربارهٔ کاربران اپ
+      جمع نمی‌کند مگر چیزهایی که برای کارکرد لازم است.</p>
+
+    <h2>چه چیزی ذخیره می‌شود</h2>
+    <table>
+      <tr><th>داده</th><th>چرا</th><th>کجا</th></tr>
+      <tr><td>اطلاعات عمومی کسب‌وکار (نام، نشانی، تلفن، سایت، شبکه‌های اجتماعی، مختصات)</td>
+          <td>هستهٔ کار اپ</td><td>پایگاه‌دادهٔ خودت (Supabase/SQLite)</td></tr>
+      <tr><td>اجراها، فیلترها و وضعیت پیگیری لیدها</td><td>تاریخچه و کار روزمرهٔ تو</td><td>پایگاه‌دادهٔ خودت</td></tr>
+      <tr><td>کد دسترسی (اگر فعال باشد)</td><td>قفل کردن اپ</td><td>فقط در مرورگر تو (localStorage)</td></tr>
+      <tr><td>پوستهٔ اپ و تنظیم لرزش</td><td>یادآوری سلیقهٔ تو</td><td>فقط در مرورگر تو</td></tr>
+    </table>
+
+    <h2>چه چیزی ذخیره نمی‌شود</h2>
+    <ul>
+      <li>رمز عبور، شمارهٔ کارت، یا اطلاعات پرداخت (در این نسخه پرداختی وجود ندارد).</li>
+      <li>پیام‌های ابزار تحلیلی شخص ثالث؛ این اپ هیچ تراکر تبلیغاتی ندارد.</li>
+      <li>موقعیت مکانی دستگاه تو؛ فقط مکان کسب‌وکارها ذخیره می‌شود.</li>
+    </ul>
+
+    <h2>سرویس‌های بیرونی</h2>
+    <p>بسته به پیکربندی، درخواست جست‌وجو ممکن است به <b>OpenStreetMap/Nominatim</b>،
+      <b>Google Places API</b> یا موتور اسکرپر گوگل‌مپ برود. در این مسیر فقط عبارت جست‌وجو و
+      محدودهٔ جغرافیایی فرستاده می‌شود — نه هویت تو. سیاست حریم خصوصی آن سرویس‌ها هم اعمال می‌شود.</p>
+
+    <h2>حقوق کسب‌وکارها</h2>
+    <p>اگر صاحب کسب‌وکاری هستی و نمی‌خواهی در فهرست باشی، کافی است بگویی؛ ردیف تو حذف یا
+      علامت‌گذاری می‌شود. برای تماس از گزینهٔ انصراف استفاده کن و درخواست‌ها را ثبت کن.</p>
+
+    <h2>نگهداری و حذف</h2>
+    <p>اجراها را هر وقت بخواهی می‌توانی از خود اپ حذف کنی؛ با حذف یک اجرا، لیدهای همان اجرا هم پاک می‌شوند.
+      اگر کل داده را می‌خواهی پاک کنی، پایگاه‌دادهٔ خودت را خالی کن (این اپ مالک داده‌ات نیست، خودت هستی).</p>
+
+    <h2>امنیت</h2>
+    <p>موتور اسکرپر روی <code>127.0.0.1</code> می‌ماند و از بیرون باز نیست. برای انتشار عمومی،
+      کد دسترسی و HTTPS را روشن نگه دار. با این حال هیچ سیستمی صد‌درصد امن نیست.</p>
+
+    <p class="muted" style="margin-top:1.6rem">این متن جای مشاورهٔ حقوقی نیست؛ برای محصول تجاری،
+      نسخهٔ حقوقی متناسب با کشور خودت را هم بگیر.</p>
+    <p><a href="./terms">شرایط استفاده ←</a></p>
+  </div>
+</main>
+</body>
+</html>

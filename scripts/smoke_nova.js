@@ -368,6 +368,13 @@ async function main() {
   docClick(mk({ "data-act": "about" }));
   await tick(250);
   check("about: شیت درباره باز شد", el("sheetBody").innerHTML.includes("مشتری‌یاب"), el("sheetBody").innerHTML.slice(0, 50));
+  check("legal: خط نسبت‌دهی داده رندر شد", (el("attribution").innerHTML || "").length > 8,
+    el("attribution").innerHTML);
+  check("legal: لینک شرایط و حریم خصوصی هست",
+    Boolean(documentQuery("a[href='./terms']") && documentQuery("a[href='./privacy']")));
+  check("engine: برچسب موتور با موتورهای واقعی هم‌خوان است",
+    /موتور واقعی|دادهٔ واقعی|گوگل|نمایشی|بدون موتور/.test(el("engineChip").textContent),
+    el("engineChip").textContent);
   docClick(mk({ "data-act": "sheet-close" }));
 
   if (global.TOASTS.length) {

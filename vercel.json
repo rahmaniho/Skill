@@ -30,6 +30,9 @@
   "env": {
     "LEADGEN_QUEUE": "always",
     "LEADGEN_DATA_DIR": "/tmp/leadgen-data",
-    "LEADGEN_ROOT_UI": "nova"
+    "LEADGEN_ROOT_UI": "nova",
+    "LEADGEN_MAX_PENDING": "4",
+    "LEADGEN_RATE_RUNS": "30",
+    "SELF_DRIVE": "1"
   }
 }

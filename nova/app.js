@@ -26,7 +26,10 @@
     offset: 0,
     total: 0,
     facets: null,
-    sugHi: -1
+    sugHi: -1,
+    ticking: false,          // tick صف در جریان است
+    tickAt: 0,               // آخرین tick
+    codeOpen: false          // شیت کد دسترسی باز است
   };
   var PAGE = 24;
 
@@ -51,17 +54,63 @@
     groups: ["سلامت و پزشکی", "خوراک و کافه", "خدمات فنی"]
   };
 
+  var ENGINE_FA = {
+    docker: "واقعی (گوگل‌مپ) 🟢", osm: "واقعی (OpenStreetMap) 🟢",
+    places: "واقعی (گوگل Places) 🟢", demo: "نمایشی 🎬", unavailable: "در دسترس نیست"
+  };
+  var ENGINE_CHIP = {
+    docker: "موتور واقعی", osm: "دادهٔ واقعی · OSM", places: "گوگل Places",
+    demo: "حالت نمایشی", unavailable: "بدون موتور"
+  };
+
   /* ────────────────────────── شبکه ────────────────────────── */
+  function code() { try { return localStorage.getItem("nova.code") || ""; } catch (e) { return ""; } }
+  function authHeaders(extra) {
+    var h = { accept: "application/json" };
+    if (extra) for (var k in extra) h[k] = extra[k];
+    var c = code();
+    if (c) h["x-leadgen-code"] = c;
+    return h;
+  }
   function ok(r) {
     if (!r.ok) {
+      if (r.status === 401) { askCode(); }
       return r.json().then(function (j) { throw new Error(j.error || j.message || ("HTTP " + r.status)); },
         function () { throw new Error("HTTP " + r.status); });
     }
     return r.json();
   }
-  function jget(url) { return fetch(url, { headers: { accept: "application/json" } }).then(ok); }
+  function jget(url) { return fetch(url, { headers: authHeaders() }).then(ok); }
   function jsend(url, method, body) {
-    return fetch(url, { method: method, headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) }).then(ok);
+    return fetch(url, { method: method, headers: authHeaders({ "content-type": "application/json" }), body: JSON.stringify(body || {}) }).then(ok);
+  }
+  function askCode() {
+    if (S.codeOpen) return;
+    S.codeOpen = true;
+    N.sheet("🔒 کد دسترسی", '<p class="muted">این نسخه با کد قفله. کدی که گرفتی رو بزن تا باز بشه.</p>' +
+      '<form id="codeForm" class="code-form"><input id="codeInput" type="password" inputmode="text" ' +
+      'autocomplete="off" placeholder="کد دسترسی" value="' + esc(code()) + '">' +
+      '<button class="btn btn-primary" type="submit">باز کن</button></form>' +
+      '<p class="muted" id="codeErr" hidden>کد درست نبود. دوباره امتحان کن.</p>', function () {
+        var f = $("codeForm");
+        if (f) f.addEventListener("submit", function (ev) {
+          ev.preventDefault();
+          var v = ($("codeInput").value || "").trim();
+          if (!v) return;
+          try { localStorage.setItem("nova.code", v); } catch (e) {}
+          S.codeOpen = false;
+          N.sheetHide();
+          boot(true);
+        });
+      });
+  }
+  /* اجرای خودکار صف: وقتی کاری در صف مانده و ورکر بیرونی نیست، خودمان بیدارش می‌کنیم */
+  function maybeTick(p) {
+    if (!p || p.action !== "tick" || S.ticking) return;
+    if (Date.now() - (S.tickAt || 0) < 2500) return;
+    S.tickAt = Date.now(); S.ticking = true;
+    jsend("api/worker/tick?budget=42", "POST", {}).catch(function () { /* دور بعد */ })
+      .then(function () { S.ticking = false; });
   }
 
   /* ────────────────────────── دادهٔ نمایشی ────────────────────────── */
@@ -146,7 +195,8 @@
       return jsend("api/runs/" + encodeURIComponent(id), "DELETE", {});
     },
     exportHref: function (runId, fmt) {
-      return "api/runs/" + encodeURIComponent(runId) + "/export?fmt=" + (fmt || "xlsx") + "&cols=contact";
+      var href = "api/runs/" + encodeURIComponent(runId) + "/export?fmt=" + (fmt || "xlsx") + "&cols=contact";
+      return code() ? href + "&code=" + encodeURIComponent(code()) : href;
     }
   };
 
@@ -721,7 +771,7 @@
       var req = buildRequest();
       return API.start(req).then(function (r) {
         S.run = { run_id: r.run_id, title: (req.niche_query || "") + " · " + (req.city_query || "") };
-        N.toast(S.mode === "demo" ? "اجرای نمایشی شروع شد 🎬" : (r.status === "queued" ? "رفت توی صف؛ ورکر برش می‌داره ⏳" : "شروع شد! 🚀"), "ok");
+        N.toast(S.mode === "demo" ? "اجرای نمایشی شروع شد 🎬" : (r.status === "queued" ? "رفت توی صف؛ خودم بیدارش می‌کنم ⏳" : "شروع شد! 🚀"), "ok");
         showLive(true);
         poll();
       }, function (e) {
@@ -743,6 +793,7 @@
       API.progress(S.run.run_id).then(function (j) {
         var p = j.progress || {};
         paintProgress(p);
+        maybeTick(p);
         if (p.stage === "done" || p.status === "done") {
           clearInterval(S.pollTimer); S.pollTimer = null;
           N.toast("تمام شد! " + (p.stats ? fa(p.stats.total || 0) + " لید (" + fa(p.stats.hot || 0) + " داغ)" : ""), "ok", 5200);
@@ -777,7 +828,7 @@
     var eng = h.engine || {};
     var db = h.db || {};
     var cells = [
-      ["موتور", eng.active === "docker" ? (eng.live ? "واقعی (گوگل‌مپ) 🟢" : "داکر بدون پاسخ") : eng.active === "demo" ? "نمایشی 🎬" : "در دسترس نیست"],
+      ["موتور", ENGINE_FA[eng.active] || "در دسترس نیست"],
       ["پایگاه داده", (h.config && h.config.db_backend) === "supabase" ? "☁️ ابری (Supabase)" : (h.config && h.config.db_backend) === "demo" ? "🎬 داخل برنامه" : "💾 محلی"],
       ["صف کارها", h.queue_mode === "always" ? "همیشه فعال" : h.queue_mode === "never" ? "خاموش (اجرای فوری)" : "خودکار"],
       ["لیدهای ذخیره‌شده", fa(db.leads != null ? db.leads : 0) + " لید · " + fa(db.hot != null ? db.hot : 0) + " داغ"],
@@ -788,17 +839,25 @@
       return '<div class="hcell"><small>' + esc(c[0]) + "</small><b>" + esc(c[1]) + "</b></div>";
     }).join("");
     $("moreNote").textContent = eng.reason || "";
+    var attr = $("attribution");
+    if (attr) {
+      attr.innerHTML = eng.active === "osm"
+        ? 'دادهٔ این نسخه از OpenStreetMap می‌آید — © مشارکت‌کنندگان OpenStreetMap (ODbL).'
+        : eng.active === "places" ? "دادهٔ این نسخه از Google Places API می‌آید."
+        : eng.active === "docker" ? "دادهٔ این نسخه از موتور گوگل‌مپ (اسکرپر) می‌آید."
+        : "این نسخه روی دادهٔ نمونه کار می‌کند تا موتور واقعی وصل شود.";
+    }
     $("verTxt").textContent = "نُوا — رابط نسل بعدِ شکار مشتری · ساخته‌شده روی موتور گوگل‌مپ";
   }
   function paintChips() {
     var h = S.health || {};
     var eng = h.engine || {};
     var chip = $("engineChip");
-    chip.textContent = eng.active === "docker" ? "موتور واقعی" : eng.active === "demo" ? "حالت نمایشی" : "بدون موتور";
-    chip.dataset.tone = eng.active === "docker" ? "ok" : eng.active === "demo" ? "warn" : "err";
+    chip.textContent = ENGINE_CHIP[eng.active] || "بدون موتور";
+    chip.dataset.tone = eng.live ? "ok" : eng.active === "demo" ? "warn" : "err";
     var dbc = $("dbChip");
     if (h.config && h.config.db_backend === "supabase") { dbc.hidden = false; dbc.textContent = "☁️ دیتابیس ابری"; }
-    $("railHealthTxt").textContent = (eng.active === "docker" ? "موتور واقعی وصله · " : eng.active === "demo" ? "روی دادهٔ نمایشی · " : "") +
+    $("railHealthTxt").textContent = (eng.live ? "دادهٔ واقعی · " : eng.active === "demo" ? "روی دادهٔ نمایشی · " : "") +
       fa((h.db || {}).leads != null ? h.db.leads : 0) + " لید داخل پایگاه";
   }
 
@@ -1049,9 +1108,9 @@
     loadDemo().then(function () {
       return API.health().then(function (h) {
         S.health = h;
-        if (!$("demoMode").checked && h.engine && h.engine.active !== "docker" && !h.engine.live) {
-          /* موتور واقعی نیست ولی سرور هست؛ همچنان live می‌مونیم (دموی سرور) */
-        }
+        if (h.config && h.config.access_code_set && !code()) askCode();
+        if ($("demoMode").checked && h.engine && h.engine.live) {
+          /* کاربر دمو خواسته؛ همون می‌مونه */ }
         paintChips();
         if (!$("view-more").hidden) renderHealth();
       }, function () {

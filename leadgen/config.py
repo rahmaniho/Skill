@@ -17,6 +17,17 @@ ENV_KEYS = (
     "SCRAPER_API_KEY",
     "SCRAPER_PROXIES",
     "ENGINE_MODE",
+    # ── موتورهای واقعیِ بدون داکر (برای اجرای زنده روی Vercel) ────────────────
+    "OSM_ENDPOINT",          # سرویس جست‌وجوی OpenStreetMap (Nominatim)
+    "OSM_MIN_INTERVAL",      # فاصلهٔ حداقلی بین دو درخواست به OSM (ثانیه)
+    "OSM_LIMIT",             # حداکثر نتیجه در هر کوئری OSM
+    "OSM_COUNTRY",           # پیش‌فرض کشور (ir) برای محدود کردن نتایج
+    "PLACES_API_KEY",        # کلید Google Places API (مسیر تجاری)
+    "SELF_DRIVE",            # اجرای خودکار صف از سمت رابط (بدون ورکر)
+    # ── محافظ‌های تجاری ──────────────────────────────────────────────────────
+    "LEADGEN_ACCESS_CODE",   # اگر بگذارید، اپ با کد دسترسی قفل می‌شود
+    "LEADGEN_MAX_PENDING",   # سقف کارهای در صف (۰ = بی‌سقف)
+    "LEADGEN_RATE_RUNS",     # سقف اجرا در ساعت برای هر IP
     "LEADGEN_HOST",
     "LEADGEN_PORT",
     "LEADGEN_DATA_DIR",
@@ -87,6 +98,11 @@ def env_int(name: str, default: int) -> int:
         return int(env(name, str(default)) or default)
     except ValueError:
         return default
+def env_float(name: str, default: float) -> float:
+    try:
+        return float(env(name) or default)
+    except (TypeError, ValueError):
+        return default
 
 
 # ── موتور اسکراپر ─────────────────────────────────────────────────────────────
@@ -97,6 +113,22 @@ SCRAPER_PROXIES = [p.strip() for p in env("SCRAPER_PROXIES").split(",") if p.str
 
 # auto | docker | demo
 ENGINE_MODE = env("ENGINE_MODE", "auto").lower() or "auto"
+
+# ── موتورهای واقعی بدون داکر ──────────────────────────────────────────────────
+# OSM/Nominatim: دادهٔ واقعی، بدون کلید و بدون داکر — برای شروع و نصب‌های کوچک.
+# Google Places API: دقیق‌تر و سریع‌تر؛ مسیر تجاری (کلید لازم است).
+OSM_ENDPOINT = (env("OSM_ENDPOINT") or "https://nominatim.openstreetmap.org").rstrip("/")
+OSM_MIN_INTERVAL = max(1.0, env_float("OSM_MIN_INTERVAL", 1.1))
+OSM_LIMIT = max(1, min(40, env_int("OSM_LIMIT", 40)))
+OSM_COUNTRY = env("OSM_COUNTRY", "ir").lower()
+PLACES_API_KEY = env("PLACES_API_KEY") or env("GOOGLE_MAPS_API_KEY")
+SELF_DRIVE = env("SELF_DRIVE", "1") != "0"
+
+# ── محافظ‌های تجاری (ضد سوءاستفاده) ───────────────────────────────────────────
+ACCESS_CODE = env("LEADGEN_ACCESS_CODE").strip()
+MAX_PENDING_JOBS = max(0, env_int("LEADGEN_MAX_PENDING", 3))
+RATE_RUNS_PER_HOUR = max(0, env_int("LEADGEN_RATE_RUNS", 30))
+
 
 # ── سرویس وب ──────────────────────────────────────────────────────────────────
 HOST = env("LEADGEN_HOST", "0.0.0.0")
@@ -260,4 +292,11 @@ def summary() -> dict:
         "app_base_url": APP_BASE_URL,
         "email_transport": email_transport(),
         "digest_to": DIGEST_TO,
+        # موتورهای واقعی و محافظ‌ها
+        "osm_endpoint": OSM_ENDPOINT,
+        "places_key_set": bool(PLACES_API_KEY),
+        "self_drive": SELF_DRIVE,
+        "access_code_set": bool(ACCESS_CODE),
+        "max_pending": MAX_PENDING_JOBS,
+        "rate_runs_per_hour": RATE_RUNS_PER_HOUR,
     }
