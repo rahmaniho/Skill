@@ -761,6 +761,36 @@ class ProvinceSweepPipelineTest(unittest.TestCase):
         stored = " ".join(result.analytics.get("warnings") or [])
         self.assertIn("مسیر جست‌وجوی متنی", stored)
 
+    def test_single_city_run_has_no_city_coverage_block(self):
+        """برای یک شهر، فهرست پوشش شهری نباید ردیف بی‌نام/صفر بسازد."""
+
+        class FakeEngine:
+            name = "osm"
+            live = True
+
+            def health(self):
+                return {"up": True}
+
+            def run_job(self, body, on_progress=None):
+                self.coverage = [{"city": "", "rows": 0, "via": "", "error": "Overpass پایین"}]
+                return "fake-job", [{
+                    "place_id": "osm:node/9", "title": "کافه اهواز", "category": "رستوران",
+                    "latitude": "31.32", "longitude": "48.67", "phone": "", "website": "",
+                    "instagram": "", "facebook": "", "linkedin": "", "address": "اهواز",
+                    "input_id": "restaurant", "source": "openstreetmap", "city": "اهواز"}]
+
+        original = pipeline.make_engine
+        pipeline.make_engine = lambda mode=None: FakeEngine()
+        try:
+            request = pipeline.ScrapeRequest.from_dict({
+                "niche_query": "رستوران", "city_query": "اهواز", "engine_mode": "osm",
+                "lang": "fa", "limit": 20, "max_time": 30})
+            result = pipeline.run_scrape(request)
+        finally:
+            pipeline.make_engine = original
+        self.assertNotIn("cities", result.analytics)
+        self.assertEqual(result.stats["total"], 1)
+
     def test_city_request_has_no_sweep(self):
         captured: list[dict] = []
 
