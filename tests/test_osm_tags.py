@@ -536,3 +536,24 @@ class SweepFallbackTests(unittest.TestCase):
             self.assertFalse(search.called)
         finally:
             config.OSM_MODE = saved
+
+
+class ShareForBoxTests(unittest.TestCase):
+    """سهم Overpass باید همیشه چند ثانیه برای مسیر متنی (Nominatim) کنار بگذارد."""
+
+    def test_single_city_keeps_time_for_text_search(self):
+        from leadgen.engine import share_for_box
+        share = share_for_box(box_left=21.0, phase_budget=12.6, remaining=1, single=True)
+        self.assertLessEqual(share, 12.0)
+        self.assertGreaterEqual(21.0 - share, 9.0, "بعد از Overpass باید ≥۹ ثانیه بمانَد")
+
+    def test_single_city_share_never_exceeds_half_the_budget(self):
+        from leadgen.engine import share_for_box
+        share = share_for_box(box_left=40.0, phase_budget=40.0, remaining=1, single=True)
+        self.assertLessEqual(share, 24.0)
+
+    def test_sweep_shares_budget_between_cities(self):
+        from leadgen.engine import share_for_box
+        share = share_for_box(box_left=21.0, phase_budget=12.6, remaining=3, single=False)
+        self.assertGreaterEqual(share, 8.0)
+        self.assertLessEqual(share, 21.0 - 6.0)
