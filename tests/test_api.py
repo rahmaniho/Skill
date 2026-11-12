@@ -517,12 +517,34 @@ class ApiTestCase(unittest.TestCase):
     def test_diag_reports_error_instead_of_crashing(self):
         from leadgen.providers import osm
         query = urllib.parse.urlencode({"city": "رامسر", "niche": "رستوران"})
-        with mock.patch.object(osm, "overpass_search", side_effect=RuntimeError("overpass down")):
+        with mock.patch.object(osm, "overpass_search", side_effect=RuntimeError("overpass down")), \
+                mock.patch.object(osm, "search", return_value=[]):
             status, data = self.get(f"/api/diag/osm?{query}")
         self.assertEqual(status, 200)
         self.assertFalse(data["ok"])
         self.assertIn("overpass down", data["error"])
         self.assertEqual(data["rows"], 0)
+        # مسیر جایگزین هم واقعاً امتحان شده (نه اینکه ساکت رد شود)
+        self.assertTrue(data["fallback"]["tried"])
+        self.assertEqual(data["fallback"]["rows"], 0)
+
+    def test_diag_falls_back_to_text_search_when_overpass_is_down(self):
+        """پیام باید بین «سرویس پایین است» و «شهر داده ندارد» فرق بگذارد."""
+        from leadgen.providers import osm
+        row = {"title": "کافه یزد", "category": "کافه", "latitude": "31.89", "longitude": "54.36",
+               "phone": "", "website": "", "instagram": "", "address": "یزد"}
+        query = urllib.parse.urlencode({"city": "یزد", "niche": "کافه", "limit": 40})
+        with mock.patch.object(osm, "overpass_search", side_effect=RuntimeError("502")), \
+                mock.patch.object(osm, "search", return_value=[row]) as text_search:
+            status, data = self.get(f"/api/diag/osm?{query}")
+        self.assertEqual(status, 200)
+        self.assertTrue(text_search.called)
+        self.assertTrue(data["ok"])
+        self.assertFalse(data["overpass_ok"])
+        self.assertEqual(data["rows"], 1)
+        self.assertEqual(data["fallback"]["via"], "nominatim")
+        self.assertEqual(data["sample"][0]["title"], "کافه یزد")
+        self.assertIn("502", data["error"])
 
     def test_diag_unknown_city_is_reported(self):
         query = urllib.parse.urlencode({"city": "ناکجاآباد", "niche": "کافه"})

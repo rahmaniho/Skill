@@ -900,11 +900,45 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:                          # noqa: BLE001 — گزارش روشن
             rows, error = [], f"{type(exc).__name__}: {exc}"[:300]
         elapsed = round(time.time() - started, 2)
+        overpass_ok = not error and bool(rows)
+        # مسیر جایگزین را هم واقعاً امتحان می‌کنیم؛ وگرنه «Overpass پایین» با
+        # «این شهر داده ندارد» قاطی می‌شود و پاسخ سنجش گمراه‌کننده است.
+        fallback: dict = {"tried": False, "via": "", "rows": 0, "seconds": 0.0,
+                          "text": "", "error": ""}
+        if not rows and config.OSM_MODE != "overpass":
+            from . import osm_terms as lexicon
+
+            if all_business:
+                texts = ["restaurant", "shop", "cafe"]
+            else:
+                texts = list(dict.fromkeys(
+                    lexicon.derive([niche_obj.fa, niche_obj.en])[:2]
+                    + [niche_obj.fa, niche_obj.en]))
+            fb_started = time.time()
+            fallback["tried"] = True
+            for text in texts[:3]:
+                left = probe_timeout + 6 - (time.time() - fb_started)
+                if left < 4:
+                    break
+                try:
+                    got = osm_provider.search(text, bbox=bbox, limit=limit,
+                                              input_id="diag", timeout=min(12.0, left))
+                except Exception as exc:                  # noqa: BLE001
+                    fallback["error"] = f"{type(exc).__name__}: {exc}"[:200]
+                    continue
+                if got:
+                    rows = got
+                    fallback.update(via="nominatim", rows=len(got), text=text, error="")
+                    break
+            fallback["seconds"] = round(time.time() - fb_started, 2)
+        elapsed = round(time.time() - started, 2)
         sample = [{k: row.get(k) for k in ("title", "category", "latitude", "longitude",
                                            "phone", "website", "instagram", "address")}
                   for row in rows[:12]]
         return {
-            "ok": not error and bool(rows),
+            "ok": bool(rows),
+            "overpass_ok": overpass_ok,
+            "fallback": fallback,
             "city": area.get("label") or city_name, "city_key": key,
             "province": area.get("province", ""), "niche": label,
             "mode": config.OSM_MODE, "bbox": [round(x, 4) for x in bbox],
