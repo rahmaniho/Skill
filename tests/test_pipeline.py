@@ -703,6 +703,36 @@ class ProvinceSweepPipelineTest(unittest.TestCase):
         stored = " ".join(result.analytics.get("warnings") or [])
         self.assertIn("پوشش استانی", stored)
 
+    def test_empty_run_reports_text_search_attempts(self):
+        """اجرای خالی باید بگوید کدام عبارت‌ها با مسیر متنی امتحان شدند و صفر دادند."""
+
+        class FakeEngine:
+            name = "osm"
+            live = True
+
+            def health(self):
+                return {"up": True}
+
+            def run_job(self, body, on_progress=None):
+                self.attempts = [{"term": "cafes", "rows": 0, "error": ""},
+                                 {"term": "coffee shops", "rows": 0, "error": ""}]
+                raise pipeline.EmptyResult("در این محدوده چیزی پیدا نشد")
+
+        original = pipeline.make_engine
+        pipeline.make_engine = lambda mode=None: FakeEngine()
+        try:
+            request = pipeline.ScrapeRequest.from_dict({
+                "niche_query": "کافه", "city_query": "یزد", "engine_mode": "osm",
+                "lang": "fa", "limit": 30, "max_time": 40})
+            result = pipeline.run_scrape(request)
+        finally:
+            pipeline.make_engine = original
+        joined = " ".join(result.warnings)
+        self.assertIn("مسیر جست‌وجوی متنی", joined)
+        self.assertIn("cafes", joined)
+        stored = " ".join(result.analytics.get("warnings") or [])
+        self.assertIn("مسیر جست‌وجوی متنی", stored)
+
     def test_city_request_has_no_sweep(self):
         captured: list[dict] = []
 

@@ -165,4 +165,18 @@ def derive(texts: list[str] | tuple[str, ...], *, limit: int = 5) -> list[str]:
             cleaned = re.sub(r"\s+", " ", cleaned).strip()
             if cleaned and cleaned not in out:
                 out.insert(0, cleaned)
-    return out[:limit]
+    # عبارت‌های سادهٔ انگلیسی اول بیایند: Nominatim با «cafe» ده‌ها نتیجه می‌دهد
+    # ولی با «cafés & coffee shops» اغلب هیچ. ترتیب ابزاری است، نه سلیقه‌ای:
+    # چون موتور فقط چند ثانیه فرصت دارد، اولین حدس باید بهترین حدس باشد.
+    simple = [t for t in out if _plain(t)]
+    return (simple + [t for t in out if not _plain(t)])[:limit]
+
+
+def _plain(term: str) -> bool:
+    """عبارت انگلیسیِ ساده (بدون حرف غیرانگلیسی/نماد و حداکثر سه کلمه)؟
+
+    فقط برای **جابه‌جایی** استفاده می‌شود نه حذف: ترتیب معناییِ واژه‌نامه دست‌نخورده
+    می‌ماند و فقط عبارت‌های نمایشی‌تر («cafés & coffee shops») به انتها می‌روند.
+    """
+    return (term.isascii() and not any(ch in term for ch in "&/(),.'\"")
+            and len(term.split()) <= 3)
