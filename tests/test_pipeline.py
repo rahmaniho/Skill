@@ -164,6 +164,34 @@ class EnrichTests(unittest.TestCase):
         self.assertEqual(row["location"], "35.700123, 51.400456")
         self.assertTrue(row["has_location"])
 
+    def test_obfuscated_email_is_recovered(self):
+        html = "<p>تماس: info [at] cafesaadeh [dot] ir یا sales(at)cafesaadeh(dot)com</p>"
+        found = enrich.extract_emails(html, "https://cafesaadeh.ir")
+        self.assertIn("info@cafesaadeh.ir", found)
+        self.assertIn("sales@cafesaadeh.com", found)
+
+    def test_social_profile_in_website_field_is_detected(self):
+        """دادهٔ واقعی: وب‌سایت همان آدرس اینستاگرام است ولی ستون اینستاگرام خالی."""
+        row = enrich.normalize_row({
+            "title": "کافه ساده", "website": "https://www.instagram.com/cafesaadeh/",
+            "latitude": "31.9", "longitude": "54.37"})
+        self.assertEqual(row["instagram"], "https://www.instagram.com/cafesaadeh/")
+        self.assertTrue(row["has_social"])
+
+        fb = enrich.normalize_row({"title": "X", "website": "facebook.com/xcafe"})
+        self.assertEqual(fb["facebook"], "https://facebook.com/xcafe")
+
+    def test_refresh_flags_uses_six_channels_everywhere(self):
+        row = enrich.normalize_row({
+            "title": "کلینیک", "website": "https://parsa.ir", "address": "تهران",
+            "latitude": "35.7", "longitude": "51.4"})
+        self.assertEqual(row["contact_channels"], 3)      # سایت، نشانی، لوکیشن
+        self.assertEqual(row["completeness"], 50)
+        row["email_primary"] = "info@parsa.ir"
+        enrich.refresh_flags(row)
+        self.assertEqual(row["contact_channels"], 4)      # همان مخرج ۶، نه ۴
+        self.assertEqual(row["completeness"], 67)
+
     def test_maps_link_prefers_place_link_then_coordinates(self):
         with_link = enrich.normalize_row({"title": "A", "link": "https://maps.google.com/?q=x"})
         self.assertEqual(with_link["maps_link"], "https://maps.google.com/?q=x")

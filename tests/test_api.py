@@ -423,6 +423,43 @@ class ApiTestCase(unittest.TestCase):
         # موتور و غنی‌سازی با هم زیر سقف ۶۰ثانیه‌ای تابع می‌مانند
         self.assertLessEqual(captured["max_time"] + captured["enrich_budget"], 40)
 
+    def test_20b_enrich_run_fills_missing_emails_without_rescraping(self):
+        """«غنی‌سازی مجدد»: لیدهای ذخیره‌شده ایمیل/شبکه اجتماعی می‌گیرند، بدون اسکراپ."""
+        from leadgen import enrich as enrich_mod
+
+        status, imported = self.post("/api/import", {
+            "rows": [
+                {"name": "کافه ساده", "site": "https://cafesaadeh.ir", "phone": "09121110000",
+                 "city": "یزد"},
+                {"name": "کلینیک پارسا", "website": "https://parsa-clinic.ir", "city": "تهران"},
+            ],
+            "niche_query": "کافه", "city": "یزد",
+        })
+        self.assertEqual(status, 200)
+        run_id = imported["run_id"]
+
+        html = ('<html><body><a href="mailto:info@cafesaadeh.ir">mail</a>'
+                '<a href="https://instagram.com/cafesaadeh">ig</a>'
+                '<a href="/contact">تماس</a></body></html>')
+        with mock.patch.object(enrich_mod, "_fetch_cached", return_value=html), \
+                mock.patch.object(enrich_mod, "_fetch_html", return_value=html):
+            status, result = self.post(f"/api/runs/{run_id}/enrich", {"budget": 8})
+        self.assertEqual(status, 200, result)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["checked"], 2)
+        self.assertGreaterEqual(result["email"]["after"], 1)
+        self.assertGreaterEqual(result["social"]["after"], 1)
+        # گزارش در بستهٔ آمار می‌ماند
+        self.assertTrue(any("غنی‌سازی مجدد" in w for w in result["analytics"].get("warnings", [])))
+        # اجرای دوباره بی‌خطر است (کاری برای انجام نمانده)
+        with mock.patch.object(enrich_mod, "_fetch_cached", return_value=html), \
+                mock.patch.object(enrich_mod, "_fetch_html", return_value=html):
+            status, again = self.post(f"/api/runs/{run_id}/enrich", {"budget": 8})
+        self.assertEqual(status, 200)
+        self.assertEqual(again["email"]["after"], result["email"]["after"])
+
+        storage.delete_run(run_id)
+
     # ── تپش صف از بیرون (کرون) ──────────────────────────────────────────────
     def _queue_tick_module(self):
         import importlib.util
