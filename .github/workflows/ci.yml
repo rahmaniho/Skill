@@ -29,7 +29,22 @@ jobs:
         run: python -m compileall -q leadgen scripts
 
       - name: Unit tests
-        run: python -m unittest discover -s tests -v
+        run: |
+          # لاگ کامل است، ولی وقتی دانلود لاگ GitHub خراب باشد این annotationها
+          # تنها راه دیدن علت شکست‌اند؛ پس نام آزمون‌های شکست‌خورده را منتشر می‌کنیم.
+          set +e
+          python -m unittest discover -s tests -v > /tmp/tests.log 2>&1
+          status=$?
+          tail -n 80 /tmp/tests.log
+          if [ "$status" -ne 0 ]; then
+            grep -E "^(FAIL|ERROR):" /tmp/tests.log | head -20 | while IFS= read -r line; do
+              echo "::error title=unit-test::$line"
+            done
+            grep -E "^(FAIL|ERROR):" -A 10 /tmp/tests.log | head -60 | while IFS= read -r line; do
+              echo "::warning title=unit-trace::$line"
+            done
+          fi
+          exit "$status"
 
       - name: Doctor (demo engine)
         run: python -m leadgen.cli doctor

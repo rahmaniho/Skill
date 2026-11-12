@@ -166,9 +166,15 @@ def _overpass_request(query: str, *, timeout: float, retries: int = 1) -> dict:
     """
     payload = urllib.parse.urlencode({"data": query}).encode("utf-8")
     errors: list[str] = []
+    # سقف زمانی کلِ این فراخوانی: یک جست‌وجو نباید ده‌ها ثانیه در انتظار بماند.
+    # (تلاش دوباره فقط وقتی معنا دارد که زمان باقی مانده باشد.)
+    deadline = time.monotonic() + max(8.0, float(timeout) + 10)
     for endpoint in _endpoints_in_order():
         host = endpoint.split("/")[2] if "//" in endpoint else endpoint
         for attempt in range(retries + 1):
+            remaining = deadline - time.monotonic()
+            if remaining <= 2:
+                break
             _overpass_throttle()
             req = urllib.request.Request(
                 endpoint, data=payload, method="POST",
@@ -176,19 +182,19 @@ def _overpass_request(query: str, *, timeout: float, retries: int = 1) -> dict:
                          "Content-Type": "application/x-www-form-urlencoded"},
             )
             try:
-                with urllib.request.urlopen(req, timeout=timeout + 10) as resp:
+                with urllib.request.urlopen(req, timeout=min(remaining, float(timeout) + 10)) as resp:
                     raw = resp.read()
             except urllib.error.HTTPError as exc:
                 errors.append(f"{host} HTTP {exc.code}")
                 if exc.code in _RETRYABLE:
                     _OVERPASS_COOLDOWN[endpoint] = time.monotonic() + _OVERPASS_COOLDOWN_SECONDS
-                    if attempt < retries:
-                        time.sleep(2.0 * (attempt + 1))
+                    if attempt < retries and deadline - time.monotonic() > 3:
+                        time.sleep(min(2.0 * (attempt + 1), max(0.0, deadline - time.monotonic() - 1)))
                         continue
                 break
             except Exception as exc:                  # شبکه/DNS/تایم‌اوت
                 errors.append(f"{host} {type(exc).__name__}")
-                if attempt < retries:
+                if attempt < retries and deadline - time.monotonic() > 3:
                     time.sleep(1.5)
                     continue
                 break
@@ -370,15 +376,18 @@ def split_bbox(bbox: list[float], rows: int = 2, cols: int = 2) -> list[list[flo
 
 def overpass_search_area(filters: list[str], *, bbox: list[float], limit: int | None = None,
                          timeout: float | None = None, input_id: str = "",
-                         lang: str = "fa", tiles: int = 1,
-                         max_rows: int | None = None) -> list[dict]:
+                         lang: str = "fa", tiles: int = 1, max_rows: int | None = None,
+                         budget_s: float | None = None) -> list[dict]:
     """جاروی کامل‌تر یک محدوده: اگر نتیجه به سقف خورد، محدوده به قطعه‌ها شکسته می‌شود.
 
     Overpass با `out ... LIMIT` نتیجه را می‌بُرد؛ در شهرهای بزرگ این یعنی «کمبود
     ردیف» نه «نبود کسب‌وکار». شکستن جعبه به ۲×۲ (یا ۳×۳) این سقف را عملاً برمی‌دارد.
     """
+    started = time.monotonic()
+    per_call = float(timeout or config.OVERPASS_TIMEOUT)
+    budget = float(budget_s or min(90.0, per_call * 2.5))
     base_limit = overpass_limit_for(bbox, limit)
-    first = overpass_search(filters, bbox=bbox, limit=base_limit, timeout=timeout,
+    first = overpass_search(filters, bbox=bbox, limit=base_limit, timeout=per_call,
                             input_id=input_id, lang=lang)
     span = max(abs(float(bbox[1]) - float(bbox[0])), abs(float(bbox[3]) - float(bbox[2])))
     # «بُرش» وقتی رخ می‌دهد که یا نتیجه دقیقاً به سقف خورده، یا محدوده بزرگ است.
@@ -390,8 +399,12 @@ def overpass_search_area(filters: list[str], *, bbox: list[float], limit: int | 
     side = 2 if int(tiles) <= 4 else 3
     merged: dict[str, dict] = {}
     for piece in split_bbox(bbox, side, side):
+        left = budget - (time.monotonic() - started)
+        if left < 6:
+            break                     # وقت تمام شد؛ همان چیزی که داریم بهتر از تأخیر است
         try:
-            found = overpass_search(filters, bbox=piece, limit=base_limit, timeout=timeout,
+            found = overpass_search(filters, bbox=piece, limit=base_limit,
+                                    timeout=min(per_call, left - 2),
                                     input_id=input_id, lang=lang)
         except OSMDownError:
             continue

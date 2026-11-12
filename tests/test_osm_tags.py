@@ -235,6 +235,21 @@ class OverpassCacheAndTilingTests(unittest.TestCase):
         self.assertEqual(len(rows), 4)                  # اتحاد قطعه‌ها، بدون تکرار
         self.assertEqual(len({r["place_id"] for r in rows}), 4)
 
+    def test_area_crawl_respects_time_budget(self):
+        calls = []
+
+        def fake_search(filters, *, bbox, limit=None, timeout=None, input_id="", lang="fa",
+                        cache=True):
+            calls.append(list(bbox))
+            return [{"place_id": f"osm:node/{i}"} for i in range(limit)]
+
+        with mock.patch.object(osm, "overpass_search", side_effect=fake_search):
+            rows = osm.overpass_search_area(['["amenity"="cafe"]'],
+                                            bbox=[35.4, 35.9, 51.0, 51.7], limit=100,
+                                            tiles=4, budget_s=1)
+        self.assertEqual(len(calls), 1, "با بودجهٔ یک‌ثانیه‌ای نباید قطعه‌های بیشتر رفت")
+        self.assertEqual(len(rows), 100)
+
     def test_area_crawl_single_call_for_small_complete_result(self):
         payload = {"elements": [self._element(3, 35.7, 51.4)]}
         with mock.patch.object(osm, "_overpass_request", return_value=payload) as request:

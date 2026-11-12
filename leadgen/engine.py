@@ -574,7 +574,8 @@ class OSMEngine:
                             timeout=min(float(config.OVERPASS_TIMEOUT), max(8.0, left - 4)),
                             input_id=(niche_id or (terms[0] if terms else "")),
                             lang=lang, tiles=tiles,
-                            max_rows=min(1500, int(config.MAX_LEADS_PER_RUN or 1500)))
+                            max_rows=min(1500, int(config.MAX_LEADS_PER_RUN or 1500)),
+                            budget_s=max(20.0, left - 6))
                     except OSMDownError as exc:
                         errors.append(f"overpass: {exc}")
                         found = []

@@ -888,7 +888,8 @@ class Handler(BaseHTTPRequestHandler):
             if deep:          # جاروی کامل: اگر نتیجه به سقف خورد، محدوده قطعه‌قطعه می‌شود
                 rows = osm_provider.overpass_search_area(
                     filters, bbox=bbox, limit=osm_provider.overpass_limit_for(bbox, limit),
-                    input_id="diag", tiles=4, max_rows=4000)
+                    input_id="diag", tiles=4, max_rows=4000,
+                    budget_s=min(75.0, float(config.OVERPASS_TIMEOUT) * 2.5))
             else:
                 rows = osm_provider.overpass_search(filters, bbox=bbox, limit=limit,
                                                    input_id="diag")
