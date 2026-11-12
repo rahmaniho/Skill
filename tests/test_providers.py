@@ -250,8 +250,22 @@ class OSMTermsTest(unittest.TestCase):
 
     def test_term_variants_drop_generic_words(self):
         from leadgen import osm_terms
-        self.assertEqual(["موسیقی", "هنر"], osm_terms.term_variants("آموزشگاه موسیقی و هنر"))
+        # «هنر» به‌تنهایی فقط گالری/پارک می‌آورد، پس کنار گذاشته می‌شود
+        self.assertEqual(["موسیقی"], osm_terms.term_variants("آموزشگاه موسیقی و هنر"))
         self.assertEqual([], osm_terms.term_variants("موسیقی"))
+
+    def test_non_business_osm_types_are_not_leads(self):
+        """پارک/اثر هنری/بنای تاریخی نباید به‌عنوان کسب‌وکار ذخیره شود."""
+        for category, kind in (("leisure", "park"), ("tourism", "artwork"),
+                               ("historic", "memorial"), ("place", "suburb")):
+            item = {"place_id": 7, "osm_type": "way", "osm_id": 7, "lat": "35.7", "lon": "51.4",
+                    "category": category, "type": kind, "name": "پارک هنر",
+                    "display_name": "پارک هنر, تهران", "address": {}, "extratags": {}}
+            self.assertIsNone(osm.row_from_item(item, input_id="هنر"), f"{category}/{kind}")
+        shop = {"place_id": 8, "osm_type": "node", "osm_id": 8, "lat": "35.7", "lon": "51.4",
+                "category": "shop", "type": "musical_instrument", "name": "فروشگاه ساز",
+                "display_name": "فروشگاه ساز, تهران", "address": {}, "extratags": {}}
+        self.assertIsNotNone(osm.row_from_item(shop, input_id="ساز"))
 
     def test_engine_tries_category_and_single_word_when_phrase_is_thin(self):
         """سناریوی واقعی مهاباد: عبارت کامل صفر، «موسیقی» یک لید واقعی."""
