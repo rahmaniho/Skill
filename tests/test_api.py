@@ -286,6 +286,101 @@ class ApiTestCase(unittest.TestCase):
         self.assertIn("docker", data["engine"])
         self.assertIn("reason", data["engine"])
 
+    # ── صف اجراها و تحویل ایمیلی (لایهٔ عملیاتی) ──────────────────────────────
+    def test_14_queue_endpoints(self):
+        status, data = self.get("/api/queue")
+        self.assertEqual(status, 200)
+        self.assertEqual(data["backend"], "sqlite")
+        self.assertIn(data["mode"], ("auto", "always", "never"))
+        self.assertFalse(data["active"])          # پایگاه‌داده محلی → صف خاموش
+        for key in ("pending", "running", "done", "failed", "oldest_wait_s", "workers"):
+            self.assertIn(key, data["stats"])
+        self.assertIsInstance(data["jobs"], list)
+        self.assertIn(data["engine"]["active"], ("docker", "demo", "unavailable"))
+        self.assertTrue(data["worker"])
+
+        status, data = self.get("/api/queue/jobs?status=done&limit=5")
+        self.assertEqual(status, 200)
+        self.assertTrue(data["statuses"])
+        self.assertEqual(data["statuses"][0], {"id": "pending", "fa": "در صف"})
+        self.assertTrue(all(job["status"] == "done" for job in data["jobs"]))
+
+        status, data = self.get("/api/queue/jobs?status=nope")
+        self.assertEqual(status, 400)
+        self.assertIn("وضعیت نامعتبر", data["error"])
+
+    def test_15_delivery_status(self):
+        status, data = self.get("/api/delivery/status")
+        self.assertEqual(status, 200)
+        self.assertIn(data["transport"], ("none", "smtp", "gmail_api"))
+        self.assertEqual(data["configured"], data["transport"] != "none")
+        self.assertIsInstance(data["recipients"], list)
+        if data["transport"] == "none":
+            self.assertIn("GMAIL_REFRESH_TOKEN", data["hint"])
+
+    def test_16_delivery_digest_dry_run(self):
+        status, data = self.post("/api/delivery/digest",
+                                 {"to": "ops@example.com", "dry_run": True, "limit": 3})
+        self.assertEqual(status, 200)
+        self.assertEqual(data["status"], "dry_run")
+        self.assertEqual(data["target"], "ops@example.com")
+        self.assertLessEqual(data["shown"], 3)
+        self.assertTrue(Path(data["path"]).exists())
+        if data.get("attachment"):
+            self.assertTrue(data["attachment"].endswith(".xlsx"))
+
+        # بدون گیرنده و بدون DIGEST_TO → خطای قابل‌فهم
+        status, data = self.post("/api/delivery/digest", {"dry_run": True})
+        self.assertEqual(status, 400)
+        self.assertIn("گیرنده", data["error"])
+
+    def test_17_delivery_drafts_dry_run(self):
+        status, data = self.post("/api/delivery/drafts", {"limit": 2, "dry_run": True})
+        self.assertEqual(status, 200)
+        self.assertEqual(data["status"], "dry_run")
+        self.assertLessEqual(data["count"], 2)
+        self.assertEqual(len({item["path"] for item in data["items"]}), data["count"])
+
+    def test_18_queue_mode_run_goes_to_worker(self):
+        """در حالت صف، POST /api/runs کار را در صف می‌گذارد و ورکر تمامش می‌کند."""
+        from leadgen import config as config_mod, jobs, worker
+        with storage._connect() as conn:
+            conn.execute("delete from jobs")
+        original = config_mod.QUEUE_MODE
+        try:
+            config_mod.QUEUE_MODE = "always"
+            status, data = self.post("/api/runs", {
+                "niche_query": "کافه", "city_query": "تهران", "engine_mode": "demo",
+                "limit": 6, "depth": 2, "cols": "contact", "export_fmt": "csv"})
+            self.assertEqual(status, 202)
+            self.assertEqual(data["status"], "queued")
+            self.assertEqual(data["job_id"], data["run_id"])
+            self.assertTrue(data["note"])
+            self.assertGreaterEqual(data["queue"]["pending"], 1)
+            self.assertEqual(data["position"]["position"], 1)
+
+            # پیشرفت از پایگاه‌داده خوانده می‌شود (ورکر فرایند دیگری است)
+            status, progress = self.get(f"/api/runs/{data['run_id']}/progress")
+            self.assertEqual(status, 200)
+            self.assertEqual(progress["progress"]["status"], "queued")
+            self.assertIn("صف", progress["progress"]["message"])
+            self.assertEqual(storage.get_run(data["run_id"])["status"], "queued")
+
+            summary = worker.run_worker(once=True, engine_mode="demo", quiet=True)
+            self.assertEqual(summary["succeeded"], 1)
+            status, progress = self.get(f"/api/runs/{data['run_id']}/progress")
+            self.assertEqual(progress["progress"]["percent"], 100)
+            self.assertEqual(progress["progress"]["stage"], "done")
+            status, detail = self.get(f"/api/runs/{data['run_id']}")
+            self.assertEqual(status, 200)
+            self.assertEqual(detail["run"]["status"], "done")
+            self.assertGreater(detail["run"]["total"], 0)
+            self.assertEqual(jobs.queue_position(data["run_id"]), None)
+        finally:
+            config_mod.QUEUE_MODE = original
+            with storage._connect() as conn:
+                conn.execute("delete from jobs")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

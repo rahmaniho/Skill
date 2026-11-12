@@ -602,9 +602,17 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
         raise
 
 
-def engine_status(engine: Engine | None = None) -> dict:
+def engine_status(engine: Engine | str | None = None) -> dict:
+    """وضعیت موتور.
+
+    هم شیء `Engine` (که `run_scrape` می‌سازد) و هم نام حالت («docker»/«demo»/«auto»،
+    که ورکر و API می‌فرستند) پذیرفته می‌شود. پیش‌تر آرگومان نادیده گرفته می‌شد و همیشه
+    `ENGINE_MODE` محیط گزارش می‌شد — یعنی ورکر با `--engine docker` هم «دمو» می‌دید.
+    """
     from .engine import engine_status as _status
-    return _status()
+    if engine is None or isinstance(engine, str):
+        return _status(engine or None)
+    return _status(getattr(engine, "name", None) or config.ENGINE_MODE)
 
 
 def rescore_run(run_id: str, profile: str, on_progress: ProgressFn | None = None) -> dict:

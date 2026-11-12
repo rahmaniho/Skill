@@ -1,0 +1,23 @@
+{
+  "_meta": {
+    "source": "Supabase Postgres — public.search_leads(params jsonb)",
+    "project": "pavjktfopfgqdvdntzit",
+    "captured": "2026-10-26",
+    "method": "یک کوئری با `with cases(name, params) as (values ...)` که هر ۱۳ سناریو را روی تابع SQL اجرا کرد و نتیجه را با jsonb_object_agg برگرداند",
+    "fixture": "eq-run-1 (8 لید قطعی از site/data/sample.json)",
+    "note": "مقادیر عیناً از خروجی زندهٔ Postgres کپی شده‌اند؛ شمارش‌های صفر هم که Postgres برمی‌گرداند حفظ شده‌اند (سمت مقایسه صفرها را نادیده می‌گیرد)."
+  },
+  "all": {"total": 8, "returned": 8, "ids": ["eq-run-1-l01", "eq-run-1-l02", "eq-run-1-l03", "eq-run-1-l06", "eq-run-1-l04", "eq-run-1-l05", "eq-run-1-l07", "eq-run-1-l08"], "segments": {"hot": 3, "cold": 2, "warm": 3}, "contact": {"has_email": 4, "has_phone": 8, "has_social": 4, "has_website": 5}, "score_min": 52, "score_max": 91, "distances": []},
+  "q_tehran": {"total": 6, "returned": 6, "ids": ["eq-run-1-l01", "eq-run-1-l06", "eq-run-1-l04", "eq-run-1-l05", "eq-run-1-l07", "eq-run-1-l08"], "segments": {"hot": 1, "cold": 2, "warm": 3}, "contact": {"has_email": 2, "has_phone": 6, "has_social": 3, "has_website": 3}, "score_min": 52, "score_max": 91, "distances": []},
+  "q_dental": {"total": 2, "returned": 2, "ids": ["eq-run-1-l02", "eq-run-1-l03"], "segments": {"hot": 2}, "contact": {"has_email": 2, "has_phone": 2, "has_social": 1, "has_website": 2}, "score_min": 86, "score_max": 87, "distances": []},
+  "hot": {"total": 3, "returned": 3, "ids": ["eq-run-1-l01", "eq-run-1-l02", "eq-run-1-l03"], "segments": {"hot": 3}, "contact": {"has_email": 3, "has_phone": 3, "has_social": 2, "has_website": 3}, "score_min": 86, "score_max": 91, "distances": []},
+  "email_strong": {"total": 4, "returned": 4, "ids": ["eq-run-1-l01", "eq-run-1-l02", "eq-run-1-l03", "eq-run-1-l06"], "segments": {"hot": 3, "warm": 1}, "contact": {"has_email": 4, "has_phone": 4, "has_social": 2, "has_website": 3}, "score_min": 75, "score_max": 91, "distances": []},
+  "geo_20km": {"total": 6, "returned": 6, "ids": ["eq-run-1-l01", "eq-run-1-l06", "eq-run-1-l04", "eq-run-1-l05", "eq-run-1-l07", "eq-run-1-l08"], "segments": {"hot": 1, "cold": 2, "warm": 3}, "contact": {"has_email": 2, "has_phone": 6, "has_social": 3, "has_website": 3}, "score_min": 52, "score_max": 91, "distances": [11448, 11926, 826, 5241, 823, 4723]},
+  "geo_2km": {"total": 2, "returned": 2, "ids": ["eq-run-1-l04", "eq-run-1-l07"], "segments": {"cold": 1, "warm": 1}, "contact": {"has_email": 0, "has_phone": 2, "has_social": 1, "has_website": 1}, "score_min": 53, "score_max": 75, "distances": [826, 823]},
+  "no_website": {"total": 3, "returned": 3, "ids": ["eq-run-1-l06", "eq-run-1-l04", "eq-run-1-l05"], "segments": {"warm": 3}, "contact": {"has_email": 1, "has_phone": 3, "has_social": 0, "has_website": 0}, "score_min": 75, "score_max": 75, "distances": []},
+  "sort_rating": {"total": 8, "returned": 8, "ids": ["eq-run-1-l03", "eq-run-1-l01", "eq-run-1-l02", "eq-run-1-l04", "eq-run-1-l05", "eq-run-1-l06", "eq-run-1-l08", "eq-run-1-l07"], "segments": {"hot": 3, "cold": 2, "warm": 3}, "contact": {"has_email": 4, "has_phone": 8, "has_social": 4, "has_website": 5}, "score_min": 52, "score_max": 91, "distances": []},
+  "sort_title": {"total": 8, "returned": 8, "ids": ["eq-run-1-l06", "eq-run-1-l04", "eq-run-1-l08", "eq-run-1-l03", "eq-run-1-l02", "eq-run-1-l05", "eq-run-1-l01", "eq-run-1-l07"], "segments": {"hot": 3, "cold": 2, "warm": 3}, "contact": {"has_email": 4, "has_phone": 8, "has_social": 4, "has_website": 5}, "score_min": 52, "score_max": 91, "distances": []},
+  "instagram": {"total": 1, "returned": 1, "ids": ["eq-run-1-l02"], "segments": {"hot": 1}, "contact": {"has_email": 1, "has_phone": 1, "has_social": 1, "has_website": 1}, "score_min": 87, "score_max": 87, "distances": []},
+  "paged": {"total": 8, "returned": 3, "ids": ["eq-run-1-l06", "eq-run-1-l04", "eq-run-1-l05"], "segments": {"hot": 3, "cold": 2, "warm": 3}, "contact": {"has_email": 4, "has_phone": 8, "has_social": 4, "has_website": 5}, "score_min": 52, "score_max": 91, "distances": []},
+  "gap_no_website": {"total": 0, "returned": 0, "ids": [], "segments": {}, "contact": {"has_email": 0, "has_phone": 0, "has_social": 0, "has_website": 0}, "score_min": 0, "score_max": 0, "distances": []}
+}

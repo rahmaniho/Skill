@@ -63,6 +63,18 @@ class JobResult:
 # ─────────────────────────────────────────────────────────────────────────────
 # ۱) موتور واقعی: gosom/google-maps-scraper داخل داکر روی localhost
 # ─────────────────────────────────────────────────────────────────────────────
+def _api_body(body: dict) -> dict:
+    """بدنهٔ ارسالی به API موتور را تمیز می‌کند.
+
+    پایپ‌لاین چند کلید داخلی با پیشوند `_` (مثل `_niche` که یک شیء است، نه JSON) در
+    بدنه می‌گذارد تا موتور دمو از آن استفاده کند. موتور واقعی باید آن‌ها را نبیند، وگرنه
+    `json.dumps` با TypeError می‌شکند و **هر اجرای واقعی** شکست می‌خورد.
+    """
+    from .cloud import jsonable
+    return {key: jsonable(value) for key, value in (body or {}).items()
+            if not str(key).startswith("_")}
+
+
 class DockerEngine:
     name = "docker"
     live = True
@@ -108,7 +120,7 @@ class DockerEngine:
                    if body.get(key) is None or body.get(key) == "" or body.get(key) == []]
         if missing:
             raise EngineError(f"فیلدهای الزامی job ناقص است: {', '.join(missing)} (API خطای 422 می‌دهد)")
-        payload = dict(body)
+        payload = _api_body(body)
         # قرارداد اسکیل: lat/lon رشته، max_time ثانیه، email پیش‌فرض روشن
         payload["lat"] = str(payload["lat"])
         payload["lon"] = str(payload["lon"])

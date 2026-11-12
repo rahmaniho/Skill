@@ -12,6 +12,11 @@
   GET  /api/runs/{id}/campaign  متن کمپین برای یک لید یا همه
   POST /api/runs/{id}/rescore   امتیازدهی مجدد با پروفایل دیگر
   POST /api/import           وارد کردن CSV/JSON موجود و امتیازدهی آن
+  GET  /api/queue            وضعیت صف اجراها (آمار + کارها + موتور)
+  GET  /api/queue/jobs       فهرست کارهای صف با فیلتر وضعیت
+  GET  /api/delivery/status  وضعیت پیکربندی ایمیل و آخرین گزارش ارسال‌شده
+  POST /api/delivery/digest  ارسال ایمیل گزارش لیدهای داغ (+ پیوست اکسل)
+  POST /api/delivery/drafts  ساخت پیش‌نویس تماس در Gmail برای لیدها
   PATCH/POST /api/leads/{id}    تغییر وضعیت پیگیری (مینی‌CRM)
   DELETE /api/runs/{id}      حذف اجرا و لیدهایش
 
@@ -30,8 +35,8 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import (analytics, campaign, config, engine as engine_mod, enrich, exports,
-               geo, niches, pipeline, regions, scoring, smart, storage)
+from . import (analytics, campaign, config, delivery, engine as engine_mod, enrich,
+               exports, geo, jobs, niches, pipeline, regions, scoring, smart, storage)
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
@@ -89,9 +94,47 @@ def record_progress(run_id: str, payload: dict) -> None:
                 _PROGRESS.pop(key, None)
 
 
+def _persisted_progress(run_id: str) -> dict:
+    """پیشرفت ذخیره‌شده در پایگاه‌داده (`runs.progress`) — منبع حقیقت در حالت صف."""
+    try:
+        run = storage.get_run(run_id) or {}
+    except Exception:                       # پایگاه‌دادهٔ ابری موقتاً در دسترس نیست
+        return {}
+    persisted = run.get("progress") or {}
+    if not isinstance(persisted, dict) or not persisted:
+        return {}
+    payload = dict(persisted)
+    payload.setdefault("run_id", run_id)
+    payload.setdefault("status", run.get("status"))
+    if run.get("status") == "queued":
+        position = jobs.queue_position(run_id) or {}
+        payload.setdefault("message", position.get("message") or "در صف اجرا — منتظر ورکر…")
+        payload["queue"] = position
+    return payload
+
+
 def get_progress(run_id: str) -> dict:
+    """پیشرفت اجرا — تازه‌ترین منبع برنده است.
+
+    در حالت محلی، رشتهٔ پس‌زمینه پیشرفت را در حافظهٔ همین فرایند می‌نویسد. در حالت صف
+    (ابر)، ورکر روی ماشین دیگری است و پیشرفت را در پایگاه‌داده می‌گذارد؛ بنابراین نسخهٔ
+    حافظه (که فقط «در صف» اولیه را دارد) نباید روی دادهٔ تازه‌ترِ ورکر سایه بیندازد.
+    """
     with _PROGRESS_LOCK:
-        return dict(_PROGRESS.get(run_id) or {})
+        local = dict(_PROGRESS.get(run_id) or {})
+    persisted = _persisted_progress(run_id)
+    if not persisted:
+        return local
+    if not local:
+        return persisted
+
+    def stamp(payload: dict) -> float:
+        try:
+            return float(payload.get("ts") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    return persisted if stamp(persisted) >= stamp(local) else local
 
 
 MIME = {
@@ -361,6 +404,29 @@ class Handler(BaseHTTPRequestHandler):
         if match:
             return self._json({"progress": get_progress(match.group(1))})
 
+        if path == "/api/queue":
+            return self._json(self._queue_snapshot(query))
+
+        if path == "/api/queue/jobs":
+            status = query.get("status") or None
+            if status and status not in storage.JOB_STATUSES:
+                raise ApiError(f"وضعیت نامعتبر: {status}. مجاز: {', '.join(storage.JOB_STATUSES)}")
+            return self._json({"jobs": storage.list_jobs(status, limit=_int(query.get("limit"), 50)),
+                               "statuses": [{"id": k, "fa": storage.job_status_fa(k)}
+                                            for k in storage.JOB_STATUSES]})
+
+        if path == "/api/delivery/status":
+            return self._json({
+                "transport": config.email_transport(),
+                "recipients": config.digest_recipients(),
+                "app_url": config.app_base_url(),
+                "configured": config.email_transport() != "none",
+                "last_digest": storage.last_delivery("digest"),
+                "hint": ("برای ارسال واقعی، GMAIL_REFRESH_TOKEN + GMAIL_CLIENT_ID + "
+                         "GMAIL_CLIENT_SECRET (روی Vercel) یا GMAIL_APP_PASSWORD (محلی) "
+                         "را در .env بگذارید.") if config.email_transport() == "none" else "",
+            })
+
         match = re.fullmatch(r"/api/leads/([\w\-]+)", path)
         if match:
             lead = storage.get_lead(match.group(1))
@@ -444,6 +510,37 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/import" and method == "POST":
             return self._import_leads()
+
+        if path == "/api/delivery/digest" and method == "POST":
+            body = self._read_json()
+            recipients = [x.strip() for x in str(body.get("to") or "").split(",") if x.strip()]
+            try:
+                result = delivery.send_digest(
+                    body.get("run_id") or None, to=recipients or None,
+                    segment=(body.get("segment") or "hot") or None,
+                    min_score=_int(body.get("min_score")) or None,
+                    limit=_int(body.get("limit")) or None, subject=body.get("subject") or "",
+                    with_xlsx=bool(body.get("with_xlsx", True)),
+                    dry_run=(None if body.get("dry_run") is None else bool(body["dry_run"])),
+                    transport=body.get("transport") or None)
+            except delivery.DeliveryError as exc:
+                raise ApiError(str(exc)) from exc
+            if result.get("status") == "skipped":
+                raise ApiError("گیرنده‌ای مشخص نشده است — «to» را بفرستید یا DIGEST_TO را "
+                               "در .env تنظیم کنید.")
+            return self._json(result)
+
+        if path == "/api/delivery/drafts" and method == "POST":
+            body = self._read_json()
+            try:
+                return self._json(delivery.create_drafts(
+                    _int(body.get("limit"), 10), channel=body.get("channel") or "email",
+                    min_score=_int(body.get("min_score")) or None,
+                    run_id=body.get("run_id") or None, sender=body.get("sender") or None,
+                    dry_run=(None if body.get("dry_run") is None else bool(body["dry_run"])),
+                    transport=body.get("transport") or None))
+            except delivery.DeliveryError as exc:
+                raise ApiError(str(exc)) from exc
 
         if path == "/api/smart/parse" and method == "POST":
             body = self._read_json()
@@ -717,6 +814,23 @@ class Handler(BaseHTTPRequestHandler):
                                "«لغو دریافت» را در هر پیام نگه دارید (GDPR / CCPA / CAN-SPAM). "
                                "از ارسال انبوه بدون شخصی‌سازی خودداری کنید.")})
 
+    def _queue_snapshot(self, query: dict) -> dict:
+        """وضعیت صف برای داشبورد: آمار + کارها + جای اجراها."""
+        stats = storage.queue_stats()
+        limit = _int(query.get("limit"), 20)
+        payload = {
+            "mode": config.QUEUE_MODE,
+            "active": jobs.queue_mode_active(),
+            "backend": config.DB_BACKEND,
+            "worker": config.WORKER_ID,
+            "stats": stats,
+            "jobs": storage.list_jobs(None, limit=limit),
+            "engine": pipeline.engine_status(None),
+        }
+        if stats.get("oldest_wait_s"):
+            payload["wait_seconds"] = jobs.wait_time(stats["oldest_wait_s"])
+        return payload
+
     def _start_run(self, body: dict) -> None:
         """اجرا را در یک رشته پس‌زمینه شروع می‌کند و فوراً شناسه را برمی‌گرداند."""
         request = pipeline.ScrapeRequest.from_dict(body)
@@ -739,6 +853,22 @@ class Handler(BaseHTTPRequestHandler):
             "socials": request.socials, "emails": request.emails,
             "engine": request.engine_mode or config.ENGINE_MODE, "live": None,
         })
+        # ── حالت صف (ابر/serverless): ورکر جداگانه اجرا را برمی‌دارد ────────────
+        if jobs.queue_mode_active():
+            queued = jobs.enqueue_run(request_dict, run_id=preview_id)
+            position = jobs.queue_position(preview_id) or {}
+            record_progress(preview_id, {
+                "stage": "queued", "status": "queued", "percent": 1,
+                "message": position.get("message") or "در صف اجرا — منتظر ورکر…",
+                "run_id": preview_id, "job_id": queued["job_id"], "queue": position})
+            return self._json({
+                "run_id": preview_id, "status": "queued", "request": request_dict,
+                "poll": f"/api/runs/{preview_id}", "job_id": queued["job_id"],
+                "queue": queued.get("queue") or storage.queue_stats(),
+                "position": position,
+                "note": ("اجرا در صف است؛ ورکر (Codespace/داکر) آن را برمی‌دارد. "
+                         "وضعیت زنده: " + f"/api/runs/{preview_id}/progress")}, 202)
+
         record_progress(preview_id, {"stage": "queued", "status": "pending", "percent": 1,
                                      "message": "در صف اجرا…", "run_id": preview_id})
 
