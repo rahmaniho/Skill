@@ -453,40 +453,230 @@ class DemoEngine:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# موتورهای واقعیِ بدون داکر (OSM / Google Places) — برای اجرای زنده روی Vercel
+# ─────────────────────────────────────────────────────────────────────────────
+class OSMEngine:
+    """دادهٔ واقعی OpenStreetMap (Nominatim) — بدون داکر و بدون کلید."""
+
+    name = "osm"
+    live = True
+
+    def health(self) -> dict:
+        from .providers import osm
+        return osm.health()
+
+    def run_job(self, body: dict, on_progress: ProgressFn | None = None) -> tuple[str, list[dict]]:
+        from .providers import osm
+        from .providers.osm import OSMDownError
+
+        started = time.time()
+        budget = max(15.0, float(body.get("max_time") or 60))
+        lang = str(body.get("lang") or "fa")
+        place = str(body.get("city_label") or "")
+        keywords = [k for k in (body.get("keywords") or []) if str(k).strip()]
+        terms: list[str] = []
+        for kw in keywords[:4]:
+            term = osm.clean_term(str(kw), place)
+            if term and term.lower() not in [t.lower() for t in terms]:
+                terms.append(term)
+        if not terms:
+            raise EngineError("برای موتور OSM هیچ کلیدواژه‌ای نبود.")
+
+        bbox = body.get("bbox")
+        if not (isinstance(bbox, (list, tuple)) and len(bbox) == 4):
+            try:
+                lat = float(body.get("lat"))
+                lon = float(body.get("lon"))
+                bbox = osm._bbox_from_radius(lat, lon, int(body.get("radius") or 10000))
+            except (TypeError, ValueError):
+                bbox = None
+        country = str(body.get("country") or "").strip() or config.OSM_COUNTRY
+
+        rows: list[dict] = []
+        errors: list[str] = []
+        for index, term in enumerate(terms):
+            left = budget - (time.time() - started)
+            if left < 6:
+                break
+            if on_progress:
+                on_progress({"stage": "working", "status": "working", "percent": int(
+                    100 * index / max(1, len(terms))),
+                    "job_id": body.get("name") or "osm",
+                    "message": f"[OSM] جست‌وجو: «{term}» ({index + 1}/{len(terms)})"})
+            try:
+                found = osm.search(term, bbox=bbox, country=country, limit=config.OSM_LIMIT,
+                                   timeout=min(12.0, left), lang=lang, input_id=term)
+            except OSMDownError as exc:
+                errors.append(f"{term}: {exc}")
+                continue
+            seen = {r.get("place_id") for r in rows}
+            rows.extend([r for r in found if r.get("place_id") not in seen])
+
+        if not rows:
+            raise EngineError(
+                "موتور OSM نتیجه‌ای نداد" + (f" ({'; '.join(errors[:2])})" if errors else
+                " — عبارت یا محدوده را عوض کنید."))
+        if on_progress:
+            on_progress({"stage": "ok", "status": "ok", "job_id": body.get("name") or "osm",
+                         "percent": 100, "message":
+                         f"[OSM] {len(rows)} ردیف واقعی از {len(terms)} کلیدواژه"})
+        return str(body.get("name") or "osm-job"), rows
+
+
+class PlacesEngine:
+    """Google Places API — مسیر تجاری (کلید لازم)."""
+
+    name = "places"
+    live = True
+
+    def health(self) -> dict:
+        from .providers import places
+        return places.health()
+
+    def run_job(self, body: dict, on_progress: ProgressFn | None = None) -> tuple[str, list[dict]]:
+        from .providers import places
+        from .providers.places import PlacesError
+
+        started = time.time()
+        budget = max(15.0, float(body.get("max_time") or 60))
+        lang = str(body.get("lang") or "fa")
+        try:
+            lat = float(body.get("lat"))
+            lon = float(body.get("lon"))
+        except (TypeError, ValueError):
+            lat = lon = None
+        radius = int(body.get("radius") or 10000)
+        place = str(body.get("city_label") or "")
+        keywords = [str(k).strip() for k in (body.get("keywords") or []) if str(k).strip()]
+        want = max(1, int(body.get("limit") or 20))
+
+        rows: list[dict] = []
+        errors: list[str] = []
+        for index, keyword in enumerate(keywords[:3]):
+            left = budget - (time.time() - started)
+            if left < 6 or len(rows) >= want:
+                break
+            term = keyword if place and place.lower() in keyword.lower() else (
+                f"{keyword} {place}".strip())
+            if on_progress:
+                on_progress({"stage": "working", "status": "working",
+                             "job_id": body.get("name") or "places",
+                             "percent": int(100 * index / max(1, min(3, len(keywords)))),
+                             "message": f"[Places] {term} ({index + 1}/{min(3, len(keywords))})"})
+            try:
+                found = places.search(term, lat=lat, lon=lon, radius=radius,
+                                      limit=min(20, want - len(rows)), lang=lang,
+                                      timeout=min(15.0, left), input_id=keyword)
+            except PlacesError as exc:
+                errors.append(f"{keyword}: {exc}")
+                continue
+            seen = {r.get("place_id") for r in rows}
+            rows.extend([r for r in found if r.get("place_id") not in seen])
+        if not rows:
+            raise EngineError("موتور Places نتیجه‌ای نداد" +
+                              (f" ({'; '.join(errors[:2])})" if errors else ""))
+        if on_progress:
+            on_progress({"stage": "ok", "status": "ok", "job_id": body.get("name") or "places",
+                         "percent": 100, "message": f"[Places] {len(rows)} ردیف"})
+        return str(body.get("name") or "places-job"), rows
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # انتخاب موتور
 # ─────────────────────────────────────────────────────────────────────────────
 def make_engine(mode: str | None = None, base_url: str | None = None) -> Engine:
-    """`auto` → اگر موتور داکر بالا بود واقعی، وگرنه دمو (با پیام روشن)."""
+    """انتخاب موتور.
+
+    `auto` به ترتیب: داکر (گوگل‌مپ واقعی) → Google Places (اگر کلید باشد) →
+    OpenStreetMap (واقعی، بدون کلید) → دمو. یعنی همیشه یا دادهٔ واقعی می‌دهد یا
+    با دلیل روشن به دمو می‌افتد — و روی Vercel هم کار می‌کند.
+    """
     mode = (mode or config.ENGINE_MODE or "auto").lower()
     docker = DockerEngine(base_url=base_url)
     if mode == "demo":
         return DemoEngine()
-    if mode == "docker":
+    if mode in ("docker", "google", "scraper"):
         return docker
-    return docker if docker.health().get("up") else DemoEngine()
+    if mode in ("osm", "openstreetmap"):
+        return OSMEngine()
+    if mode in ("places", "google_places", "api"):
+        return PlacesEngine()
+    # auto
+    if docker.health().get("up"):
+        return docker
+    if config.PLACES_API_KEY:
+        return PlacesEngine()
+    osm_engine = OSMEngine()
+    if osm_engine.health().get("up"):
+        return osm_engine
+    return DemoEngine()
 
 
 def engine_status(mode: str | None = None) -> dict:
-    """وضعیت کامل موتور برای داشبورد: کدام فعال است و چرا."""
+    """وضعیت کامل موتور برای داشبورد: کدام فعال است و چرا.
+
+    زنجیرهٔ `auto`: داکر (گوگل‌مپ) → Google Places (اگر کلید باشد) → OpenStreetMap
+    (واقعی، بدون کلید) → دمو. `live` یعنی دادهٔ واقعی از اینترنت می‌آید.
+    """
     docker = DockerEngine()
     docker_health = docker.health()
     active_mode = (mode or config.ENGINE_MODE or "auto").lower()
+    osm_health: dict = {}
+    places_health: dict = {}
+
+    def _osm() -> dict:
+        nonlocal osm_health
+        if not osm_health:
+            from .providers import osm
+            osm_health = osm.health()
+        return osm_health
+
+    def _places() -> dict:
+        nonlocal places_health
+        if not places_health:
+            from .providers import places
+            places_health = places.health()
+        return places_health
+
     if active_mode == "demo":
-        active = "demo"
-        reason = "ENGINE_MODE=demo در تنظیمات"
-    elif active_mode == "docker":
+        active, reason = "demo", "ENGINE_MODE=demo در تنظیمات"
+    elif active_mode in ("docker", "google", "scraper"):
         active = "docker" if docker_health.get("up") else "unavailable"
         reason = "موتور واقعی" if docker_health.get("up") else docker_health.get("error", "در دسترس نیست")
-    else:
-        active = "docker" if docker_health.get("up") else "demo"
-        reason = ("موتور داکر روی " + docker_health["base_url"]) if docker_health.get("up") \
-            else "داکر/موتور در دسترس نبود → حالت دمو (داده نمونه، پایپ‌لاین کامل)"
+    elif active_mode in ("osm", "openstreetmap"):
+        up = bool(_osm().get("up"))
+        active = "osm" if up else "unavailable"
+        reason = "OpenStreetMap (دادهٔ واقعی)" if up else (_osm().get("error") or "OSM در دسترس نیست")
+    elif active_mode in ("places", "google_places", "api"):
+        if not config.PLACES_API_KEY:
+            active, reason = "unavailable", "PLACES_API_KEY تنظیم نشده است"
+        else:
+            up = bool(_places().get("up"))
+            active = "places" if up else "unavailable"
+            reason = "Google Places API (دادهٔ واقعی)" if up else (_places().get("error") or "در دسترس نیست")
+    else:  # auto
+        if docker_health.get("up"):
+            active = "docker"
+            reason = "موتور داکر روی " + docker_health.get("base_url", config.SCRAPER_BASE_URL)
+        elif config.PLACES_API_KEY:
+            active = "places"
+            reason = "Google Places API (کلید تنظیم شده)"
+        elif _osm().get("up"):
+            active = "osm"
+            reason = "OpenStreetMap — دادهٔ واقعی بدون داکر"
+        else:
+            active = "demo"
+            reason = "نه داکر، نه کلید Places، نه دسترسی OSM → دادهٔ نمونه (پایپ‌لاین کامل)"
+
     return {
         "mode": active_mode,
         "active": active,
-        "live": active == "docker",
+        "live": active in ("docker", "osm", "places"),
         "reason": reason,
         "docker": docker_health,
+        "osm": osm_health or ({"up": None} if not config.SELF_DRIVE else {}),
+        "places": places_health or {"key_set": bool(config.PLACES_API_KEY)},
+        "chain": ["docker", "places", "osm", "demo"],
         "base_url": config.SCRAPER_BASE_URL,
         "proxies": len(config.SCRAPER_PROXIES),
     }
