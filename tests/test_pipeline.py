@@ -699,6 +699,9 @@ class ProvinceSweepPipelineTest(unittest.TestCase):
         lahijan = next(c for c in cities if c["city"] == "لاهیجان")
         self.assertEqual(lahijan["rows"], 0)
         self.assertEqual(lahijan["via"], "")
+        # هشدارها در بستهٔ آمار می‌مانند (بعد از بسته شدن مرورگر هم قابل خواندن‌اند)
+        stored = " ".join(result.analytics.get("warnings") or [])
+        self.assertIn("پوشش استانی", stored)
 
     def test_city_request_has_no_sweep(self):
         captured: list[dict] = []

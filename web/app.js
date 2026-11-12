@@ -606,6 +606,11 @@ function renderAnalysis(a, run) {
   $("#statReachable").textContent = `${fa(a.coverage.reachable)}`;
   $("#statReachNote").textContent = `${fa(a.coverage_percent.reachable || 0)}٪ از کل لیدها`;
 
+  // گزارش اجرا (هشدارها): بعد از بسته شدن مرورگر هم از پایگاه‌داده خوانده می‌شود
+  const notes = Array.isArray(a.warnings) ? a.warnings : [];
+  $("#warningsCard").hidden = !notes.length;
+  $("#runWarnings").innerHTML = notes.map((w) => `<li class="note">${esc(w)}</li>`).join("");
+
   $("#insightsList").innerHTML = (a.insights || []).length
     ? a.insights.map((i) => `<li class="${esc(i.kind)}">${esc(i.fa)}</li>`).join("")
     : empty("بینشی تولید نشد");
