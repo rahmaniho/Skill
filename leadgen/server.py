@@ -982,13 +982,22 @@ class Handler(BaseHTTPRequestHandler):
         record_progress(result.get("run_id") or job.get("run_id") or job["id"], {
             "stage": "done" if result.get("ok") else "failed",
             "status": "done" if result.get("ok") else "failed", "percent": 100,
-            "message": (f"تکمیل شد — {result.get('total', 0)} لید ({result.get('hot', 0)} داغ)"
-                        if result.get("ok") else f"خطا: {result.get('error', 'نامشخص')}"),
+            "message": self._tick_message(result),
             "stats": {"total": result.get("total", 0), "hot": result.get("hot", 0)},
             "error": "" if result.get("ok") else str(result.get("error") or ""),
             "run_id": result.get("run_id") or job.get("run_id") or job["id"],
         })
         return self._json(result, 200 if result.get("ok") else 200)
+
+    @staticmethod
+    def _tick_message(result: dict) -> str:
+        """پیام پایان کار — برای اجرای خالی، پیشنهاد عملی به‌جای «۰ لید»."""
+        if not result.get("ok"):
+            return f"خطا: {result.get('error', 'نامشخص')}"
+        if result.get("empty") or not result.get("total"):
+            return ("در این محدوده چیزی پیدا نشد — محدودهٔ بزرگ‌تری (کل شهر/استان) یا صنف "
+                    "دیگری را امتحان کن؛ برای پوشش بیشتر کلید Google Places را بگذار.")
+        return f"تکمیل شد — {result.get('total', 0)} لید ({result.get('hot', 0)} داغ)"
 
     def _queue_snapshot(self, query: dict) -> dict:
         """وضعیت صف برای داشبورد: آمار + کارها + جای اجراها."""

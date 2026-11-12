@@ -43,6 +43,19 @@ class EngineError(RuntimeError):
     pass
 
 
+class EmptyResult(EngineError):
+    """موتور واقعی پاسخ داد ولی چیزی پیدا نشد (نه خطا؛ «خالی»).
+
+    تفاوت مهم: خالی بودن نتیجه در یک محله یا شهر کوچک طبیعی است و نباید اجرا را
+    «ناموفق» و سه بار تکرار کند. پایپ‌لاین این خطا را به اجرای موفق با صفر لید
+    تبدیل می‌کند و پیشنهاد می‌دهد محدوده را بزرگ‌تر یا صنف را عوض کنند.
+    """
+
+    def __init__(self, message: str, tried: list[str] | None = None):
+        super().__init__(message)
+        self.tried = tried or []
+
+
 class Engine(Protocol):
     name: str
     live: bool
@@ -427,7 +440,11 @@ class DemoEngine:
         keywords = list(body.get("keywords") or [])
         if not keywords:
             raise EngineError("هیچ کلیدواژه‌ای داده نشد.")
-        seed = self._seed(json.dumps(body, sort_keys=True, ensure_ascii=False, default=str))
+        # کلیدهای داخلیِ مخصوص موتورهای واقعی نباید خروجی دمو را عوض کنند؛
+        # وگرنه با هر تغییر کوچک در پایپ‌لاین، دادهٔ شبیه‌سازی‌شده عوض می‌شود.
+        seed_body = {k: v for k, v in body.items()
+                     if k not in ("osm_terms", "province_label", "province_bbox")}
+        seed = self._seed(json.dumps(seed_body, sort_keys=True, ensure_ascii=False, default=str))
         rnd = random.Random(seed)
         job_id = hashlib.sha1(str(seed).encode()).hexdigest()[:8]
         job_id = f"demo-{job_id}-{''.join(rnd.choice('0123456789abcdef') for _ in range(4))}"
@@ -475,12 +492,32 @@ class OSMEngine:
         place = str(body.get("city_label") or "")
         keywords = [k for k in (body.get("keywords") or []) if str(k).strip()]
         terms: list[str] = []
-        for kw in keywords[:4]:
+        for kw in keywords:
             term = osm.clean_term(str(kw), place)
             if term and term.lower() not in [t.lower() for t in terms]:
                 terms.append(term)
+        # اگر رابط انگلیسی بود، نام فارسی صنف هم اضافه می‌شود؛ دادهٔ OSM ایران
+        # بیشتر فارسی است و همین یک نکته تفاوت «صفر نتیجه» و «نتیجهٔ واقعی» است.
+        niche_obj = body.get("_niche")
+        if not str(lang).startswith("fa") and niche_obj is not None:
+            for extra in [getattr(niche_obj, "fa", "")] + list(getattr(niche_obj, "keywords_fa", [])[:2]):
+                extra = osm.clean_term(str(extra or ""), place)
+                if extra and extra.lower() not in [t.lower() for t in terms]:
+                    terms.append(extra)
+        # معادل‌های دسته‌ای انگلیسی (راز اصلی بازدهی): Nominatim با «dentist» در
+        # تهران ۴۰+ نتیجه می‌دهد و با «دندانپزشکی» ۱ نتیجه.
+        category_terms = [str(t).strip() for t in (body.get("osm_terms") or []) if str(t).strip()]
+        if not category_terms:
+            from . import osm_terms as lexicon
+
+            seen_texts = [str(getattr(niche_obj, "fa", "") or "")] + list(keywords[:2])
+            category_terms = lexicon.derive(seen_texts)
+        for term in reversed(category_terms[:4]):
+            if term.lower() not in [t.lower() for t in terms]:
+                terms.insert(0, term)       # دسته‌ای‌ها اول امتحان می‌شوند
         if not terms:
             raise EngineError("برای موتور OSM هیچ کلیدواژه‌ای نبود.")
+        terms = terms[:9]
 
         bbox = body.get("bbox")
         if not (isinstance(bbox, (list, tuple)) and len(bbox) == 4):
@@ -494,6 +531,7 @@ class OSMEngine:
 
         rows: list[dict] = []
         errors: list[str] = []
+        tried: list[str] = []
         for index, term in enumerate(terms):
             left = budget - (time.time() - started)
             if left < 6:
@@ -503,19 +541,100 @@ class OSMEngine:
                     100 * index / max(1, len(terms))),
                     "job_id": body.get("name") or "osm",
                     "message": f"[OSM] جست‌وجو: «{term}» ({index + 1}/{len(terms)})"})
+            seen = {r.get("place_id") for r in rows}
+
+            def add(found: list[dict], label: str) -> int:
+                """ردیف‌های تازه را اضافه می‌کند و تعداد نتیجهٔ *غیرتکراریِ* این
+                جست‌وجو را برمی‌گرداند؛ نتیجهٔ تکراری هم یعنی «این عبارت کار کرد»."""
+                tried.append(label)
+                fresh = [r for r in found if r.get("place_id") not in seen]
+                seen.update(r.get("place_id") for r in fresh)
+                rows.extend(fresh)
+                return len(found)
+
             try:
-                found = osm.search(term, bbox=bbox, country=country, limit=config.OSM_LIMIT,
-                                   timeout=min(12.0, left), lang=lang, input_id=term)
+                got = osm.search(term, bbox=bbox, country=country, limit=config.OSM_LIMIT,
+                                 timeout=min(12.0, left), lang=lang, input_id=term)
             except OSMDownError as exc:
                 errors.append(f"{term}: {exc}")
+                got = []
+            if add(got, term):
                 continue
-            seen = {r.get("place_id") for r in rows}
-            rows.extend([r for r in found if r.get("place_id") not in seen])
+            # راه دوم: کلمهٔ کلیدیِ تنهایی — عبارت کامل فارسی در OSM کم نتیجه می‌دهد
+            variants: list[str] = []
+            if any("\u0600" <= ch <= "\u06FF" for ch in term):
+                from . import osm_terms as lexicon
+
+                variants = lexicon.term_variants(term)
+            hit = False
+            for variant in variants:
+                left = budget - (time.time() - started)
+                if left < 6:
+                    break
+                if variant.lower() == term.lower():
+                    continue
+                try:
+                    found = osm.search(variant, bbox=bbox, country=country,
+                                       limit=config.OSM_LIMIT, timeout=min(12.0, left),
+                                       lang=lang, input_id=variant)
+                except OSMDownError as exc:
+                    errors.append(f"{variant}: {exc}")
+                    continue
+                if add(found, variant):
+                    hit = True
+                    break
+            if hit:
+                continue
+            # راه‌های پهن‌تر فقط وقتی هیچ نتیجه‌ای نداریم اجرا می‌شوند؛
+            # وگرنه صرفاً سهمیهٔ Nominatim (۱ درخواست/ثانیه) هدر می‌رود.
+            if rows:
+                continue
+            # راه دوم: جست‌وجوی متنی با نام شهر، بعد فیلتر محدوده (پوشش بیشتر، خطای کمتر)
+            if place:
+                left = budget - (time.time() - started)
+                if left < 6:
+                    break
+                try:
+                    wide = osm.search(f"{term} {place}", country=country,
+                                      limit=config.OSM_LIMIT, timeout=min(12.0, left),
+                                      lang=lang, input_id=term)
+                except OSMDownError as exc:
+                    errors.append(f"{term} + {place}: {exc}")
+                    wide = []
+                if wide and bbox:
+                    inside = [r for r in wide if osm.within(r, bbox, margin=0.35)]
+                    wide = inside or []
+                if add(wide, f"{term} + {place}"):
+                    continue
+            # راه سوم: کل استان — شهرهای کوچک OSM پوشش کمی دارند
+            prov_label = str(body.get("province_label") or "")
+            prov_bbox = body.get("province_bbox")
+            if prov_label and prov_bbox:
+                left = budget - (time.time() - started)
+                if left < 6:
+                    break
+                try:
+                    broad = osm.search(f"{term} {prov_label}", bbox=list(prov_bbox),
+                                       country=country, limit=config.OSM_LIMIT,
+                                       timeout=min(14.0, left), lang=lang, input_id=term)
+                except OSMDownError as exc:
+                    errors.append(f"{term} + {prov_label}: {exc}")
+                    broad = []
+                if add(broad, f"{term} + {prov_label}"):
+                    if on_progress:
+                        on_progress({
+                            "stage": "working", "status": "working",
+                            "job_id": body.get("name") or "osm",
+                            "message": f"[OSM] در شهر نبود؛ {len(broad)} مورد از کل "
+                                       f"{prov_label} اضافه شد (خارج از محدودهٔ شهر)."})
+                    continue
 
         if not rows:
-            raise EngineError(
-                "موتور OSM نتیجه‌ای نداد" + (f" ({'; '.join(errors[:2])})" if errors else
-                " — عبارت یا محدوده را عوض کنید."))
+            detail = f" ({'; '.join(errors[:2])})" if errors else ""
+            raise EmptyResult(
+                "در این محدوده چیزی پیدا نشد" + detail +
+                " — OSM در شهرهای کوچک پوشش کمی دارد؛ محدودهٔ بزرگ‌تری را امتحان کن یا "
+                "کلید Google Places را بگذار.", tried=tried)
         if on_progress:
             on_progress({"stage": "ok", "status": "ok", "job_id": body.get("name") or "osm",
                          "percent": 100, "message":
@@ -573,8 +692,9 @@ class PlacesEngine:
             seen = {r.get("place_id") for r in rows}
             rows.extend([r for r in found if r.get("place_id") not in seen])
         if not rows:
-            raise EngineError("موتور Places نتیجه‌ای نداد" +
-                              (f" ({'; '.join(errors[:2])})" if errors else ""))
+            raise EmptyResult("در این محدوده چیزی پیدا نشد" +
+                              (f" ({'; '.join(errors[:2])})" if errors else ""),
+                              tried=keywords[:3])
         if on_progress:
             on_progress({"stage": "ok", "status": "ok", "job_id": body.get("name") or "places",
                          "percent": 100, "message": f"[Places] {len(rows)} ردیف"})
@@ -584,6 +704,21 @@ class PlacesEngine:
 # ─────────────────────────────────────────────────────────────────────────────
 # انتخاب موتور
 # ─────────────────────────────────────────────────────────────────────────────
+def _resolve_mode(mode: str | None) -> str:
+    """درخواست «auto» رابط با «پین» سرور جمع می‌شود.
+
+    اگر گردانندهٔ سرور `ENGINE_MODE` را روی یک موتور مشخص بگذارد (مثلاً `demo` یا
+    `places`)، درخواست `auto`ِ رابط همان پین را می‌گیرد؛ وگرنه هر اجرا می‌توانست
+    ناخواسته موتور دیگری (و هزینهٔ دیگری) را روشن کند. انتخاب صریح کاربر
+    (`osm`، `demo`، …) همیشه برنده است.
+    """
+    wanted = (mode or "").strip().lower()
+    pinned = (config.ENGINE_MODE or "").strip().lower()
+    if wanted in ("", "auto") and pinned not in ("", "auto"):
+        return pinned
+    return wanted or pinned or "auto"
+
+
 def make_engine(mode: str | None = None, base_url: str | None = None) -> Engine:
     """انتخاب موتور.
 
@@ -591,7 +726,7 @@ def make_engine(mode: str | None = None, base_url: str | None = None) -> Engine:
     OpenStreetMap (واقعی، بدون کلید) → دمو. یعنی همیشه یا دادهٔ واقعی می‌دهد یا
     با دلیل روشن به دمو می‌افتد — و روی Vercel هم کار می‌کند.
     """
-    mode = (mode or config.ENGINE_MODE or "auto").lower()
+    mode = _resolve_mode(mode)
     docker = DockerEngine(base_url=base_url)
     if mode == "demo":
         return DemoEngine()
@@ -620,7 +755,7 @@ def engine_status(mode: str | None = None) -> dict:
     """
     docker = DockerEngine()
     docker_health = docker.health()
-    active_mode = (mode or config.ENGINE_MODE or "auto").lower()
+    active_mode = _resolve_mode(mode)
     osm_health: dict = {}
     places_health: dict = {}
 

@@ -21,8 +21,8 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from . import regions
-from . import analytics, campaign, config, enrich, exports, geo, niches, scoring, storage
-from .engine import Engine, EngineError, make_engine
+from . import analytics, campaign, config, enrich, exports, geo, niches, osm_terms, scoring, storage
+from .engine import EmptyResult, Engine, EngineError, make_engine
 
 ProgressFn = Callable[[dict], None]
 
@@ -359,6 +359,8 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
             # اسکیل کیت: همه کلیدواژه‌ها در یک job (به‌جای شلیک jobهای زیاد)
             chunks = [keywords]
 
+        province_meta = regions.province_info(request.province) if request.province else {}
+
         def make_body(term_list: list[str], name: str, cell: dict | None = None) -> dict:
             body = {
                 "name": name,
@@ -380,6 +382,12 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                 "city_key": city.get("key") or "",
                 "country": country,
                 "bbox": city["bbox"],
+                "osm_terms": osm_terms.derive([niche.fa, *niche.keywords_fa[:2],
+                                               *niche.keywords_en[:2],
+                                               str(request.niche_query or "")]),
+                "province_label": (province_meta.get("fa") if is_fa
+                                   else province_meta.get("en")) or "",
+                "province_bbox": province_meta.get("bbox"),
                 "lang_fa": is_fa,
             }
             if cell:
@@ -397,6 +405,7 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
         total_specs = max(1, len(specs))
         rows: list[dict] = []
         job_ids: list[str] = []
+        empty_hit: EmptyResult | None = None
 
         def on_job_progress(payload: dict, spec_index: int) -> None:
             """پیشرفت موتور را به بازه ۸٪ تا ۷۰٪ کل اجرا نقشه می‌کند."""
@@ -421,6 +430,13 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
             try:
                 job_id, spec_rows = engine.run_job(
                     spec, lambda payload, i=index: on_job_progress(payload, i))
+            except EmptyResult as exc:
+                # «چیزی پیدا نشد» خطا نیست؛ اجرا با صفر لید تمام می‌شود
+                empty_hit = exc
+                if total_specs == 1:
+                    break
+                warnings.append(f"job {index}/{total_specs}: {str(exc).strip()[:200]}")
+                continue
             except Exception as exc:
                 # شکست یک job در حالت چندjob ≠ شکست کل اجرا
                 if total_specs == 1:
@@ -438,6 +454,33 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
             })
 
         if not rows:
+            if empty_hit is not None or engine.name in ("osm", "places"):
+                # «خالی» با «خطا» فرق دارد: اجرا با صفر لید تمام می‌شود تا کاربر
+                # پیام روشن ببیند و صف سه بار بیهوده تکرار نکند.
+                note = str(empty_hit) if empty_hit is not None else "در این محدوده چیزی پیدا نشد."
+                warnings.append(note)
+                warnings.append(
+                    "پیشنهاد: محدودهٔ بزرگ‌تری (کل شهر یا استان) یا صنف دیگری را امتحان کن. "
+                    "برای پوشش بیشتر، کلید Google Places API را در تنظیمات بگذار.")
+                _progress(on_progress, run_id, {
+                    "stage": "done", "status": "done", "percent": 100,
+                    "message": note, "run_id": run_id, "empty": True})
+                empty_run = dict(run_meta)
+                empty_run.update({"id": run_id, "total": 0, "hot": 0, "warm": 0, "cold": 0,
+                                  "avg_score": 0.0, "job_ids": job_ids, "status": "done"})
+                empty_run["analytics"] = analytics.build([], empty_run, niche)
+                storage.update_run(run_id, **empty_run)
+                return ScrapeResult(
+                    run_id=run_id, rows=[], analytics=empty_run["analytics"],
+                    run=storage.get_run(run_id) or empty_run, warnings=warnings,
+                    export_paths=[],
+                    stats={"total": 0, "hot": 0, "warm": 0, "cold": 0,
+                           "coverage": analytics.coverage([]),
+                           "enrichment": {"skipped": True}, "job_ids": job_ids,
+                           "engine": engine.name, "live": engine.live,
+                           "city": city["label_local"], "niche": niche.fa,
+                           "keywords": keywords, "sweep_niches": [], "jobs": len(job_ids),
+                           "empty": True})
             raise EngineError(
                 "همه jobها خالی/ناموفق بودند. احتمالاً IP موقتاً محدود شده — چند دقیقه صبر کنید، "
                 "depth را کم کنید یا پراکسی اضافه کنید."

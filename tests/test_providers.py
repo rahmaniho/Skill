@@ -142,6 +142,188 @@ class OSMProviderTest(unittest.TestCase):
         self.assertIn("OSM", str(ctx.exception))
 
 
+class OSMRobustnessTest(unittest.TestCase):
+    """سناریوهایی که در تولید واقعاً پیش آمد: شهر کوچک و رابط انگلیسی."""
+
+    def test_empty_result_is_not_engine_error_but_empty_result(self):
+        original = osm.search
+        osm.search = lambda term, **kw: []
+        try:
+            with self.assertRaises(engine.EmptyResult) as ctx:
+                engine.OSMEngine().run_job({
+                    "keywords": ["آموزشگاه موسیقی و هنر در مهاباد"],
+                    "city_label": "مهاباد", "max_time": 30, "lang": "en",
+                })
+        finally:
+            osm.search = original
+        self.assertIn("چیزی پیدا نشد", str(ctx.exception))
+        self.assertTrue(ctx.exception.tried)          # می‌گوید چه چیزهایی را امتحان کرد
+
+    def test_falls_back_to_text_query_with_place_name(self):
+        calls: list[str] = []
+
+        def fake_search(term, **kw):
+            calls.append(term)
+            if "ملارد" in term:                        # فقط «term + place» نتیجه بده
+                return [osm.row_from_item(NOMINATIM_ITEM, input_id=term)]
+            return []
+
+        original = osm.search
+        osm.search = fake_search
+        try:
+            _, rows = engine.OSMEngine().run_job({
+                "keywords": ["کلینیک دندان در ملارد"], "city_label": "ملارد",
+                "bbox": [35.60, 35.80, 50.90, 51.05], "max_time": 40, "lang": "fa",
+            })
+        finally:
+            osm.search = original
+        self.assertEqual(1, len(rows))
+        self.assertTrue(any("ملارد" in c for c in calls), calls)
+
+    def test_english_request_adds_persian_niche_terms(self):
+        seen: list[str] = []
+
+        def fake_search(term, **kw):
+            seen.append(term)
+            return []
+
+        from leadgen import niches
+        niche = niches.find_niche("موسیقی")
+        original = osm.search
+        osm.search = fake_search
+        try:
+            with self.assertRaises(engine.EmptyResult):
+                engine.OSMEngine().run_job({
+                    "keywords": ["music school in Mahabad"], "city_label": "Mahabad",
+                    "max_time": 25, "lang": "en", "_niche": niche,
+                })
+        finally:
+            osm.search = original
+        self.assertTrue(any("\u0600" <= ch <= "\u06FF" for term in seen for ch in term),
+                        f"هیچ کلیدواژهٔ فارسی امتحان نشد: {seen}")
+
+    def test_within_rejects_far_rows(self):
+        row = {"latitude": "35.70", "longitude": "51.40"}
+        self.assertTrue(osm.within(row, [35.60, 35.80, 51.30, 51.50]))
+        self.assertFalse(osm.within({"latitude": "36.30", "longitude": "45.70"},
+                                    [35.60, 35.80, 51.30, 51.50]))
+
+
+class EnginePinTest(unittest.TestCase):
+    """پین سرور (ENGINE_MODE) بر درخواست «auto» رابط اولویت دارد."""
+
+    def setUp(self):
+        self.saved = config.ENGINE_MODE
+
+    def tearDown(self):
+        config.ENGINE_MODE = self.saved
+
+    def test_auto_request_honours_server_pin(self):
+        config.ENGINE_MODE = "demo"
+        self.assertEqual("demo", engine.make_engine("auto").name)
+        self.assertEqual("demo", engine.make_engine("").name)
+        self.assertEqual("demo", engine._resolve_mode(None))
+
+    def test_explicit_request_beats_pin(self):
+        config.ENGINE_MODE = "demo"
+        self.assertEqual("osm", engine.make_engine("osm").name)
+
+    def test_auto_pin_keeps_chain(self):
+        config.ENGINE_MODE = "auto"
+        self.assertEqual("auto", engine._resolve_mode("auto"))
+
+
+class OSMTermsTest(unittest.TestCase):
+    """ترجمهٔ صنف فارسی به اصطلاح دسته‌ای انگلیسی + کلمهٔ کلیدی تنها."""
+
+    def test_music_niche_maps_to_osm_categories(self):
+        from leadgen import osm_terms
+        terms = osm_terms.derive(["آموزشگاه موسیقی و هنر", "کلاس گیتار"])
+        self.assertIn("music school", terms)
+        self.assertIn("musical instrument", terms)
+
+    def test_common_trades_map(self):
+        from leadgen import osm_terms
+        self.assertIn("dentist", osm_terms.derive(["دندانپزشکی"]))
+        self.assertIn("cafe", osm_terms.derive(["کافه"]))
+        self.assertTrue(any(t.startswith("car") for t in osm_terms.derive(["تعمیرگاه خودرو"])))
+
+    def test_term_variants_drop_generic_words(self):
+        from leadgen import osm_terms
+        self.assertEqual(["موسیقی", "هنر"], osm_terms.term_variants("آموزشگاه موسیقی و هنر"))
+        self.assertEqual([], osm_terms.term_variants("موسیقی"))
+
+    def test_engine_tries_category_and_single_word_when_phrase_is_thin(self):
+        """سناریوی واقعی مهاباد: عبارت کامل صفر، «موسیقی» یک لید واقعی."""
+        seen: list[str] = []
+        kazhaw = {
+            "place_id": 208555156, "osm_type": "node", "osm_id": 7688799085,
+            "lat": "36.7617440", "lon": "45.7170445", "category": "amenity",
+            "type": "music_school", "name": "Kazhaw Music Academy",
+            "display_name": "Kazhaw Music Academy, وفایی, Mahabad, Iran",
+            "address": {"city": "Mahabad"}, "extratags": {
+                "contact:instagram": "https://www.instagram.com/kazhaw_music_academy/",
+                "contact:facebook": "https://www.facebook.com/Kazhaw_music_academy/",
+            },
+        }
+
+        def fake_search(term, **kw):
+            seen.append(term)
+            return [osm.row_from_item(kazhaw, input_id=term)] if term == "موسیقی" else []
+
+        original = osm.search
+        osm.search = fake_search
+        try:
+            _, rows = engine.OSMEngine().run_job({
+                "keywords": ["آموزشگاه موسیقی و هنر در مهاباد"], "city_label": "مهاباد",
+                "bbox": [36.66, 36.86, 45.60, 45.84], "max_time": 40, "lang": "fa",
+                "osm_terms": ["music school", "musical instrument"],
+                "province_label": "آذربایجان غربی",
+                "province_bbox": [36.66, 38.65, 44.64, 46.22],
+            })
+        finally:
+            osm.search = original
+        self.assertEqual(1, len(rows))
+        self.assertEqual("Kazhaw Music Academy", rows[0]["title"])
+        self.assertIn("music school", seen)      # اصطلاح دسته‌ای امتحان شد
+        self.assertIn("موسیقی", seen)            # و کلمهٔ کلیدی تنها
+
+
+class EmptyRunPipelineTest(unittest.TestCase):
+    """اجرای خالی باید «تمام‌شده با صفر لید» ثبت شود، نه «ناموفق»."""
+
+    def test_empty_provider_completes_run_gracefully(self):
+        import tempfile
+        from pathlib import Path
+
+        from leadgen import config, pipeline
+
+        # مسیرها را روی خودِ ماژول عوض می‌کنیم (env بعد از import اثر ندارد و
+        # باعث می‌شد اجرای تست، پایگاه‌دادهٔ واقعیِ data/ را آلوده کند)
+        tmp = Path(tempfile.mkdtemp(prefix="leadgen-empty-"))
+        saved = (config.DATA_DIR, config.DB_PATH, config.EXPORT_DIR)
+        config.DATA_DIR, config.DB_PATH = tmp, tmp / "leadgen.db"
+        config.EXPORT_DIR = tmp / "exports"
+        original_search, original_health = osm.search, engine.OSMEngine.health
+        osm.search = lambda term, **kw: []
+        engine.OSMEngine.health = lambda self: {"up": True}
+        try:
+            request = pipeline.ScrapeRequest.from_dict({
+                "niche_query": "آموزشگاه موسیقی و هنر", "city_query": "مهاباد",
+                "engine_mode": "osm", "depth": 3, "limit": 50, "lang": "fa",
+            })
+            events: list[dict] = []
+            result = pipeline.run_scrape(request, on_progress=events.append)
+            self.assertEqual(0, result.stats["total"])
+            self.assertTrue(result.stats.get("empty"))
+            self.assertEqual("done", result.run.get("status"))
+            self.assertTrue(any("چیزی پیدا نشد" in w for w in result.warnings))
+            self.assertEqual("done", events[-1].get("stage"))
+        finally:
+            osm.search, engine.OSMEngine.health = original_search, original_health
+            config.DATA_DIR, config.DB_PATH, config.EXPORT_DIR = saved
+
+
 class PlacesProviderTest(unittest.TestCase):
     def test_row_from_place(self):
         row = places.row_from_place(PLACES_ITEM, input_id="دندانپزشکی")
@@ -190,6 +372,7 @@ class EngineChainTest(unittest.TestCase):
         original_key, original_mode = config.PLACES_API_KEY, config.ENGINE_MODE
         try:
             config.PLACES_API_KEY = "test-key"
+            config.ENGINE_MODE = "auto"     # بدون پین، «auto» یعنی زنجیرهٔ خودکار
             self.assertEqual("places", engine.make_engine("auto").name)
         finally:
             config.PLACES_API_KEY, config.ENGINE_MODE = original_key, original_mode

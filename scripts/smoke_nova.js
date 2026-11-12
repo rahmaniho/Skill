@@ -271,9 +271,11 @@ async function main() {
   check("run: داک اجرای فعال ظاهر شد", el("dock").hidden === false);
   check("run: کارت زنده باز شد", el("huntLive").hidden === false);
   const t0 = Date.now();
-  while (!global.TOASTS.some((t) => t.includes("تمام شد")) && Date.now() - t0 < 9000) await tick(120);
-  check("run: پیشرفت تا پایان پول شد", global.TOASTS.some((t) => t.includes("تمام شد")),
-    global.TOASTS.slice(-2).join(" | "));
+  const finished = () => global.TOASTS.some((t) => /تمام شد|چیزی نبود/.test(t));
+  // ۲۰ ثانیه: رانرهای CI کندترند و اجرای دمو (بدون شبکه) باید خیلی زودتر تمام شود
+  while (!finished() && Date.now() - t0 < 20000) await tick(120);
+  check("run: پیشرفت تا پایان پول شد", finished(),
+    `${Math.round((Date.now() - t0) / 1000)}s · ` + global.TOASTS.slice(-2).join(" | "));
   check("run: حلقهٔ داک درصد گرفت", Number(el("dockFill").attrs["stroke-dashoffset"]) >= 0,
     String(el("dockFill").attrs["stroke-dashoffset"]));
 

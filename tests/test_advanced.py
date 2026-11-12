@@ -224,7 +224,9 @@ class CampaignAndCliTests(unittest.TestCase):
         res = fast_sweep(limit=8, max_niches=2)
         lead = res.rows[0]
         msg = campaign.generate(lead, "email", campaign.Sender(name="تست"), None)
-        self.assertIn(lead["title"], msg["context"]["business"])
+        # نام نمایشی برای سلام، جداکننده‌ها را به «،» تبدیل می‌کند؛ پس با نرمال‌سازی مقایسه می‌شود
+        norm = lambda text: re.sub(r"[()|،\s]+", " ", text).strip()
+        self.assertEqual(norm(lead["title"]), norm(msg["context"]["business"]))
         self.assertTrue(msg["text"])
         self.assertEqual(len(msg["sequence"]), 3)
 

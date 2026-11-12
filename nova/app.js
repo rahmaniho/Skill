@@ -796,7 +796,12 @@
         maybeTick(p);
         if (p.stage === "done" || p.status === "done") {
           clearInterval(S.pollTimer); S.pollTimer = null;
-          N.toast("تمام شد! " + (p.stats ? fa(p.stats.total || 0) + " لید (" + fa(p.stats.hot || 0) + " داغ)" : ""), "ok", 5200);
+          var tot = p.stats ? (p.stats.total || 0) : null;
+          if (tot === 0) {
+            N.toast("توی این محدوده چیزی نبود — محدودهٔ بزرگ‌تری رو امتحان کن یا صنف رو عوض کن.", "warn", 6500);
+          } else {
+            N.toast("تمام شد! " + (p.stats ? fa(tot) + " لید (" + fa(p.stats.hot || 0) + " داغ)" : ""), "ok", 5200);
+          }
           S.run = null;
           setTimeout(function () { showLive(false); }, 2600);
           loadRuns();

@@ -77,17 +77,32 @@ jobs:
         run: |
           # دادهٔ نمونهٔ منطقه‌محور تا «جست‌وجوی قوی» و پروندهٔ لید هم پوشش داده شود
           python scripts/seed_demo_data.py --fresh
-          python -m leadgen.server --host 127.0.0.1 --port 8123 > /tmp/leadgen-server.log 2>&1 &
+          # این گام «رابط کاربری روی سرور واقعی» را می‌سنجد، نه سرعت موتور داده.
+          # رابط کاربری engine_mode=auto می‌فرستد؛ روی رانر (که اینترنت دارد) «auto»
+          # یعنی OSM زنده: اجرا از پنجرهٔ smoke بیرون می‌زند و به Nominatim هم بار می‌گذارد.
+          # ENGINE_MODE=demo پین سرور است و درخواستِ auto را به دمو می‌برد
+          # (انتخاب صریح کاربر مثل osm همیشه برنده است).
+          # مسیر واقعی OSM جداگانه و قطعی تست می‌شود: tests/test_osm_live_fake.py
+          ENGINE_MODE=demo python -m leadgen.server --host 127.0.0.1 --port 8123 \
+            > /tmp/leadgen-server.log 2>&1 &
           SERVER_PID=$!
           for _ in $(seq 1 60); do
             curl -sf http://127.0.0.1:8123/api/health > /dev/null && break
             sleep 0.5
           done
           STATUS=0
-          SMOKE_LIVE=http://127.0.0.1:8123 node scripts/smoke_mini.js || STATUS=$?
-          SMOKE_LIVE=http://127.0.0.1:8123 node scripts/smoke_nova.js || STATUS=$?
+          SMOKE_LIVE=http://127.0.0.1:8123 node scripts/smoke_mini.js > /tmp/smoke-mini.log 2>&1 || STATUS=$?
+          SMOKE_LIVE=http://127.0.0.1:8123 node scripts/smoke_nova.js > /tmp/smoke-nova.log 2>&1 || STATUS=$?
           kill "$SERVER_PID" 2>/dev/null || true
-          if [ "$STATUS" -ne 0 ]; then tail -40 /tmp/leadgen-server.log; fi
+          cat /tmp/smoke-mini.log
+          cat /tmp/smoke-nova.log
+          if [ "$STATUS" -ne 0 ]; then
+            # شکست‌ها را به‌صورت annotation منتشر می‌کند تا بدون لاگ هم دیده شود
+            grep -E "✗|❌|شکست|Error|error" /tmp/smoke-mini.log /tmp/smoke-nova.log | head -25 \
+              | while IFS= read -r line; do echo "::error title=smoke::$line"; done
+            echo "--- server log tail ---"
+            tail -40 /tmp/leadgen-server.log
+          fi
           exit "$STATUS"
 
       - name: Pages copies of the web UIs are in sync
