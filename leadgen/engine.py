@@ -704,6 +704,21 @@ class PlacesEngine:
 # ─────────────────────────────────────────────────────────────────────────────
 # انتخاب موتور
 # ─────────────────────────────────────────────────────────────────────────────
+def _resolve_mode(mode: str | None) -> str:
+    """درخواست «auto» رابط با «پین» سرور جمع می‌شود.
+
+    اگر گردانندهٔ سرور `ENGINE_MODE` را روی یک موتور مشخص بگذارد (مثلاً `demo` یا
+    `places`)، درخواست `auto`ِ رابط همان پین را می‌گیرد؛ وگرنه هر اجرا می‌توانست
+    ناخواسته موتور دیگری (و هزینهٔ دیگری) را روشن کند. انتخاب صریح کاربر
+    (`osm`، `demo`، …) همیشه برنده است.
+    """
+    wanted = (mode or "").strip().lower()
+    pinned = (config.ENGINE_MODE or "").strip().lower()
+    if wanted in ("", "auto") and pinned not in ("", "auto"):
+        return pinned
+    return wanted or pinned or "auto"
+
+
 def make_engine(mode: str | None = None, base_url: str | None = None) -> Engine:
     """انتخاب موتور.
 
@@ -711,7 +726,7 @@ def make_engine(mode: str | None = None, base_url: str | None = None) -> Engine:
     OpenStreetMap (واقعی، بدون کلید) → دمو. یعنی همیشه یا دادهٔ واقعی می‌دهد یا
     با دلیل روشن به دمو می‌افتد — و روی Vercel هم کار می‌کند.
     """
-    mode = (mode or config.ENGINE_MODE or "auto").lower()
+    mode = _resolve_mode(mode)
     docker = DockerEngine(base_url=base_url)
     if mode == "demo":
         return DemoEngine()
@@ -740,7 +755,7 @@ def engine_status(mode: str | None = None) -> dict:
     """
     docker = DockerEngine()
     docker_health = docker.health()
-    active_mode = (mode or config.ENGINE_MODE or "auto").lower()
+    active_mode = _resolve_mode(mode)
     osm_health: dict = {}
     places_health: dict = {}
 

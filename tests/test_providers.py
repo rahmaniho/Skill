@@ -209,6 +209,30 @@ class OSMRobustnessTest(unittest.TestCase):
                                     [35.60, 35.80, 51.30, 51.50]))
 
 
+class EnginePinTest(unittest.TestCase):
+    """پین سرور (ENGINE_MODE) بر درخواست «auto» رابط اولویت دارد."""
+
+    def setUp(self):
+        self.saved = config.ENGINE_MODE
+
+    def tearDown(self):
+        config.ENGINE_MODE = self.saved
+
+    def test_auto_request_honours_server_pin(self):
+        config.ENGINE_MODE = "demo"
+        self.assertEqual("demo", engine.make_engine("auto").name)
+        self.assertEqual("demo", engine.make_engine("").name)
+        self.assertEqual("demo", engine._resolve_mode(None))
+
+    def test_explicit_request_beats_pin(self):
+        config.ENGINE_MODE = "demo"
+        self.assertEqual("osm", engine.make_engine("osm").name)
+
+    def test_auto_pin_keeps_chain(self):
+        config.ENGINE_MODE = "auto"
+        self.assertEqual("auto", engine._resolve_mode("auto"))
+
+
 class OSMTermsTest(unittest.TestCase):
     """ترجمهٔ صنف فارسی به اصطلاح دسته‌ای انگلیسی + کلمهٔ کلیدی تنها."""
 
@@ -348,6 +372,7 @@ class EngineChainTest(unittest.TestCase):
         original_key, original_mode = config.PLACES_API_KEY, config.ENGINE_MODE
         try:
             config.PLACES_API_KEY = "test-key"
+            config.ENGINE_MODE = "auto"     # بدون پین، «auto» یعنی زنجیرهٔ خودکار
             self.assertEqual("places", engine.make_engine("auto").name)
         finally:
             config.PLACES_API_KEY, config.ENGINE_MODE = original_key, original_mode
