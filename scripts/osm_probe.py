@@ -49,6 +49,11 @@ def probe(city: str, niche: str = "", all_business: bool = False, limit: int = 4
 
     print(f"• {label} در {area['label']} — bbox {[round(x, 3) for x in bbox]} "
           f"({len(filters)} فیلتر، نام‌محور: {with_names})")
+    # اول «وضعیت سرویس» را می‌سنجیم: تفاوت «شبکه بسته است» و «کوئری غلط است»
+    # بدون این خط، خرابیِ شبکه با خرابیِ کد اشتباه گرفته می‌شود.
+    status_probe = osm.overpass_health(force=True)
+    print(f"  • وضعیت Overpass: up={status_probe.get('up')} "
+          f"({status_probe.get('ms', '?')}ms) {status_probe.get('error') or ''}".rstrip())
     query = osm.build_overpass_query(filters, bbox, limit=limit)
     t0 = time.time()
     try:
@@ -68,11 +73,13 @@ def probe(city: str, niche: str = "", all_business: bool = False, limit: int = 4
             print(f"    تلفن {with_phone} · سایت {with_site} · نشانی {with_addr} | "
                   f"دسته‌ها: {dict(sorted(cats.items(), key=lambda kv: -kv[1])[:5])}")
         result = {"ok": bool(rows), "city": area["label"], "rows": len(rows),
-                  "seconds": elapsed, "label": label, "query_chars": len(query)}
+                  "seconds": elapsed, "label": label, "query_chars": len(query),
+                  "service": status_probe}
     except Exception as exc:                             # noqa: BLE001 — گزارش روشن
         elapsed = round(time.time() - t0, 1)
         print(f"  ✗ Overpass: {type(exc).__name__}: {exc} ({elapsed}s)")
-        result = {"ok": False, "city": area["label"], "error": str(exc)[:200], "seconds": elapsed}
+        result = {"ok": False, "city": area["label"], "error": str(exc)[:300],
+                  "seconds": elapsed, "service": status_probe}
 
     # مقایسه: مسیر متنی قدیمی (Nominatim) روی همان شهر
     try:

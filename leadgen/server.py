@@ -460,7 +460,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/health":
             fresh = _flag(query, "fresh") is True
-            osm_health = engine_mod.engine_health("osm", force=fresh)
+            osm_health = engine_mod.engine_health("osm", force=fresh, probe=fresh)
             return self._json({
                 "ok": True,
                 "version": "1.0.0",
@@ -469,7 +469,8 @@ class Handler(BaseHTTPRequestHandler):
                 "db": storage.pipeline_stats(),
                 "sources": {"osm": osm_health,
                             "overpass": {"mode": config.OSM_MODE,
-                                         **engine_mod.engine_health("overpass", force=fresh)}},
+                                         **engine_mod.engine_health("overpass", force=fresh,
+                                                                   probe=fresh)}},
                 "tag_map": osm_tags_summary(),
             })
 
@@ -880,11 +881,17 @@ class Handler(BaseHTTPRequestHandler):
         else:
             filters = osm_tags.filters_for_niche(niche_obj.id, with_names=span < 0.6)
             label = niche_obj.fa
+        limit = max(20, min(_int(query.get("limit", 300), 300), 800))
+        deep = _flag(query, "deep") is True
         started = time.time()
         try:
-            rows = osm_provider.overpass_search(
-                filters, bbox=bbox, limit=max(20, min(_int(query.get("limit", 300), 300), 800)),
-                input_id="diag")
+            if deep:          # جاروی کامل: اگر نتیجه به سقف خورد، محدوده قطعه‌قطعه می‌شود
+                rows = osm_provider.overpass_search_area(
+                    filters, bbox=bbox, limit=osm_provider.overpass_limit_for(bbox, limit),
+                    input_id="diag", tiles=4, max_rows=4000)
+            else:
+                rows = osm_provider.overpass_search(filters, bbox=bbox, limit=limit,
+                                                   input_id="diag")
             error = ""
         except Exception as exc:                          # noqa: BLE001 — گزارش روشن
             rows, error = [], f"{type(exc).__name__}: {exc}"[:300]
@@ -897,7 +904,7 @@ class Handler(BaseHTTPRequestHandler):
             "city": area.get("label") or city_name, "city_key": key,
             "province": area.get("province", ""), "niche": label,
             "mode": config.OSM_MODE, "bbox": [round(x, 4) for x in bbox],
-            "filters": len(filters), "rows": len(rows), "seconds": elapsed,
+            "filters": len(filters), "rows": len(rows), "seconds": elapsed, "deep": deep,
             "with_phone": sum(1 for r in rows if r.get("phone")),
             "with_website": sum(1 for r in rows if r.get("website")),
             "with_address": sum(1 for r in rows if r.get("address")),

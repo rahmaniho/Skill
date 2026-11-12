@@ -133,6 +133,8 @@ OVERPASS_ENDPOINTS = [
 OVERPASS_MIN_INTERVAL = max(0.5, env_float("OVERPASS_MIN_INTERVAL", 1.0))
 OVERPASS_LIMIT = max(50, min(5000, env_int("OVERPASS_LIMIT", 800)))
 OVERPASS_TIMEOUT = max(8, min(90, env_int("OVERPASS_TIMEOUT", 30)))
+# کش نتیجهٔ Overpass: جست‌وجوی تکراری (همان شهر/صنف) بدون فشار دوباره به سرویس
+OVERPASS_CACHE_TTL = max(0, min(86400, env_int("OVERPASS_CACHE_TTL", 900)))
 PLACES_API_KEY = env("PLACES_API_KEY") or env("GOOGLE_MAPS_API_KEY")
 SELF_DRIVE = env("SELF_DRIVE", "1") != "0"
 
@@ -315,6 +317,7 @@ def summary() -> dict:
         "osm_mode": OSM_MODE,
         "overpass_endpoints": OVERPASS_ENDPOINTS,
         "overpass_limit": OVERPASS_LIMIT,
+        "overpass_cache_ttl": OVERPASS_CACHE_TTL,
         "places_key_set": bool(PLACES_API_KEY),
         "self_drive": SELF_DRIVE,
         "access_code_set": bool(ACCESS_CODE),

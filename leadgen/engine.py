@@ -561,13 +561,20 @@ class OSMEngine:
                         on_progress({"stage": "working", "status": "working", "percent": 6,
                                      "job_id": body.get("name") or "osm",
                                      "message": f"[OSM] جست‌وجوی تگ‌محور: {label}"})
+                    # در جست‌وجوی «کامل» (depth بالا) یا محدودهٔ بزرگ (استان)، اگر
+                    # نتیجه به سقف Overpass بخورد، محدوده به قطعه‌ها شکسته می‌شود.
+                    deep = int(body.get("depth") or 0) >= 5 or want_all
+                    area_span = max(abs(float(bbox[1]) - float(bbox[0])),
+                                    abs(float(bbox[3]) - float(bbox[2])))
+                    tiles = 4 if ((deep or area_span > 0.8) and left >= 35) else 1
                     try:
-                        found = osm.overpass_search(
+                        found = osm.overpass_search_area(
                             filters, bbox=list(bbox),
                             limit=osm.overpass_limit_for(list(bbox)),
                             timeout=min(float(config.OVERPASS_TIMEOUT), max(8.0, left - 4)),
                             input_id=(niche_id or (terms[0] if terms else "")),
-                            lang=lang)
+                            lang=lang, tiles=tiles,
+                            max_rows=min(1500, int(config.MAX_LEADS_PER_RUN or 1500)))
                     except OSMDownError as exc:
                         errors.append(f"overpass: {exc}")
                         found = []
@@ -810,16 +817,20 @@ def make_engine(mode: str | None = None, base_url: str | None = None) -> Engine:
     return DemoEngine()
 
 
-def engine_health(name: str, *, force: bool = False) -> dict:
-    """سلامت یک منبع دادهٔ مشخص: osm | nominatim | overpass | places | docker."""
+def engine_health(name: str, *, force: bool = False, probe: bool = True) -> dict:
+    """سلامت یک منبع دادهٔ مشخص: osm | nominatim | overpass | places | docker.
+
+    `probe=False` فقط کش را برمی‌گرداند تا پاسخ /api/health همیشه سریع باشد.
+    """
     key = (name or "").strip().lower()
     try:
         if key in ("osm", "nominatim"):
             from .providers import osm
-            return osm.health(force=force)
+            return osm.health(force=force) if probe else {"up": None, "endpoint": config.OSM_ENDPOINT,
+                                                          "note": "سنجیده نشده"}
         if key == "overpass":
             from .providers import osm
-            return osm.overpass_health(force=force)
+            return osm.overpass_health(force=force, probe=probe)
         if key == "places":
             from .providers import places
             return places.health()

@@ -171,3 +171,74 @@ class RowParsingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OverpassCacheAndTilingTests(unittest.TestCase):
+    """کش کوتاه‌مدت و شکستن محدوده: کامل‌تری و ادب استفاده از سرویس عمومی."""
+
+    def setUp(self):
+        osm.cache_clear()
+
+    def tearDown(self):
+        osm.cache_clear()
+
+    def _element(self, ident: int, lat: float, lon: float) -> dict:
+        return {"type": "node", "id": ident, "lat": lat, "lon": lon,
+                "tags": {"amenity": "cafe", "name": f"کافه {ident}"}}
+
+    def test_split_bbox_tiles_cover_area_without_gap(self):
+        tiles = osm.split_bbox([35.0, 36.0, 51.0, 52.0], 2, 2)
+        self.assertEqual(len(tiles), 4)
+        self.assertEqual(tiles[0][:2], [35.0, 35.5])
+        self.assertAlmostEqual(sum(t[1] - t[0] for t in tiles[:2]), 1.0)
+        # پوشش کامل بدون سوراخ: اجتماع عرض‌ها = عرض اصلی
+        for tile in tiles:
+            self.assertGreater(tile[1], tile[0])
+            self.assertGreater(tile[3], tile[2])
+
+    def test_cache_hit_avoids_second_network_call(self):
+        payload = {"elements": [self._element(1, 35.7, 51.4)]}
+        with mock.patch.object(osm, "_overpass_request", return_value=payload) as request:
+            first = osm.overpass_search(['["amenity"="cafe"]'], bbox=[35.6, 35.8, 51.3, 51.5],
+                                        limit=100, input_id="cafe")
+            second = osm.overpass_search(['["amenity"="cafe"]'], bbox=[35.6, 35.8, 51.3, 51.5],
+                                        limit=100, input_id="cafe")
+        self.assertEqual(request.call_count, 1)
+        self.assertEqual(len(first), 1)
+        self.assertEqual(first[0]["place_id"], second[0]["place_id"])
+        self.assertEqual(second[0]["input_id"], "cafe")
+
+    def test_cache_disabled_sends_every_request(self):
+        payload = {"elements": [self._element(2, 35.7, 51.4)]}
+        with mock.patch.object(config, "OVERPASS_CACHE_TTL", 0), \
+                mock.patch.object(osm, "_overpass_request", return_value=payload) as request:
+            for _ in range(2):
+                osm.overpass_search(['["amenity"="cafe"]'], bbox=[35.6, 35.8, 51.3, 51.5],
+                                    limit=100)
+        self.assertEqual(request.call_count, 2)
+
+    def test_area_crawl_splits_when_result_hits_limit(self):
+        calls = []
+
+        def fake_search(filters, *, bbox, limit=None, timeout=None, input_id="", lang="fa",
+                        cache=True):
+            calls.append(list(bbox))
+            if len(calls) == 1:
+                return [{"place_id": f"osm:node/{i}"} for i in range(limit)]
+            ident = len(calls)
+            return [{"place_id": f"osm:node/{ident}"}]
+
+        with mock.patch.object(osm, "overpass_search", side_effect=fake_search):
+            rows = osm.overpass_search_area(['["amenity"="cafe"]'],
+                                            bbox=[35.4, 35.9, 51.0, 51.7], limit=100, tiles=4)
+        self.assertEqual(len(calls), 5)                 # ۱ + ۴ قطعه
+        self.assertEqual(len(rows), 4)                  # اتحاد قطعه‌ها، بدون تکرار
+        self.assertEqual(len({r["place_id"] for r in rows}), 4)
+
+    def test_area_crawl_single_call_for_small_complete_result(self):
+        payload = {"elements": [self._element(3, 35.7, 51.4)]}
+        with mock.patch.object(osm, "_overpass_request", return_value=payload) as request:
+            rows = osm.overpass_search_area(['["amenity"="cafe"]'],
+                                            bbox=[35.6, 35.8, 51.3, 51.5], limit=100, tiles=4)
+        self.assertEqual(request.call_count, 1)
+        self.assertEqual(len(rows), 1)
