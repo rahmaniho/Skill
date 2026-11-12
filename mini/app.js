@@ -21,6 +21,24 @@
   const esc = (value) => String(value == null ? "" : value)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  function socialHref(platform, value) {
+    var base = { instagram: "https://instagram.com/", facebook: "https://facebook.com/",
+                 linkedin: "https://linkedin.com/company/" }[platform] || "";
+    var v = String(value == null ? "" : value).trim();
+    if (!v) return "";
+    if (/^https?:\/\//i.test(v)) return v;
+    if (/^(www\.)?(instagram\.com|instagr\.am|facebook\.com|fb\.com|fb\.me|linkedin\.com)\//i.test(v)) {
+      return "https://" + v.replace(/^https?:\/\//i, "");
+    }
+    return base + v.replace(/^@+/, "").replace(/[?#].*$/, "").replace(/\/+$/, "");
+  }
+  function socialName(platform, value) {
+    var v = String(value == null ? "" : value).trim();
+    if (!v) return "";
+    var m = v.match(/(?:instagram|facebook|linkedin)\.com\/(?:company\/)?([^/?#]+)/i);
+    return m ? "@" + m[1] : ("@" + v.replace(/^@+/, ""));
+  }
+
   const debounce = (fn, wait = 250) => {
     let timer = null;
     return (...args) => {
@@ -842,7 +860,7 @@
 
   function socialIcons(lead) {
     const items = [
-      { href: lead.instagram, label: "IG", title: "اینستاگرام" },
+      { href: socialHref("instagram", lead.instagram), label: "IG", title: "اینستاگرام" },
       { href: lead.facebook, label: "FB", title: "فیس‌بوک" },
       { href: lead.linkedin, label: "IN", title: "لینکدین" },
       { href: lead.website || (lead.domain ? `https://${lead.domain}` : ""), label: "🌐", title: "وب‌سایت" },
@@ -1121,7 +1139,7 @@
         ${field("تلفن", lead.phone ? `<a class="mono" href="tel:${esc(String(lead.phone).replace(/\s/g, ""))}">${esc(lead.phone)}</a>` : "", true)}
         ${field("ایمیل", emails.length ? emails.map((mail) => `<a class="mono" href="mailto:${esc(mail)}">${esc(mail)}</a>`).join("<br>") : "", true)}
         ${field("وب‌سایت", lead.website || lead.domain ? `<a class="mono" href="${esc(lead.website || `https://${lead.domain}`)}" target="_blank" rel="noopener">${esc(lead.domain || lead.website)}</a>` : "", true)}
-        ${field("اینستاگرام", lead.instagram ? `<a class="mono" href="${esc(lead.instagram)}" target="_blank" rel="noopener">${esc(lead.instagram.replace(/^https?:\/\/(www\.)?instagram\.com\//, "@"))}</a>` : "", true)}
+        ${field("اینستاگرام", lead.instagram ? `<a class="mono" href="${esc(socialHref("instagram", lead.instagram))}" target="_blank" rel="noopener">${esc(socialName("instagram", lead.instagram))}</a>` : "", true)}
         ${field("فیس‌بوک / لینکدین", [lead.facebook, lead.linkedin].filter(Boolean).map((href) => `<a class="mono" href="${esc(href)}" target="_blank" rel="noopener">${esc(href.replace(/^https?:\/\//, "").slice(0, 34))}</a>`).join("<br>") || "", true)}
         ${field("ستاره و نظر", `${lead.rating ? faNum(Number(lead.rating).toFixed(1)) : "—"} ★ · ${faNum(Number(lead.reviews || 0).toLocaleString("en-US"))} نظر`)}
         ${field("لوکیشن دقیق", lead.lat && lead.lon ? `<span class="mono">${Number(lead.lat).toFixed(6)}, ${Number(lead.lon).toFixed(6)}</span>` : "")}

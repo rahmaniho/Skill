@@ -161,3 +161,68 @@ class OpsCronSqlTests(unittest.TestCase):
     def test_readme_documents_the_database_driver(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("supabase/cron_tick.sql", readme)
+
+
+class SocialLinkContractTests(unittest.TestCase):
+    """لینک شبکه اجتماعی باید از «هندل» و «آدرس کامل» هر دو درست ساخته شود.
+
+    دادهٔ واقعی هم هندل می‌دهد (`cafesaadeh`) و هم لینک کامل
+    (`https://www.instagram.com/cafesaadeh/`). پیشوند زدنِ کورکورانه به لینک کامل،
+    آدرس خراب می‌سازد؛ پس هر رابط باید از `socialHref` استفاده کند.
+    """
+
+    SURFACES = {
+        "web": [ROOT / "web" / "app.js"],
+        "smart": [ROOT / "smart" / "app.js"],
+        "mini": [ROOT / "mini" / "app.js"],
+        "nova": [ROOT / "nova" / "app.js", ROOT / "nova" / "ui.js"],
+    }
+
+    def test_each_surface_defines_the_helper(self):
+        for name, files in self.SURFACES.items():
+            blob = "\n".join(f.read_text(encoding="utf-8") for f in files)
+            self.assertIn("function socialHref(", blob, name)
+            self.assertIn("function socialName(", blob, name)
+
+    def test_no_blind_prefix_on_social_links(self):
+        for name, files in self.SURFACES.items():
+            for f in files:
+                text = f.read_text(encoding="utf-8")
+                self.assertNotIn("instagram.com/${", text, f"{name}: {f.name}")
+                self.assertNotIn("instagram.com/' +", text, f"{name}: {f.name}")
+                self.assertNotIn("instagram.com/\" +", text, f"{name}: {f.name}")
+
+    def test_helper_handles_handle_and_full_url(self):
+        """منطق تابع باید هر سه ورودی را به یک آدرس مطلق برساند (اجرای واقعی در Node)."""
+        import shutil
+        import subprocess
+
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node در دسترس نیست")
+        script = r"""
+const fs = require("fs");
+const src = fs.readFileSync(process.argv[1], "utf8");
+const body = src.match(/function socialHref\(platform, value\) \{[\s\S]*?\n\}/)[0];
+eval(body);
+const out = [
+  socialHref("instagram", "cafesaadeh"),
+  socialHref("instagram", "@cafesaadeh"),
+  socialHref("instagram", "https://www.instagram.com/cafesaadeh/"),
+  socialHref("facebook", "facebook.com/xcafe"),
+  socialHref("linkedin", "parsa-clinic"),
+  socialHref("instagram", ""),
+];
+process.stdout.write(JSON.stringify(out));
+"""
+        result = subprocess.run([node, "-e", script, str(ROOT / "web" / "app.js")],
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        import json as json_mod
+        values = json_mod.loads(result.stdout)
+        self.assertEqual(values[0], "https://instagram.com/cafesaadeh")
+        self.assertEqual(values[1], "https://instagram.com/cafesaadeh")
+        self.assertEqual(values[2], "https://www.instagram.com/cafesaadeh/")
+        self.assertEqual(values[3], "https://facebook.com/xcafe")
+        self.assertEqual(values[4], "https://linkedin.com/company/parsa-clinic")
+        self.assertEqual(values[5], "")
