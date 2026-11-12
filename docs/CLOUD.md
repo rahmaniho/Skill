@@ -294,7 +294,11 @@ curl -s "$APP/api/diag/osm?city=تهران&niche=دندانپزشکی" | python3
 curl -s "$APP/api/diag/osm?city=اوز&all=1"                  # جاروی همهٔ اصناف
 curl -s "$APP/api/diag/osm?city=مشهد&niche=کافه&deep=1"     # با شکستن محدودهٔ شلوغ
 
-# تپش صف از بیرون (کرون GH Actions هر ۱۰ دقیقه همین را می‌زند)
+# تپش صف از بیرون
+#   ۱) راه اصلی: یک‌بار supabase/cron_tick.sql را در SQL Editor اجرا کنید
+#      (pg_cron هر ۲ دقیقه همین نقطه را می‌زند؛ بدون مرورگر و بدون GitHub)
+#   ۲) راه دوم: کرون GH Actions هر ۱۰ دقیقه (پشتیبان)
+#   ۳) دستی از هر ماشینی:
 python3 scripts/queue_tick.py --url "$APP" --repeat 3
 
 # آزمون‌ها

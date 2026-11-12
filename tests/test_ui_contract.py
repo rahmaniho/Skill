@@ -142,3 +142,22 @@ class UiContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class OpsCronSqlTests(unittest.TestCase):
+    """فایل زمان‌بندی Supabase باید همان قراردادی را داشته باشد که اپ انتظار دارد."""
+
+    def test_cron_sql_schedules_the_tick_endpoint(self):
+        sql = (ROOT / "supabase" / "cron_tick.sql").read_text(encoding="utf-8")
+        self.assertIn("cron.schedule", sql)
+        self.assertIn("net.http_get", sql)
+        self.assertIn("/api/worker/tick", sql)
+        self.assertIn("budget=", sql)
+        # دوباره‌اجرا باید بی‌خطر باشد (جایگزینی زمان‌بندی قبلی)
+        self.assertIn("cron.unschedule", sql)
+        self.assertIn("create extension if not exists pg_net", sql)
+        self.assertIn("create extension if not exists pg_cron", sql)
+
+    def test_readme_documents_the_database_driver(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("supabase/cron_tick.sql", readme)

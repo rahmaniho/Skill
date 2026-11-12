@@ -723,8 +723,12 @@ serverless بماند). همین سنجش در رابط «نُوا» هم هست
 روی Vercel پروسهٔ همیشه‌روشن نداریم. تا حالا فقط رابط کاربری صف را جلو می‌برد؛
 اگر کاربر تب را می‌بست، اجرا در صف می‌ماند. حالا:
 
-- `.github/workflows/queue-tick.yml` هر ۱۰ دقیقه `GET /api/worker/tick` را می‌زند
-  (تا ۳ تپش پشت‌سرهم، بودجهٔ ۴۵ ثانیه).
+- **راه اصلی (بدون هیچ سرویس بیرونی):** یک‌بار `supabase/cron_tick.sql` را در
+  SQL Editor اجرا کنید. `pg_cron` داخل خودِ Supabase هر ۲ دقیقه
+  `GET /api/worker/tick` را می‌زند؛ صف حتی با بسته بودن مرورگر و بدون GitHub
+  تمام می‌شود. (تست‌شده روی Production: کار `r13cron-test` → `done` در ۱۸ ثانیه.)
+- `.github/workflows/queue-tick.yml` به‌عنوان راه دوم هر ۱۰ دقیقه همان نقطه را
+  می‌زند (کرونِ GitHub گاهی تأخیر دارد؛ این یکی پشتیبان است).
 - همان کار از هر ماشینی: `python3 scripts/queue_tick.py --repeat 4`
 - تنظیم اپ مقصد با Variable به نام `LEADGEN_APP_URL` و کد دسترسی (اگر فعال است)
   با Secret به نام `LEADGEN_ACCESS_CODE`.
