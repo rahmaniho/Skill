@@ -726,7 +726,8 @@ class OSMEngine:
                     if fresh:
                         rows.extend(fresh)
                         tried.append(f"{term} @ {city_name}")
-                        _cover(city_name, box, rows=len(fresh), via="nominatim")
+                        # داده آمد → خطای تلاش قبلیِ Overpass نباید روی ردیف بماند
+                        _cover(city_name, box, rows=len(fresh), via="nominatim", error="")
                         found_here = True
                         break
                 if not found_here:

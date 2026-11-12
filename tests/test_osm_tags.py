@@ -500,6 +500,8 @@ class SweepFallbackTests(unittest.TestCase):
         self.assertEqual(coverage["رشت"]["via"], "overpass")
         self.assertEqual(coverage["لاهیجان"]["via"], "nominatim")
         self.assertEqual(coverage["لاهیجان"]["rows"], 1)
+        # شهری که با مسیر جایگزین داده داد، نباید خطای Overpass را با خود بکشد
+        self.assertEqual(coverage["لاهیجان"]["error"], "")
 
     def test_every_city_appears_once_in_coverage(self):
         """حتی وقتی هیچ شهری داده نداد، گزارش باید هر شهر را یک‌بار و با دلیل نشان دهد."""
