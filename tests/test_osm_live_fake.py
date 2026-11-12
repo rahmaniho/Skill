@@ -86,6 +86,16 @@ class FakeNominatimTest(unittest.TestCase):
 
     def setUp(self):
         SEEN.clear()
+        # این آزمون مسیر Nominatim را می‌سنجد؛ روی CI که اینترنت هست، Overpass واقعی
+        # می‌تواند ردیف بیاورد و آزمون را به شبکه وابسته کند (مسیر Overpass در
+        # tests/test_osm_tags.py سنجیده می‌شود).
+        from unittest import mock
+        self._overpass_off = [
+            mock.patch.object(osm, "overpass_search_area", return_value=[]),
+            mock.patch.object(osm, "overpass_search", return_value=[]),
+        ]
+        for patcher in self._overpass_off:
+            patcher.start()
         self.saved = (config.OSM_ENDPOINT, config.OSM_MIN_INTERVAL, config.DATA_DIR,
                       config.DB_PATH, config.EXPORT_DIR)
         config.OSM_ENDPOINT = f"http://127.0.0.1:{self.port}"
@@ -98,6 +108,8 @@ class FakeNominatimTest(unittest.TestCase):
         config.EXPORT_DIR = tmp / "exports"
 
     def tearDown(self):
+        for patcher in self._overpass_off:
+            patcher.stop()
         (config.OSM_ENDPOINT, config.OSM_MIN_INTERVAL, config.DATA_DIR,
          config.DB_PATH, config.EXPORT_DIR) = self.saved
 
