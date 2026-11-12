@@ -481,10 +481,10 @@ def share_for_box(box_left: float, phase_budget: float, remaining: int,
     بخورد، جست‌وجوی متنی (که سریع و پایدار است) هرگز اجرا نمی‌شود؛ نتیجه: صفر لید
     در شهری که داده دارد. پس همیشه چند ثانیه برای مسیر جایگزین کنار می‌گذاریم.
     """
-    reserve = 9.0 if single else 6.0
+    reserve = 12.0 if single else 6.0
     ceiling = max(8.0, float(box_left) - reserve)
     if single:
-        return max(8.0, min(ceiling, float(phase_budget), float(box_left) * 0.6))
+        return max(8.0, min(ceiling, float(phase_budget), float(box_left) * 0.55))
     return max(8.0, min(ceiling, float(phase_budget) / max(1, remaining) * 1.15))
 
 
