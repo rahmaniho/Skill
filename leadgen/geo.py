@@ -13,6 +13,7 @@ import time
 import unicodedata
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 from . import config
 
@@ -389,29 +390,6 @@ def _normalize(text: str) -> str:
     return text
 
 
-_CITY_LOOKUP: dict[str, str] = {}
-for _key in CITIES:
-    _CITY_LOOKUP[_key] = _key
-    _CITY_LOOKUP[_key.replace("-", " ")] = _key
-    for _alias in ALIASES.get(_key, []):
-        _CITY_LOOKUP[_normalize(_alias)] = _key
-
-
-def offline_lookup(place: str) -> str | None:
-    """تطبیق نام شهر با جدول داخلی → کلید شهر یا None."""
-    if not place:
-        return None
-    key = _CITY_LOOKUP.get(_normalize(place))
-    if key:
-        return key
-    # تطبیق جزئی: «رستوران در تهران» یا «tehran, iran»
-    norm = _normalize(place)
-    for candidate, mapped in _CITY_LOOKUP.items():
-        if len(candidate) >= 3 and candidate in norm:
-            return mapped
-    return None
-
-
 # نام فارسی کشورها (برای نمایش سلسله‌مراتب استان/کشور در رابط)
 COUNTRY_FA: dict[str, str] = {
     "IR": "ایران", "AE": "امارات متحده عربی", "QA": "قطر", "SA": "عربستان سعودی",
@@ -424,6 +402,121 @@ COUNTRY_FA: dict[str, str] = {
 def default_bbox(lat: float, lon: float, half_deg: float = 0.10) -> list[float]:
     """وقتی bbox واقعی نداریم، یک جعبه تقریبی حول مرکز شهر می‌سازیم."""
     return [lat - half_deg, lat + half_deg, lon - half_deg, lon + half_deg]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# شهرهای سراسری ایران (۱٬۳۰۰+ شهر، ۳۱ استان) — دادهٔ آزاد Wikidata (CC0)
+# فایل با `scripts/build_iran_cities.py` ساخته می‌شود؛ جدول دستی بالا اولویت دارد.
+# ─────────────────────────────────────────────────────────────────────────────
+IRAN_CITIES_PATH = Path(__file__).with_name("data") / "iran_cities.json"
+
+
+def _load_nationwide_cities() -> list[dict]:
+    try:
+        raw = json.loads(IRAN_CITIES_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    rows = raw.get("cities") if isinstance(raw, dict) else raw
+    return [row for row in (rows or []) if isinstance(row, dict) and row.get("k")]
+
+
+# جدول دستی (پیش از افزودن دادهٔ سراسری) — اسکریپت سازنده به همین نیاز دارد
+CURATED_CITIES: dict[str, tuple[float, float, str, list[float]]] = dict(CITIES)
+CURATED_ALIASES: dict[str, list[str]] = {k: list(v) for k, v in ALIASES.items()}
+
+NATIONWIDE_CITIES: list[dict] = _load_nationwide_cities()
+NATIONWIDE_INDEX: dict[str, dict] = {row["k"]: row for row in NATIONWIDE_CITIES}
+
+# کلید شهر → شناسهٔ استان (برای انتخاب‌گر آبشاری استان/شهر و فیلتر خروجی)
+CITY_PROVINCE: dict[str, str] = {}
+for _row in NATIONWIDE_CITIES:
+    if _row.get("p"):
+        CITY_PROVINCE[_row["k"]] = _row["p"]
+
+for _row in NATIONWIDE_CITIES:
+    _key = _row["k"]
+    _fa = (_row.get("fa") or "").strip()
+    if _key in CURATED_CITIES:              # نام دستی همان شهر معتبرتر است
+        _fa = ""
+    if _fa and any("\u0600" <= ch <= "\u06FF" for ch in _fa):
+        _aliases = ALIASES.setdefault(_key, [])
+        if _fa not in _aliases:
+            _aliases.insert(0, _fa)
+    if _key in CITIES:                      # نسخهٔ دستی/دقیق‌تر از قبل هست
+        continue
+    try:
+        _lat, _lon = float(_row["lat"]), float(_row["lon"])
+    except (KeyError, TypeError, ValueError):
+        continue
+    _pop = int(_row.get("pop") or 0)
+    CITIES[_key] = (_lat, _lon, "IR", default_bbox(_lat, _lon, 0.08 if _pop < 120_000 else 0.12))
+
+
+# شهرها به تفکیک استان، پرجمعیت‌ترین اول (برای ساخت درخت استان/شهر)
+NATIONWIDE_BY_PROVINCE: dict[str, list[str]] = {}
+for _row in sorted(NATIONWIDE_CITIES, key=lambda r: -int(r.get("pop") or 0)):
+    _province_id = _row.get("p")
+    if _province_id and _row["k"] in CITIES:
+        NATIONWIDE_BY_PROVINCE.setdefault(_province_id, []).append(_row["k"])
+
+
+_CITY_LOOKUP: dict[str, str] = {}
+for _key in CITIES:
+    _CITY_LOOKUP[_key] = _key
+    _CITY_LOOKUP[_key.replace("-", " ")] = _key
+    for _alias in ALIASES.get(_key, []):
+        _CITY_LOOKUP.setdefault(_normalize(_alias), _key)
+
+# نام فارسی/انگلیسی شهرهای سراسری؛ شهرهای پرجمعیت‌تر اول نامشان را ثبت می‌کنند
+# (مثل «مهاباد» که هم در آذربایجان غربی و هم در اصفهان هست).
+for _row in sorted(NATIONWIDE_CITIES, key=lambda r: -int(r.get("pop") or 0)):
+    _key = _row["k"]
+    for _name in (_row.get("fa"), _row.get("en")):
+        _norm_name = _normalize(_name or "")
+        if len(_norm_name) >= 3:
+            _CITY_LOOKUP.setdefault(_norm_name, _key)
+
+# برای تطبیق جزئی، بلندترین نام‌ها اول بررسی می‌شوند (دقیق‌تر و سریع‌تر)
+_PARTIAL_INDEX: list[tuple[str, str]] = sorted(
+    ((c, m) for c, m in _CITY_LOOKUP.items() if len(c) >= 3),
+    key=lambda pair: -len(pair[0]))
+
+
+def offline_lookup(place: str) -> str | None:
+    """تطبیق نام شهر با جدول داخلی → کلید شهر یا None."""
+    if not place:
+        return None
+    key = _CITY_LOOKUP.get(_normalize(place))
+    if key:
+        return key
+    # تطبیق جزئی: «رستوران در تهران» یا «tehran, iran»
+    norm = _normalize(place)
+    words = set(norm.split())
+    for candidate, mapped in _PARTIAL_INDEX:
+        if candidate in words:
+            return mapped
+        # زیررشته فقط برای نام‌های بلند؛ وگرنه «ارد» داخل «ندارد» تطبیق می‌خورد
+        if len(candidate) >= 5 and candidate in norm:
+            return mapped
+    return None
+
+
+_KNOWN_CACHE: list[dict] = []
+_KNOWN_INDEX: dict[str, dict] = {}
+
+
+def city_record(key: str) -> dict:
+    """یک رکورد شهر از حافظهٔ نهان (به‌جای ساختن کل فهرست در هر فراخوانی)."""
+    if not _KNOWN_CACHE:
+        known_cities()
+    return _KNOWN_INDEX.get(key, {})
+
+
+def _fa_name(key: str) -> str:
+    row = NATIONWIDE_INDEX.get(key)
+    if row:
+        return row.get("fa") or ""
+    return next((a for a in ALIASES.get(key, []) if a and _normalize(a) != _normalize(key)), "")
 
 
 def geocode(place: str, with_bbox: bool = False, allow_network: bool = True):
@@ -545,18 +638,29 @@ def dedupe(rows: list[dict]) -> list[dict]:
 
 def known_cities() -> list[dict]:
     """فهرست شهرهای موجود برای UI (جست‌وجوی شهر بدون نیاز به اینترنت)."""
+    if _KNOWN_CACHE:
+        return _KNOWN_CACHE
     items = []
-    for key, (lat, lon, country, bbox) in CITIES.items():
-        label = key.replace("-", " ").title()
+    for key, (lat, lon, country, _bbox) in CITIES.items():
+        label = (NATIONWIDE_INDEX.get(key) or {}).get("en") or key.replace("-", " ").title()
         aliases = [a for a in ALIASES.get(key, []) if a]
+        fa = _fa_name(key)
+        if fa and fa not in aliases:
+            aliases.insert(0, fa)
         items.append({
             "id": key,
             "label": label,
             "country": country,
             "lat": lat,
             "lon": lon,
-            "fa": aliases[0] if aliases else "",
+            "fa": fa,
+            "province": CITY_PROVINCE.get(key, ""),
+            "pop": int((NATIONWIDE_INDEX.get(key) or {}).get("pop") or 0),
             "aliases": aliases,
             "neighborhoods": NEIGHBORHOODS.get(key, []),
         })
-    return sorted(items, key=lambda c: (c["country"], c["label"]))
+    items.sort(key=lambda c: (c["country"], c["label"]))
+    _KNOWN_CACHE[:] = items
+    _KNOWN_INDEX.clear()
+    _KNOWN_INDEX.update({item["id"]: item for item in items})
+    return _KNOWN_CACHE

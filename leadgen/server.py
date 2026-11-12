@@ -257,6 +257,51 @@ def parse_multipart(body: bytes, content_type: str) -> dict[str, dict]:
     return fields
 
 
+def _cities_brief(cities: list[dict] | None = None) -> list[dict]:
+    """فهرست سبک شهرها با نام فارسی استان (برای datalist و انتخاب‌گرها)."""
+    rows = cities if cities is not None else geo.known_cities()
+    out = []
+    for item in rows:
+        province = item.get("province", "")
+        province_fa = (regions.PROVINCES.get(province) or {}).get("fa", "")
+        if not province_fa and item.get("country") != "IR":
+            province_fa = geo.COUNTRY_FA.get(item.get("country", ""), item.get("country", ""))
+        out.append({"id": item.get("id", ""), "fa": item.get("fa") or item.get("label", ""),
+                    "label": item.get("label", ""), "country": item.get("country", ""),
+                    "province": province, "province_fa": province_fa,
+                    "lat": item.get("lat"), "lon": item.get("lon")})
+    return out
+
+
+def _search_cities(text: str, limit: int = 8) -> list[dict]:
+    """جست‌وجوی شهر در همهٔ ۱٬۳۰۰+ شهر کشور: دقیق > شروع‌شدن > زیررشته، پرجمعیت‌تر اول."""
+    needle = geo._normalize(text)
+    if len(needle) < 2:
+        return []
+    scored: list[tuple[float, int, dict]] = []
+    for item in geo.known_cities():
+        best = 0.0
+        for name in (item.get("fa", ""), item.get("label", ""), *(item.get("aliases") or [])):
+            norm = geo._normalize(name)
+            if not norm:
+                continue
+            if norm == needle:
+                best = max(best, 3.0)
+            elif norm.startswith(needle):
+                best = max(best, 2.0)
+            elif needle in norm and len(needle) >= 3:
+                best = max(best, 1.0)
+        if best:
+            scored.append((best, -(item.get("pop") or 0), item))
+    scored.sort(key=lambda row: (-row[0], row[1], row[2].get("fa", "")))
+    out = []
+    for _score, _pop, item in scored[:limit]:
+        province = item.get("province", "")
+        out.append(dict(item, city=item.get("id", ""), kind="city",
+                        province_fa=(regions.PROVINCES.get(province) or {}).get("fa", "")))
+    return out
+
+
 class ApiError(Exception):
     def __init__(self, message: str, status: int = 400):
         super().__init__(message)
@@ -424,16 +469,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/regions/search":
             text = query.get("q", "")
-            cities = []
-            if text:
-                needle = text.strip().lower()
-                for item in geo.known_cities():
-                    pool = " ".join([item.get("fa", ""), item.get("label", ""),
-                                     *item.get("aliases", [])]).lower()
-                    if needle and needle in pool:
-                        cities.append(item)
-                    if len(cities) >= 6:
-                        break
+            limit = max(1, min(_int(query.get("limit", 8), 8), 30))
+            cities = _search_cities(text.strip(), limit) if text.strip() else []
             return self._json({
                 "q": text,
                 "areas": regions.search_areas(text, limit=_int(query.get("limit", 8), 8)),
@@ -465,7 +502,7 @@ class Handler(BaseHTTPRequestHandler):
                 "column_presets": [{"id": key, "fa": value["fa"], "note": value["note"],
                                     "columns": [fa for _, fa in value["columns"]]}
                                    for key, value in exports.COLUMN_PRESETS.items()],
-                "cities": geo.known_cities(),
+                "cities": _cities_brief(),
                 "profiles": scoring.profile_list(),
                 "channels": [{"id": c, "fa": campaign.CHANNEL_FA[c]} for c in campaign.CHANNELS],
                 "lead_statuses": [{"id": s, "fa": storage.LEAD_STATUS_FA[s]} for s in storage.LEAD_STATUSES],
@@ -570,7 +607,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/niches":
             return self._json({"niches": niches.all_niches(), "groups": niches.GROUPS})
         if path == "/api/cities":
-            return self._json({"cities": geo.known_cities()})
+            return self._json({"cities": _cities_brief(), "count": len(geo.CITIES)})
         if path == "/api/profiles":
             return self._json({"profiles": scoring.profile_list()})
 

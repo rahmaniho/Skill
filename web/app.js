@@ -106,7 +106,7 @@ function renderCatalog(catalog) {
 
   // شهرها
   $("#cityList").innerHTML = catalog.cities
-    .map((c) => `<option value="${esc(c.fa || c.label)}">${esc(c.country)} — ${esc(c.label)}</option>`).join("");
+    .map((c) => `<option value="${esc(c.fa || c.label)}">${esc(c.province_fa || c.country)} · ${esc(c.label)}</option>`).join("");
 
   // پیش‌تنظیم ستون‌های خروجی
   const presets = catalog.column_presets || [];
