@@ -148,6 +148,15 @@ class LiveQueueTest(unittest.TestCase):
         self.assertEqual(run["run_id"], result["run_id"])
 
     # ── محافظ‌ها ─────────────────────────────────────────────────────────────
+    def test_03c_empty_run_message_is_actionable(self):
+        """اجرای خالی (محدودهٔ بدون داده) پیام راهنما می‌دهد، نه «۰ لید» خشک."""
+        message = server_mod.Handler._tick_message({"ok": True, "total": 0, "empty": True})
+        self.assertIn("چیزی پیدا نشد", message)
+        self.assertIn("محدوده", message)
+        done = server_mod.Handler._tick_message({"ok": True, "total": 9, "hot": 2})
+        self.assertIn("۹" if "۹" in done else "9", done)
+        self.assertIn("خطا", server_mod.Handler._tick_message({"ok": False, "error": "x"}))
+
     def test_04_access_code_locks_data_routes(self):
         config.ACCESS_CODE = "secret-123"
         code, payload = self.request("/api/search")
