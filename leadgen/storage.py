@@ -341,6 +341,8 @@ def save_leads(run_id: str, rows: list[dict]) -> int:
             record[col] = value
         if not record.get("status"):
             record["status"] = "new"
+        if record.get("note") is None:
+            record["note"] = ""        # ستون NOT NULL — همان قاعدهٔ pgstore
         row["id"] = record["id"]
         payloads.append(record)
 

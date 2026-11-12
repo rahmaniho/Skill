@@ -211,6 +211,34 @@ class PgStoreTests(unittest.TestCase):
         self.assertEqual(record["rating"], 4.6)
         self.assertEqual(record["score"], 88)
 
+    def test_save_leads_never_sends_null_for_not_null_columns(self):
+        """باگ واقعی تولید (23502): OSM لید پیدا می‌کرد ولی درج در Supabase رد می‌شد.
+
+        `note` تنها ستون NOT NULLی است که ردیف منبع نداشت و بعد از حلقه None می‌شد.
+        """
+        from leadgen.providers import osm
+
+        self.transport.responder = lambda r, rec: FakeResponse(None, status=201)
+        item = {"place_id": 10844721207, "osm_type": "node", "osm_id": 10844721207,
+                "lat": "35.715173", "lon": "51.402981", "category": "office",
+                "type": "company", "name": "تعالی گستر افرا",
+                "display_name": "تعالی گستر افرا, تهران, ایران",
+                "address": {}, "extratags": {"phone": "+982188395498"}}
+        row = osm.row_from_item(item, input_id="مشاوره کسب‌وکار در تهران")
+        self.assertNotIn("note", row)          # ردیف موتور، note ندارد
+        pgstore.save_leads("20261112-f8ffa0", [row])
+        record = self.transport.last["body"][0]
+
+        # همان ۸ ستون NOT NULL باید حتماً مقدار غیر-NULL داشته باشند
+        for column in ("id", "run_id", "gaps", "tags", "score_factors", "signals",
+                       "status", "note"):
+            self.assertIn(column, record, f"{column} در payload نیست")
+            self.assertIsNotNone(record[column], f"{column} به NULL ارسال شد")
+        self.assertEqual("", record["note"])
+        self.assertEqual([], record["gaps"])
+        self.assertEqual({}, record["signals"])
+        self.assertEqual("new", record["status"])
+
     def test_search_leads_maps_params_and_normalizes_rows(self):
         payload = {"total": 2, "leads": [
             {"id": "a", "title": "کافه", "gaps": ["no_website"], "tags": [],

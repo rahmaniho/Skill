@@ -194,8 +194,19 @@ def _lead_record(run_id: str, row: dict) -> dict:
             record[column] = json.dumps(value, ensure_ascii=False)
         else:
             record[column] = value
+    # ستون‌های NOT NULL در Postgres نباید NULL بگیرند — حتی وقتی ردیف منبع آن‌ها را
+    # ندارد. باگ واقعی تولید: `note` بعد از حلقه None می‌شد و کل درج با
+    # 23502 (null value in column "note") رد می‌شد؛ یعنی OSM لید پیدا می‌کرد و
+    # هیچ‌چیز ذخیره نمی‌شد.
+    for column in ("gaps", "tags", "score_factors"):
+        if record.get(column) is None:
+            record[column] = []
+    if record.get("signals") is None:
+        record["signals"] = {}
     if not record.get("status"):
         record["status"] = "new"
+    if record.get("note") is None:
+        record["note"] = ""
     row["id"] = record["id"]
     return record
 
