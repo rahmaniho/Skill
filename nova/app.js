@@ -635,6 +635,7 @@
         '<span class="chip">⚠️ خطا: ' + fa(st.failed || 0) + "</span>";
       var act = q.activity || {};
       var beat = act.last_activity_s == null ? "" : " · آخرین تپش: " + esc(act.last_activity_fa || "");
+      if (act.stalled) beat += " ⚠️ صف گیر کرده — کار منتظر مانده ولی چیزی جلو نمی‌ره.";
       $("queueNote").textContent = (q.active === false
         ? "صف غیرفعاله — کارها همون لحظه اجرا می‌شن."
         : (st.oldest_wait_s ? "قدیمی‌ترین کار " + fa(Math.round(st.oldest_wait_s / 60)) + " دقیقه‌ست منتظره." : "صف خلوته؛ هر کاری بزنی زود شروع می‌شه.")) + beat;

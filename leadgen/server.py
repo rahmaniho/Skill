@@ -244,18 +244,29 @@ def _stamp_of(job: dict) -> float:
     return 0.0
 
 
-def queue_activity(jobs: list[dict]) -> dict:
-    """آخرین فعالیت صف — تا بشود فهمید کرون/ورکر واقعاً کار می‌کند یا نه."""
+def queue_activity(jobs: list[dict], stats: dict | None = None) -> dict:
+    """آخرین فعالیت صف — تا بشود فهمید کرون/ورکر واقعاً کار می‌کند یا نه.
+
+    «کار می‌کند» فقط وقتی معنا دارد که کاری در صف منتظر باشد؛ صف خالی که
+    بی‌حرکت است خراب نیست. پس `stalled` دقیقاً یعنی: کار منتظر هست ولی
+    بیش از ۱۰ دقیقه هیچ تغییری در صف رخ نداده (تپش کرون هر ۲ دقیقه است).
+    """
+    stats = stats or {}
+    pending = int(stats.get("pending") or 0) + int(stats.get("running") or 0)
     stamps = [_stamp_of(job) for job in jobs]
     last = max(stamps) if stamps else 0.0
     if not last:
-        return {"last_activity_s": None, "cron_ok": None}
+        return {"last_activity_s": None, "last_activity_fa": "—",
+                "pending": pending, "stalled": pending > 0, "cron_ok": None}
     age = max(0, int(time.time() - last))
+    stalled = bool(pending) and age > 600
     return {
         "last_activity_s": age,
         "last_activity_fa": jobs_age_fa(age),
-        # کرون هر ۲ دقیقه می‌زند؛ سکوت بیش از ۱۰ دقیقه یعنی چیزی خراب است
-        "cron_ok": age <= 600,
+        "pending": pending,
+        # کرون هر ۲ دقیقه می‌زند؛ سکوت بیش از ۱۰ دقیقه با کار منتظر یعنی خرابی
+        "stalled": stalled,
+        "cron_ok": None if not pending else (not stalled),
         "expected_every_s": 120,
     }
 
@@ -1272,7 +1283,7 @@ class Handler(BaseHTTPRequestHandler):
             "stats": stats,
             "jobs": recent_jobs,
             "engine": pipeline.engine_status(None),
-            "activity": queue_activity(recent_jobs),
+            "activity": queue_activity(recent_jobs, stats),
         }
         if stats.get("oldest_wait_s"):
             payload["wait_seconds"] = jobs.wait_time(stats["oldest_wait_s"])
