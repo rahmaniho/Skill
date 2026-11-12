@@ -138,6 +138,15 @@ class LiveQueueTest(unittest.TestCase):
         self.assertEqual(0, result["processed"])
         self.assertTrue(result["idle"])
 
+    def test_03b_tick_works_via_get_for_external_cron(self):
+        """کرون/پینگر بیرونی بدون JS هم باید بتواند صف را جلو ببرد."""
+        _, run = self.request("/api/runs", {"niche_query": "کافه", "city_query": "تهران",
+                                            "engine_mode": "demo", "depth": 2, "limit": 6})
+        code, result = self.request("/api/worker/tick?budget=30")   # GET
+        self.assertEqual(200, code)
+        self.assertEqual(1, result["processed"])
+        self.assertEqual(run["run_id"], result["run_id"])
+
     # ── محافظ‌ها ─────────────────────────────────────────────────────────────
     def test_04_access_code_locks_data_routes(self):
         config.ACCESS_CODE = "secret-123"
