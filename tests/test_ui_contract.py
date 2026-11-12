@@ -22,6 +22,8 @@ SURFACES = {
                                               ROOT / "smart" / "campaign.js"]),
     "web": (ROOT / "web" / "index.html", [ROOT / "web" / "app.js"]),
     "mini": (ROOT / "mini" / "index.html", [ROOT / "mini" / "app.js"]),
+    "nova": (ROOT / "nova" / "index.html", [ROOT / "nova" / "app.js",
+                                            ROOT / "nova" / "ui.js"]),
 }
 
 # عنصرهایی که فقط در نسخهٔ ابری معنا دارند و نبودشان خطا نیست
@@ -84,6 +86,22 @@ class UiContractTests(unittest.TestCase):
 
     def test_mini_ids_exist(self):
         self.check_surface("mini")
+
+    def test_nova_ids_exist(self):
+        html = self.check_surface("nova")
+        self.has(html, "nova/index.html",
+                 ['dir="rtl"', 'id="tabbar"', 'id="dock"', 'id="sheetRoot"',
+                  'rel="manifest"', 'id="view-hunt"', 'id="view-leads"',
+                  'id="view-runs"', 'id="view-more"', 'id="goalChips"'])
+
+    def test_nova_is_wired_to_engine_queue_and_pwa(self):
+        app = self.read("nova/app.js")
+        self.has(app, "nova/app.js",
+                 ['"api/runs"', 'api/search?', 'api/queue', 'api/health',
+                  'api/smart/parse', 'api/smart/suggest', 'api/leads/',
+                  'registerSW', 'beforeinstallprompt'])
+        ui = self.read("nova/ui.js")
+        self.has(ui, "nova/ui.js", ['serviceWorker', 'setTab', 'sheet(', 'ringHtml'])
 
     # ── سیم‌کشی صف و ارسال ──────────────────────────────────────────────────
     def test_smart_ui_is_wired_to_queue_and_delivery(self):

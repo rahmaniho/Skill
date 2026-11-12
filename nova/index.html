@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="fa" dir="rtl" data-theme="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d1022" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f4f6fb" media="(prefers-color-scheme: light)">
+<meta name="description" content="نُوا — با یه جمله مشتری‌های دور و ورت رو پیدا کن: تلفن، ایمیل، سایت، اینستاگرام و جای دقیقشون روی نقشه.">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="نُوا">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css">
+<title>نُوا — شکار مشتری</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+<a class="skip" href="#main">بپر به محتوا</a>
+<div id="offline" class="offline" hidden>📡 آفلاینی — هرچی قبلاً دیدی سر جاشه</div>
+
+<header class="topbar">
+  <button id="navToggle" class="icon-btn" aria-label="منو و لینک‌ها" aria-expanded="false">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h10M4 17h16"/></svg>
+  </button>
+  <div class="brand" aria-label="نُوا">
+    <img src="icons/icon.svg" alt="" width="30" height="30">
+    <b>نُوا</b><small>شکار مشتری</small>
+  </div>
+  <div class="topbar-side">
+    <button id="engineChip" class="chip chip-live" data-act="engine">…</button>
+    <button id="dbChip" class="chip" data-act="db" hidden>…</button>
+    <button id="themeBtn" class="icon-btn" aria-label="روشن/تاریک">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v2m0 14v2m9-9h-2M5 12H3m14.5-6.5-1.4 1.4M7.9 16.1l-1.4 1.4m11 0-1.4-1.4M7.9 7.9 6.5 6.5"/><circle cx="12" cy="12" r="4"/></svg>
+    </button>
+    <button id="installBtn" class="btn btn-ghost btn-sm" hidden>نصب روی گوشی</button>
+  </div>
+</header>
+
+<aside id="rail" class="rail" aria-label="منوی اصلی">
+  <nav class="rail-nav">
+    <button class="rail-item is-active" data-tab="hunt"><span class="ico">🎯</span><span>شکار</span><small>پیدا کردن مشتری</small></button>
+    <button class="rail-item" data-tab="leads"><span class="ico">📇</span><span>لیدها</span><small>همهٔ پیدا شده‌ها</small></button>
+    <button class="rail-item" data-tab="runs"><span class="ico">🗂</span><span>کارها</span><small>اجراها و صف</small></button>
+    <button class="rail-item" data-tab="more"><span class="ico">⚙️</span><span>بیشتر</span><small>تنظیم و حال‌وهوا</small></button>
+  </nav>
+  <div class="rail-foot">
+    <div class="rail-card" id="railHealth">
+      <b>حال برنامه</b>
+      <span id="railHealthTxt">دارم نگاه می‌کنم…</span>
+    </div>
+    <a class="rail-link" href="./studio/" rel="noopener">🖥 نسخهٔ حرفه‌ای (داشبورد کامل)</a>
+    <a class="rail-link" href="./mini/" rel="noopener">📱 نسخهٔ جمع‌وجور</a>
+  </div>
+</aside>
+<div id="scrim" class="scrim" hidden></div>
+
+<main id="main" class="main" tabindex="-1">
+
+  <!-- ── شکار ─────────────────────────────────────────────────────── -->
+  <section id="view-hunt" class="view" aria-label="شکار مشتری">
+    <div class="hero">
+      <h1>مشتری بعدیت <em>کجاست؟</em></h1>
+      <p>یه جمله بنویس، بقیه‌ش با من: پیدا می‌کنم، تمیز می‌کنم، تلفن و ایمیل و سایت و
+         اینستاگرام و <b>جای دقیقشون روی نقشه</b> رو می‌ذارم کف دستت.</p>
+    </div>
+
+    <div class="composer glass">
+      <label class="composer-q" for="q">چی‌کاره‌ها رو، کجا بگردم؟</label>
+      <div class="qbox">
+        <svg class="q-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="q" type="search" autocomplete="off" enterkeyhint="search"
+               placeholder="مثلاً: دندانپزشکی در ونک تهران — یا: همهٔ کسب‌وکارها در مشهد">
+        <button id="qClear" class="icon-btn icon-in" aria-label="پاک کردن" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div id="suggest" class="suggest" hidden></div>
+      <p id="parseNote" class="parse-note" hidden></p>
+
+      <div class="pick-row">
+        <button id="areaBtn" class="pick" data-act="area">
+          <span class="pick-k">کجا؟</span><span id="areaLabel" class="pick-v">تهران</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <button id="nicheBtn" class="pick" data-act="niche">
+          <span class="pick-k">چی‌کاره‌ها؟</span><span id="nicheLabel" class="pick-v">همهٔ کسب‌وکارها</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+      </div>
+
+      <div class="field">
+        <span class="field-k">چقدر بزرگ بگردم؟</span>
+        <div id="sizeSeg" class="seg" role="group" aria-label="حجم جست‌وجو">
+          <button data-size="quick" class="seg-btn"><b>⚡ سریع</b><small>چند دقیقه</small></button>
+          <button data-size="standard" class="seg-btn is-on"><b>🎯 استاندارد</b><small>یه صنف، یه شهر</small></button>
+          <button data-size="deep" class="seg-btn"><b>🛰 کل شهر</b><small>کامل، کندتر</small></button>
+        </div>
+      </div>
+
+      <div class="field">
+        <span class="field-k">چی می‌خوای بهشون بفروشی؟ <small>(زاویهٔ پیام‌هات رو با این می‌چینم)</small></span>
+        <div id="goalChips" class="chips"></div>
+      </div>
+
+      <button id="goBtn" class="btn btn-primary btn-lg">
+        <span class="btn-txt">بریم دنبال مشتری‌ها</span><span class="btn-ico">🚀</span>
+      </button>
+
+      <details id="advBox" class="adv">
+        <summary>تنظیمات ریزتر <small>(اگه خواستی؛ پیش‌فرض‌ها خوبن)</small></summary>
+        <div class="adv-body">
+          <div class="adv-grid">
+            <label class="lab">موتور پشت صحنه
+              <select id="engineMode" class="input">
+                <option value="auto">خودکار (واقعی اگه بود، وگرنه نمونه)</option>
+                <option value="docker">فقط واقعی (گوگل‌مپ)</option>
+                <option value="demo">فقط نمونه (دادهٔ مصنوعی، فوری)</option>
+              </select>
+            </label>
+            <label class="lab">عمق جست‌وجو
+              <select id="depth" class="input">
+                <option value="2">۲ — سطحی</option>
+                <option value="4" selected>۴ — خوب</option>
+                <option value="5">۵ — عمیق</option>
+              </select>
+            </label>
+            <label class="lab">کاشی‌بندی شهر (grid)
+              <select id="grid" class="input">
+                <option value="0" selected>خاموش</option><option value="2">۲×۲</option>
+                <option value="3">۳×۳</option><option value="4">۴×۴</option>
+              </select>
+            </label>
+            <label class="lab">سقف لید <small>(۰ = هرچی پیدا شد)</small>
+              <input id="limit" class="input" type="number" min="0" step="10" value="200">
+            </label>
+          </div>
+          <div class="switch-row">
+            <label class="switch"><input id="socials" type="checkbox" checked><i></i><span>اینستاگرام/فیسبوک/لینکدین هم دربیار</span></label>
+            <label class="switch"><input id="emails" type="checkbox" checked><i></i><span>ایمیل رو از سایتشون هم بگرد</span></label>
+            <label class="switch"><input id="demoMode" type="checkbox"><i></i><span>حالت نمایشی (بدون موتور، فوری)</span></label>
+          </div>
+        </div>
+      </details>
+    </div>
+
+    <div id="huntLive" class="livecard glass" hidden>
+      <div class="livecard-head">
+        <b id="huntLiveTitle">داره می‌گرده…</b>
+        <span id="huntLiveStage" class="chip">آماده‌سازی</span>
+      </div>
+      <div class="bar"><i id="huntLiveFill"></i></div>
+      <p id="huntLiveText">چند لحظه…</p>
+      <div class="livecard-acts">
+        <button class="btn btn-ghost btn-sm" data-act="open-run">نگاهش کنم</button>
+        <button class="btn btn-ghost btn-sm" data-act="to-leads">برم سراغ لیدها</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── لیدها ────────────────────────────────────────────────────── -->
+  <section id="view-leads" class="view" hidden aria-label="لیدها">
+    <div class="leads-top">
+      <div class="qbox qbox-mini">
+        <svg class="q-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="lq" type="search" autocomplete="off" placeholder="توی پیدا شده‌ها بگرد… (نام، محله، صنف)">
+      </div>
+      <div class="leads-tools">
+        <div id="segChips" class="chips chips-sm" role="group" aria-label="بخش‌بندی"></div>
+        <div class="tools-right">
+          <select id="sortSel" class="input input-sm" aria-label="چینش">
+            <option value="score">بهترین امتیاز</option>
+            <option value="reviews">پرنظرترین</option>
+            <option value="rating">بالاترین ستاره</option>
+            <option value="completeness">کامل‌ترین</option>
+            <option value="created_at">تازه‌ترین</option>
+          </select>
+          <div id="viewToggle" class="seg seg-sm" role="group" aria-label="نمایش">
+            <button data-view="cards" class="seg-btn is-on" aria-label="کارت">▦</button>
+            <button data-view="list" class="seg-btn" aria-label="فهرست">☰</button>
+          </div>
+        </div>
+      </div>
+      <div id="filterChips" class="chips chips-sm chips-scroll" role="group" aria-label="فیلتر تماس"></div>
+      <p id="leadCount" class="count-line">…</p>
+    </div>
+    <div id="leadList" class="cards"></div>
+    <button id="leadMore" class="btn btn-ghost" hidden>بیشتر نشون بده</button>
+  </section>
+
+  <!-- ── کارها ────────────────────────────────────────────────────── -->
+  <section id="view-runs" class="view" hidden aria-label="اجراها و صف">
+    <div id="queueCard" class="glass queue-card">
+      <b>صف کارها</b>
+      <div id="queueStats" class="queue-stats"></div>
+      <p id="queueNote" class="muted"></p>
+    </div>
+    <h2 class="view-h">کارهای قبلی</h2>
+    <div id="runList" class="run-list"></div>
+  </section>
+
+  <!-- ── بیشتر ────────────────────────────────────────────────────── -->
+  <section id="view-more" class="view" hidden aria-label="تنظیم‌ها">
+    <div class="glass more-card">
+      <b>حال برنامه</b>
+      <div id="healthCard" class="health-grid"></div>
+      <p id="moreNote" class="muted"></p>
+    </div>
+    <div class="glass more-card">
+      <b>حال‌وهوا</b>
+      <div id="themeSeg" class="seg" role="group" aria-label="پوسته">
+        <button data-theme-val="light" class="seg-btn"><b>☀️ روشن</b></button>
+        <button data-theme-val="auto" class="seg-btn is-on"><b>🌗 خودکار</b></button>
+        <button data-theme-val="dark" class="seg-btn"><b>🌙 تاریک</b></button>
+      </div>
+      <div class="switch-row">
+        <label class="switch"><input id="hapticSw" type="checkbox" checked><i></i><span>لرزش ریز موقع دکمه‌ها (روی گوشی)</span></label>
+      </div>
+      <button id="installBtn2" class="btn btn-ghost" hidden>نصب به‌صورت اپ گوشی</button>
+    </div>
+    <div class="glass more-card">
+      <b>اینجاها هم هست</b>
+      <a class="more-link" href="./studio/" rel="noopener">🖥 داشبورد حرفه‌ای <small>جدول، ستون‌ها، تحلیل کامل</small></a>
+      <a class="more-link" href="./mini/" rel="noopener">📱 نسخهٔ جمع‌وجور <small>استان/شهر/منطقه/خیابان</small></a>
+      <button class="more-link" data-act="about">💬 دربارهٔ نُوا <small>چی هست و چی نیست</small></button>
+    </div>
+    <p class="legal">یادآوری دوستانه: تلفن و ایمیل کسب‌وکارها دادهٔ شخصی‌اند. برای تماس،
+      مبنای قانونی و گزینهٔ «دیگه پیام نده» رو رعایت کن. خروجی گوگل‌مپ رو فهرست اولیهٔ
+      نیازمند راستی‌آزمایی بدون، نه حقیقت قطعی.</p>
+    <p id="verTxt" class="muted ver"></p>
+  </section>
+</main>
+
+<div id="dock" class="dock" hidden>
+  <button id="dockBtn" class="dock-main" aria-label="جزئیات اجرای در حال انجام">
+    <span class="dock-ring" id="dockRing"><svg viewBox="0 0 36 36" aria-hidden="true"><circle class="ring-bg" cx="18" cy="18" r="15"/><circle class="ring-fg" id="dockFill" cx="18" cy="18" r="15"/></svg></span>
+    <span class="dock-txt"><b id="dockTitle">داره می‌گرده…</b><small id="dockText">چند لحظه…</small></span>
+  </button>
+  <button id="dockClose" class="icon-btn" aria-label="بستن نوار اجرا">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+  </button>
+</div>
+
+<nav id="tabbar" class="tabbar" aria-label="ناوبری">
+  <button class="tab is-active" data-tab="hunt"><span class="ico">🎯</span><span>شکار</span></button>
+  <button class="tab" data-tab="leads"><span class="ico">📇</span><span>لیدها</span></button>
+  <button class="tab" data-tab="runs"><span class="ico">🗂</span><span>کارها</span></button>
+  <button class="tab" data-tab="more"><span class="ico">⚙️</span><span>بیشتر</span></button>
+</nav>
+
+<div id="sheetRoot" class="sheet-root" hidden>
+  <div class="sheet-backdrop" data-act="sheet-close"></div>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="sheet-grab" aria-hidden="true"></div>
+    <div class="sheet-head">
+      <h2 id="sheetTitle">…</h2>
+      <button id="sheetClose" class="icon-btn" aria-label="بستن" data-act="sheet-close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+    <div id="sheetBody" class="sheet-body"></div>
+  </div>
+</div>
+
+<div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+
+<script src="ui.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

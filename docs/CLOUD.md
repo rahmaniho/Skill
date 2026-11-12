@@ -109,7 +109,7 @@ python3 scripts/cloud_parity.py --live --cleanup # فیکسچر آزمون را 
 | `GMAIL_REFRESH_TOKEN` | از `scripts/gmail_token.py` | ارسال با Gmail API |
 | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` | از کنسول گوگل | همان |
 
-اختیاری: `LEADGEN_ROOT_UI=smart` (پیش‌فرض در `api/index.py` تنظیم شده)، `DIGEST_MAX_LEADS`.
+اختیاری: `LEADGEN_ROOT_UI` (`nova` پیش‌فرض — رابط نسل بعد؛ یا `smart` / `mini`)، `DIGEST_MAX_LEADS`.
 
 > **چرا Gmail API و نه SMTP؟** خروجی SMTP (پورت ۵۸۷) از توابع serverless معمولاً بسته است؛
 > Gmail API روی HTTPS کار می‌کند. مسیر SMTP (`GMAIL_APP_PASSWORD`) برای اجرای محلی/Codespace

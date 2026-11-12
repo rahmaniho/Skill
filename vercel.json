@@ -16,14 +16,20 @@
     {
       "source": "/(.*)",
       "headers": [
-        { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        }
       ]
     }
   ],
   "env": {
     "LEADGEN_QUEUE": "always",
     "LEADGEN_DATA_DIR": "/tmp/leadgen-data",
-    "LEADGEN_ROOT_UI": "smart"
+    "LEADGEN_ROOT_UI": "nova"
   }
 }

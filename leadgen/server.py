@@ -74,10 +74,11 @@ def _flag(query: dict, key: str) -> bool | None:
 WEB_DIR = ROOT_DIR / "web"                 # داشبورد حرفه‌ای (کلاسیک)
 SMART_DIR = ROOT_DIR / "smart"             # رابط سادهٔ کاربرپسند (پیش‌فرض روی /)
 MINI_DIR = ROOT_DIR / "mini"               # نسخهٔ جمع‌وجور: جست‌وجو + استان/شهر/منطقه/خیابان
+NOVA_DIR = ROOT_DIR / "nova"               # رابط نسل بعد (وب‌اپ + موبایل‌اپ، PWA)
 
-# رابط پیش‌فرض روی «/»: smart (رابط ساده) یا mini (نسخهٔ جمع‌وجور)
-# با LEADGEN_ROOT_UI=mini می‌توان یک نمونهٔ جدا فقط برای نسخهٔ جمع‌وجور بالا آورد.
-ROOT_UI = os.environ.get("LEADGEN_ROOT_UI", "smart").strip().lower()
+# رابط پیش‌فرض روی «/»: nova (پیش‌فرض) یا smart (رابط ساده) یا mini (جمع‌وجور).
+# با LEADGEN_ROOT_UI می‌توان یک نمونهٔ جدا فقط برای یکی از رابط‌ها بالا آورد.
+ROOT_UI = os.environ.get("LEADGEN_ROOT_UI", "nova").strip().lower()
 DEMO_DATA = ROOT_DIR / "site" / "data" / "sample.json"   # دادهٔ حالت دمو (مشترک با سایت Pages)
 
 # حافظه پیشرفت اجراها (در حال اجرا) — پایگاه‌داده هم وضعیت نهایی را نگه می‌دارد
@@ -148,6 +149,7 @@ MIME = {
     ".woff2": "font/woff2",
     ".csv": "text/csv; charset=utf-8",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".webmanifest": "application/manifest+json; charset=utf-8",
 }
 
 
@@ -275,13 +277,22 @@ class Handler(BaseHTTPRequestHandler):
         path, query = self._path, self._query
         storage.init_db()
 
-        # رابط سادهٔ کاربرپسند (پیش‌فرض) روی / و داشبورد حرفه‌ای روی /studio/
-        root_dir = MINI_DIR if ROOT_UI == "mini" else SMART_DIR
+        # رابط نسل بعد (پیش‌فرض) روی / ؛ داشبورد حرفه‌ای روی /studio/
+        root_dir = {"mini": MINI_DIR, "smart": SMART_DIR}.get(ROOT_UI, NOVA_DIR)
         if path in ("/", "/index.html"):
             return self._static("index.html", root_dir)
-        if path in ("/styles.css", "/app.js", "/campaign.js", "/favicon.svg", "/demo-data.json") \
-                or path.startswith("/assets/"):
+        if path in ("/styles.css", "/app.js", "/ui.js", "/sw.js", "/campaign.js",
+                    "/manifest.webmanifest", "/favicon.svg", "/demo-data.json") \
+                or path.startswith("/assets/") or path.startswith("/icons/"):
             return self._static(path.lstrip("/"), root_dir)
+        if path in ("/nova", "/nova/", "/nova/index.html"):
+            return self._static("index.html", NOVA_DIR)
+        if path.startswith("/nova/"):
+            return self._static(path[len("/nova/"):], NOVA_DIR)
+        if path in ("/smart", "/smart/", "/smart/index.html"):
+            return self._static("index.html", SMART_DIR)
+        if path.startswith("/smart/"):
+            return self._static(path[len("/smart/"):], SMART_DIR)
         if path in ("/mini", "/mini/", "/mini/index.html"):
             return self._static("index.html", MINI_DIR)
         if path.startswith("/mini/"):

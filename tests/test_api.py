@@ -116,10 +116,17 @@ class ApiTestCase(unittest.TestCase):
     def test_03_static_dashboard(self):
         status, raw = self.get("/")
         self.assertEqual(status, 200)
-        self.assertIn("LeadGen Studio", raw.decode("utf-8"))
-        for asset in ("/styles.css", "/app.js", "/favicon.svg"):
+        html = raw.decode("utf-8")
+        self.assertIn('dir="rtl"', html)
+        self.assertIn('id="tabbar"', html)                   # رابط نسل بعد (نُوا) پیش‌فرض روی /
+        self.assertIn('id="dock"', html)
+        for asset in ("/styles.css", "/app.js", "/ui.js", "/manifest.webmanifest",
+                      "/favicon.svg", "/icons/icon.svg"):
             status, _ = self.get(asset)
             self.assertEqual(status, 200, asset)
+        status, raw = self.get("/studio/")
+        self.assertEqual(status, 200)
+        self.assertIn("LeadGen Studio", raw.decode("utf-8"))
 
     def test_04_static_path_traversal_blocked(self):
         status, _ = self.get("/../leadgen/config.py")

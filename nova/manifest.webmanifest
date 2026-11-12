@@ -1,0 +1,24 @@
+{
+  "name": "نُوا — شکار مشتری",
+  "short_name": "نُوا",
+  "description": "با یه جمله مشتری‌های دور و ورت رو پیدا کن: تلفن، ایمیل، سایت، اینستاگرام و جای دقیقشون روی نقشه.",
+  "lang": "fa",
+  "dir": "rtl",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0d1022",
+  "theme_color": "#0d1022",
+  "categories": ["business", "productivity", "utilities"],
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "شکار جدید", "short_name": "شکار", "url": "./#hunt", "description": "یه جست‌وجوی تازه بزن" },
+    { "name": "لیدها", "short_name": "لیدها", "url": "./#leads", "description": "همهٔ پیدا شده‌ها" }
+  ]
+}
