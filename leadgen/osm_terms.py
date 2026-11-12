@@ -151,23 +151,25 @@ def derive(texts: list[str] | tuple[str, ...], *, limit: int = 5) -> list[str]:
     blob = _norm(" ".join(t for t in texts if t))
     if not blob:
         return []
-    out: list[str] = []
+    lexicon_terms: list[str] = []
     for patterns, terms in LEXICON:
         if any(_norm(p) in blob for p in patterns):
             for term in terms:
-                if term not in out:
-                    out.append(term)
-    # عبارت انگلیسی خودِ کاربر (مثل «music school») هم ارزشمند است
+                if term not in lexicon_terms:
+                    lexicon_terms.append(term)
+    # عبارت انگلیسی خودِ کاربر (مثل «music school») هم ارزشمند است، ولی **بعد** از
+    # عبارت‌های واژه‌نامه: در تجربهٔ Production عبارت «coffee shops» در Nominatim صفر
+    # داد و «cafe» ۴۶ نتیجه؛ چون موتور فقط چند ثانیه فرصت دارد، حدس اول باید بهترین باشد.
+    snippets: list[str] = []
     for text in texts:
         cleaned = _norm(text)
         if cleaned and not has_persian(cleaned) and 2 < len(cleaned) <= 40:
             cleaned = re.sub(rf"\b({'|'.join(_STOP)})\b", " ", cleaned)
             cleaned = re.sub(r"\s+", " ", cleaned).strip()
-            if cleaned and cleaned not in out:
-                out.insert(0, cleaned)
-    # عبارت‌های سادهٔ انگلیسی اول بیایند: Nominatim با «cafe» ده‌ها نتیجه می‌دهد
-    # ولی با «cafés & coffee shops» اغلب هیچ. ترتیب ابزاری است، نه سلیقه‌ای:
-    # چون موتور فقط چند ثانیه فرصت دارد، اولین حدس باید بهترین حدس باشد.
+            if cleaned and cleaned not in lexicon_terms and cleaned not in snippets:
+                snippets.insert(0, cleaned)
+    out = lexicon_terms + snippets
+    # عبارت‌های ساده و انگلیسی‌خالص اول بیایند («cafés & coffee shops» به انتها)
     simple = [t for t in out if _plain(t)]
     return (simple + [t for t in out if not _plain(t)])[:limit]
 

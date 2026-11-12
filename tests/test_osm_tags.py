@@ -557,3 +557,21 @@ class ShareForBoxTests(unittest.TestCase):
         share = share_for_box(box_left=21.0, phase_budget=12.6, remaining=3, single=False)
         self.assertGreaterEqual(share, 8.0)
         self.assertLessEqual(share, 21.0 - 6.0)
+
+
+class TermOrderTests(unittest.TestCase):
+    """عبارت واژه‌نامه‌ای باید قبل از عبارت آزاد باشد («cafe» قبل از «coffee shops»)."""
+
+    def test_lexicon_term_comes_before_user_phrase(self):
+        from leadgen import niches, osm_terms
+        niche = niches.find_niche("کافه")
+        terms = osm_terms.derive([niche.fa, *niche.keywords_fa[:2], "coffee shops"])
+        self.assertEqual(terms[0], "cafe", terms)
+        self.assertIn("coffee shops", terms)
+        self.assertLess(terms.index("cafe"), terms.index("coffee shops"))
+
+    def test_complex_phrase_goes_last(self):
+        from leadgen import osm_terms
+        terms = osm_terms.derive(["cafe", "cafés & coffee shops"])
+        self.assertEqual(terms[-1], "cafés & coffee shops")
+        self.assertEqual(terms[0], "cafe")
