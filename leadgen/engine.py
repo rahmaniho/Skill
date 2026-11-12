@@ -479,6 +479,11 @@ class OSMEngine:
     name = "osm"
     live = True
 
+    def __init__(self) -> None:
+        # گزارش پوشش: کدام شهر/محدوده است، هر کدام چند ردیف و از کدام مسیر.
+        # (لایهٔ بالاتر با این گزارش صادقانه می‌گوید کدام شهر داده نداشت.)
+        self.coverage: list[dict] = []
+
     def health(self) -> dict:
         from .providers import osm
         return osm.health()
@@ -535,6 +540,7 @@ class OSMEngine:
         tried: list[str] = []
         used_overpass = False
 
+        self.coverage = []
         # جعبه‌های جست‌وجو: یا یک جعبهٔ شهر، یا چند شهر برای جست‌وجوی سطح استان
         sweep_boxes: list[dict] = []
         for item in (body.get("sweep_boxes") or []):
@@ -590,6 +596,8 @@ class OSMEngine:
                         [(box["label"], box["bbox"]) for box in sweep_boxes]
                         if sweep_boxes else [("", list(bbox))])
                     cap_rows = min(1500, int(config.MAX_LEADS_PER_RUN or 1500))
+                    # سهم هر شهر از سقف: پاسخ کوچک‌تر = سریع‌تر و عادلانه‌تر بین شهرها
+                    per_box_cap = max(150, cap_rows // max(1, len(targets)))
                     found_map: dict[str, dict] = {}
                     for box_index, (box_label, box) in enumerate(targets, start=1):
                         box_left = budget - (time.time() - started)
@@ -609,20 +617,24 @@ class OSMEngine:
                         try:
                             got = osm.overpass_search_area(
                                 filters, bbox=box,
-                                limit=osm.overpass_limit_for(box),
+                                limit=min(osm.overpass_limit_for(box), per_box_cap),
                                 timeout=min(float(config.OVERPASS_TIMEOUT),
                                             max(6.0, share - 2)),
                                 input_id=(niche_id or (terms[0] if terms else "")),
                                 lang=lang, tiles=box_tiles,
-                                max_rows=cap_rows, budget_s=share)
+                                max_rows=per_box_cap, budget_s=share)
                         except OSMDownError as exc:
                             errors.append(f"overpass{' ' + box_label if box_label else ''}: {exc}")
+                            self.coverage.append({"city": box_label, "bbox": box, "rows": 0,
+                                                  "via": "", "error": str(exc)[:160]})
                             # اگر سرویس کامل پایین است، امتحان بقیهٔ شهرها فقط وقت می‌گیرد.
                             if not osm.overpass_available():
                                 break
                             continue
                         for row in got:
                             found_map.setdefault(row.get("place_id"), row)
+                        self.coverage.append({"city": box_label, "bbox": box,
+                                              "rows": len(got), "via": "overpass"})
                         if len(found_map) >= cap_rows:
                             break
                     found = list(found_map.values())
@@ -639,6 +651,48 @@ class OSMEngine:
                         on_progress({"stage": "working", "status": "working", "percent": 14,
                                      "job_id": body.get("name") or "osm",
                                      "message": "[OSM] نتیجهٔ تگ‌محور خالی بود؛ جست‌وجوی متنی…"})
+
+        # ── تکمیل شهرهایی که Overpass نتوانست بدهد (شبکهٔ ابری، محدودیت نرخ) ──
+        # کاربر «کل استان» را خواسته؛ اگر سرویس تگ‌محور برای شهری جواب نداد،
+        # همان شهر را با جست‌وجوی متنی Nominatim (محدود به جعبهٔ همان شهر) می‌گردیم.
+        if sweep_boxes and config.OSM_MODE != "overpass":
+            served = {item.get("city") for item in self.coverage if item.get("rows")}
+            missing = [box for box in sweep_boxes if box["label"] not in served]
+            for missing_box in missing:
+                left = budget - (time.time() - started)
+                if left < 8:
+                    break
+                box = missing_box["bbox"]
+                city_name = missing_box["label"]
+                if on_progress:
+                    on_progress({"stage": "working", "status": "working", "percent": 26,
+                                 "job_id": body.get("name") or "osm",
+                                 "message": f"[OSM] جست‌وجوی متنی در {city_name} "
+                                            f"(Overpass برای این شهر جواب نداد)"})
+                found_here = False
+                for term in (category_terms[:2] or terms[:2]):
+                    left = budget - (time.time() - started)
+                    if left < 6:
+                        break
+                    try:
+                        got = osm.search(term, bbox=box, country=country,
+                                         limit=config.OSM_LIMIT, timeout=min(12.0, left),
+                                         lang=lang, input_id=city_name)
+                    except OSMDownError as exc:
+                        errors.append(f"nominatim {city_name} «{term}»: {exc}")
+                        continue
+                    seen_ids = {r.get("place_id") for r in rows}
+                    fresh = [row for row in got if row.get("place_id") not in seen_ids]
+                    if fresh:
+                        rows.extend(fresh)
+                        tried.append(f"{term} @ {city_name}")
+                        self.coverage.append({"city": city_name, "bbox": box,
+                                              "rows": len(fresh), "via": "nominatim"})
+                        found_here = True
+                        break
+                if not found_here:
+                    self.coverage.append({"city": city_name, "bbox": box, "rows": 0,
+                                          "via": ""})
 
         strict_overpass = config.OSM_MODE == "overpass"
         # در حالت hybrid: اگر تگ‌ها نتیجهٔ کافی دادند سهمیهٔ Nominatim را نمی‌سوزانیم؛

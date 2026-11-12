@@ -122,7 +122,7 @@ _OVERPASS_LAST_OK = [0.0]
 # اگر اتصال کامل شکست خورد، مدتی از پرسیدن دوباره صرف‌نظر می‌کنیم تا هر جست‌وجو
 # ده‌ها ثانیه معطل نشود و مسیر جایگزین (Nominatim) سریع جواب دهد.
 _OVERPASS_DOWN_UNTIL = [0.0]
-OVERPASS_DOWN_SECONDS = 180.0
+OVERPASS_DOWN_SECONDS = 120.0
 
 
 def _overpass_throttle() -> None:

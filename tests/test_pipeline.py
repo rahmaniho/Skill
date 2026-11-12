@@ -658,6 +658,36 @@ class ProvinceSweepPipelineTest(unittest.TestCase):
         self.assertLessEqual(len(short_boxes), 3)
         self.assertGreater(len(long_boxes), len(short_boxes))
 
+    def test_empty_city_is_reported_in_warnings(self):
+        """گزارش باید بگوید کدام شهر داده نداشت (به‌جای سکوت)."""
+
+        class FakeEngine:
+            name = "osm"
+            live = True
+
+            def health(self):
+                return {"up": True}
+
+            def run_job(self, body, on_progress=None):
+                self.coverage = [
+                    {"city": "رشت", "rows": 12, "via": "overpass"},
+                    {"city": "لاهیجان", "rows": 0, "via": ""},
+                ]
+                return "fake-job", []
+
+        original = pipeline.make_engine
+        pipeline.make_engine = lambda mode=None: FakeEngine()
+        try:
+            request = pipeline.ScrapeRequest.from_dict({
+                "niche_query": "کافه", "province": "gilan", "engine_mode": "osm",
+                "lang": "fa", "limit": 20, "max_time": 60})
+            result = pipeline.run_scrape(request)
+        finally:
+            pipeline.make_engine = original
+        joined = " ".join(result.warnings)
+        self.assertIn("پوشش استانی", joined)
+        self.assertIn("لاهیجان", joined)
+
     def test_city_request_has_no_sweep(self):
         captured: list[dict] = []
 

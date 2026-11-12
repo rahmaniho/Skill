@@ -480,6 +480,20 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                 continue
             job_ids.append(job_id)
             rows = geo.dedupe(rows + spec_rows)
+            # گزارش پوشش شهرها (فقط جست‌وجوی استانی): صادقانه بگو کدام شهر داده نداشت.
+            coverage = getattr(engine, "coverage", None) or []
+            if sweep_boxes and coverage:
+                served = [c for c in coverage if c.get("rows")]
+                empty = [c for c in coverage if not c.get("rows")]
+                if empty:
+                    names = "، ".join(str(c.get("city") or "شهر") for c in empty[:6])
+                    warnings.append(
+                        f"پوشش استانی: {len(served)} شهر دادهٔ واقعی داد و برای "
+                        f"{len(empty)} شهر ({names}) چیزی پیدا نشد.")
+                    if len(served) < len(sweep_boxes):
+                        warnings.append(
+                            "اگر سرویس نقشه شلوغ بود، چند دقیقهٔ دیگر دوباره اجرا کنید؛ "
+                            "نتیجه‌های موفق در کش می‌مانند و اجرای بعدی سریع‌تر است.")
             _progress(on_progress, run_id, {
                 "stage": mode, "status": "working",
                 "percent": int(8 + 62 * index / total_specs),
