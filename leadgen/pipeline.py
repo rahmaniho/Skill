@@ -525,6 +525,7 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                 empty_run.update({"id": run_id, "total": 0, "hot": 0, "warm": 0, "cold": 0,
                                   "avg_score": 0.0, "job_ids": job_ids, "status": "done"})
                 empty_run["analytics"] = analytics.build([], empty_run, niche)
+                empty_run["analytics"]["warnings"] = list(warnings)
                 if coverage:
                     empty_run["analytics"]["cities"] = [
                         {"city": c.get("city") or "", "rows": int(c.get("rows") or 0),
@@ -631,6 +632,8 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
             "job_ids": job_ids, "status": "done",
         })
         stats_pack = analytics.build(saved_rows, run_full, niche)
+        # هشدارهای اجرا را هم نگه می‌داریم؛ وگرنه بعد از بسته شدن مرورگر هیچ‌جا نمی‌ماند.
+        stats_pack["warnings"] = list(warnings)
         if coverage:
             # پوشش شهری در بستهٔ آمار می‌ماند تا داشبورد و گزارش اجرا هم آن را نشان دهند.
             stats_pack["cities"] = [
