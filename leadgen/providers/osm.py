@@ -146,11 +146,29 @@ def _pick(tags: dict, *keys: str) -> str:
     return ""
 
 
+# جفت‌های (دسته، نوع) که «کسب‌وکار» نیستند: پارک، مجسمه، بنای تاریخی، fountain…
+# جست‌وجوی کلمه‌ای در OSM این‌ها را زیاد برمی‌گرداند (مثلاً «هنر» → پارک هنر).
+NOISE_TYPES: frozenset[tuple[str, str]] = frozenset({
+    ("tourism", "artwork"), ("tourism", "attraction"), ("tourism", "viewpoint"),
+    ("tourism", "information"), ("tourism", "picnic_site"),
+    ("historic", "memorial"), ("historic", "monument"), ("historic", "ruins"),
+    ("historic", "archaeological_site"), ("historic", "city_gate"),
+    ("leisure", "park"), ("leisure", "garden"), ("leisure", "playground"),
+    ("leisure", "pitch"), ("leisure", "track"),
+    ("amenity", "bench"), ("amenity", "shelter"), ("amenity", "fountain"),
+    ("amenity", "clock"), ("man_made", "tower"), ("place", "neighbourhood"),
+    ("place", "suburb"), ("place", "square"), ("boundary", "administrative"),
+    ("highway", "bus_stop"), ("railway", "station"),
+})
+
+
 def row_from_item(item: dict, *, input_id: str = "", lang: str = "fa") -> dict | None:
     """یک نتیجهٔ Nominatim را به ردیف قرارداد موتور تبدیل می‌کند (بدون نام → None)."""
     tags = dict(item.get("extratags") or {})
     name = (item.get("name") or tags.get("name") or "").strip()
     if not name:
+        return None
+    if (str(item.get("category") or "").lower(), str(item.get("type") or "").lower()) in NOISE_TYPES:
         return None
     osm_type = (item.get("osm_type") or "").lower()
     osm_id = item.get("osm_id")
