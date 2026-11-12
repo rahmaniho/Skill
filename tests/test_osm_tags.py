@@ -501,6 +501,25 @@ class SweepFallbackTests(unittest.TestCase):
         self.assertEqual(coverage["لاهیجان"]["via"], "nominatim")
         self.assertEqual(coverage["لاهیجان"]["rows"], 1)
 
+    def test_every_city_appears_once_in_coverage(self):
+        """حتی وقتی هیچ شهری داده نداد، گزارش باید هر شهر را یک‌بار و با دلیل نشان دهد."""
+        from leadgen import engine as engine_mod
+
+        def failing_area(filters, *, bbox, **kwargs):
+            raise osm.OSMDownError("Overpass پاسخ نداد")
+
+        eng = engine_mod.OSMEngine()
+        with mock.patch.object(osm, "overpass_search_area", side_effect=failing_area), \
+                mock.patch.object(osm, "search", return_value=[]):
+            with self.assertRaises(engine_mod.EmptyResult):
+                eng.run_job(self._body())
+        cities = [c["city"] for c in eng.coverage]
+        self.assertEqual(len(cities), len(set(cities)), f"شهر تکراری در گزارش: {cities}")
+        self.assertEqual(set(cities), {"رشت", "لاهیجان"})
+        for item in eng.coverage:
+            self.assertEqual(item["rows"], 0)
+            self.assertTrue(item["error"], item)
+
     def test_strict_overpass_mode_skips_text_fallback(self):
         from leadgen import engine as engine_mod
         eng = engine_mod.OSMEngine()
