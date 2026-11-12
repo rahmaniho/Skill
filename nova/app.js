@@ -485,6 +485,7 @@
       N.ringHtml(l.score) + "</div>" +
       '<div class="lead-meta">' + segTag +
       '<span class="tag">' + esc(l.status_fa || STATUS_FA[l.status] || "جدید") + "</span>" +
+      ((l.signals || {}).repeat ? '<span class="tag" title="قبلاً در اجراهای دیگر دیده شده">🔁 قبلاً دیده شده</span>' : "") +
       (l.rating ? '<span class="tag">⭐ ' + num(l.rating, 1) + " (" + fa(l.reviews || 0) + ")</span>" : "") +
       (l.phone ? '<span class="tag tag-ok">📞 دارد</span>' : "") +
       (l.email ? '<span class="tag tag-ok">✉️ دارد</span>' : "") +

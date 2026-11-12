@@ -344,6 +344,28 @@ def search_leads(**kwargs) -> dict:
             "facets": facets, "geo": geo, "filters": storage._active_filters(scope)}
 
 
+def seen_places(place_ids: list[str], *, exclude_run: str = "") -> dict[str, str]:
+    """نسخهٔ Supabase از `storage.seen_places` (فیلتر in.= روی place_id)."""
+    ids = [str(pid).replace(",", "") for pid in (place_ids or []) if pid]
+    if not ids:
+        return {}
+    found: dict[str, str] = {}
+    for start in range(0, len(ids), 100):
+        chunk = ids[start:start + 100]
+        rows = _client().request("GET", "leads", params={
+            "select": "place_id,run_id,created_at",
+            "run_id": f"neq.{exclude_run}" if exclude_run else None,
+            "place_id": f"in.({','.join(chunk)})",
+            "order": "created_at.asc",
+            "limit": 1000,
+        }) or []
+        for row in rows:
+            place_id = row.get("place_id")
+            if place_id and place_id not in found:
+                found[place_id] = row.get("run_id") or ""
+    return found
+
+
 def load_leads(run_id: str | None = None, *, segment: str | None = None,
                status: str | None = None, query: str | None = None,
                gap: str | None = None, channel: str | None = None,

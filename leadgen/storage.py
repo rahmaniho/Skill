@@ -356,6 +356,34 @@ def save_leads(run_id: str, rows: list[dict]) -> int:
     return len(payloads)
 
 
+def seen_places(place_ids: list[str], *, exclude_run: str = "") -> dict[str, str]:
+    """برای هر place_id، شناسهٔ قدیمی‌ترین اجرایی که آن کسب‌وکار در آن دیده شده.
+
+    با این کار اجرای دوبارهٔ همان شهر/صنف «لید تکراری» تولید نمی‌کند بلکه
+    می‌گوید کدام نتیجه تازه است — همان چیزی که یک تیم فروش لازم دارد.
+    """
+    ids = [str(pid) for pid in (place_ids or []) if pid]
+    if not ids:
+        return {}
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.seen_places(ids, exclude_run=exclude_run)
+    found: dict[str, str] = {}
+    with _LOCK, _connect() as conn:
+        for start in range(0, len(ids), 200):
+            chunk = ids[start:start + 200]
+            marks = ", ".join("?" for _ in chunk)
+            rows = conn.execute(
+                f"SELECT place_id, run_id FROM leads WHERE run_id != ? AND place_id IN ({marks}) "
+                f"ORDER BY created_at ASC",
+                [exclude_run, *chunk],
+            ).fetchall()
+            for place_id, run_id in rows:
+                if place_id and place_id not in found:
+                    found[place_id] = run_id or ""
+    return found
+
+
 def load_leads(run_id: str | None = None, *, segment: str | None = None,
                status: str | None = None, query: str | None = None,
                gap: str | None = None, channel: str | None = None,

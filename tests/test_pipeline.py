@@ -791,6 +791,44 @@ class ProvinceSweepPipelineTest(unittest.TestCase):
         self.assertNotIn("cities", result.analytics)
         self.assertEqual(result.stats["total"], 1)
 
+    def test_second_run_marks_leads_already_seen(self):
+        """اجرای دوبارهٔ همان شهر نباید همه را «تازه» جا بزند — باید تکراری‌ها را بشمارد."""
+
+        class FakeEngine:
+            name = "osm"
+            live = True
+
+            def health(self):
+                return {"up": True}
+
+            def run_job(self, body, on_progress=None):
+                return "fake-job", [{
+                    "place_id": "osm:node/777", "title": "کافه تکراری", "category": "کافه",
+                    "latitude": "29.59", "longitude": "52.58", "phone": "07133334444",
+                    "website": "", "instagram": "", "facebook": "", "linkedin": "",
+                    "address": "شیراز", "input_id": "cafe", "source": "openstreetmap",
+                    "city": "شیراز"}]
+
+        original = pipeline.make_engine
+        pipeline.make_engine = lambda mode=None: FakeEngine()
+        try:
+            first = pipeline.run_scrape(pipeline.ScrapeRequest.from_dict({
+                "niche_query": "کافه", "city_query": "شیراز", "engine_mode": "osm",
+                "lang": "fa", "limit": 10, "max_time": 30}))
+            second = pipeline.run_scrape(pipeline.ScrapeRequest.from_dict({
+                "niche_query": "کافه", "city_query": "شیراز", "engine_mode": "osm",
+                "lang": "fa", "limit": 10, "max_time": 30}))
+        finally:
+            pipeline.make_engine = original
+
+        self.assertEqual(first.analytics["fresh"]["repeat"], 0, "اجرای اول چیزی برای تکرار ندارد")
+        self.assertEqual(second.analytics["fresh"], {"new": 0, "repeat": 1})
+        joined = " ".join(second.analytics.get("warnings") or [])
+        self.assertIn("در اجراهای قبلی هم", joined)
+        rows = pipeline.storage.all_leads_for_export(second.run_id)
+        self.assertTrue((rows[0].get("signals") or {}).get("repeat"))
+        self.assertEqual((rows[0]["signals"] or {}).get("first_seen_run"), first.run_id)
+
     def test_city_request_has_no_sweep(self):
         captured: list[dict] = []
 
