@@ -43,7 +43,7 @@
 | اپ Vercel | کد و پیکربندی آماده (`api/index.py`, `vercel.json`) | در انتظار استقرار + متغیرهای محیطی |
 | موتور در Codespaces | اسکریپت‌ها آماده (`.devcontainer/*`, `scripts/engine_proxy.py`) | باید یک Codespace بسازید |
 | ایمیل (Gmail) | ماژول + مسیرهای API + راهنمای توکن | `scripts/gmail_token.py` |
-| آزمون‌ها | سبز | `python3 -m unittest discover -s tests` |
+| آزمون‌ها | سبز | `python3 -m unittest discover -t . -s tests` (همیشه SQLite محلی) |
 
 ---
 
@@ -164,7 +164,27 @@ curl -s https://<app>.vercel.app/api/delivery/status | python3 -m json.tool
      بالا آوردن موتور با `docker compose up -d`، بررسی اتصال Supabase، اجرای آزمون‌ها)،
    - `postStartCommand` → `bash .devcontainer/start-worker.sh` (ورکر صف در پس‌زمینه).
 
-### ۳٫۲ اگر دستی اجرا می‌کنید
+### ۳٫۲ کلیدها را در Codespaces Secrets بگذارید (پیشنهادی)
+
+به‌جای نوشتن کلیدها در `.env` (که ممکن است سهواً commit شود):
+
+1. `Settings → Secrets and variables → Codespaces → New secret`.
+2. این‌ها را بگذارید: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `APP_BASE_URL`,
+   `DIGEST_TO`, `GMAIL_SENDER` + یکی از `GMAIL_APP_PASSWORD` یا
+   `GMAIL_REFRESH_TOKEN`/`GMAIL_CLIENT_ID`/`GMAIL_CLIENT_SECRET`, و اختیاری
+   `LEADGEN_ACCESS_CODE` (همان کد Vercel) و `SCRAPER_API_KEY`.
+3. Codespace این‌ها را **به‌صورت متغیر محیطی** تزریق می‌کند (`devcontainer.json` فهرستشان
+   را در `secrets` دارد) و `setup.sh` بدون `.env` هم کار می‌کند. مقدار محیط بر `.env` اولویت دارد.
+4. `setup.sh` در پایان یک **جدول وضعیت با کلیدهای پوشانده** چاپ می‌کند
+   (پایگاه‌داده، صف، حمل‌کنندهٔ ایمیل، `DIGEST_TO`, `APP_BASE_URL`, موتور) تا بفهمید
+   چه چیزی وصل است و چه چیزی نه.
+
+> **آزمون‌ها هرگز به Supabase زنده وصل نمی‌شوند.** `leadgen/config.py` تشخیص می‌دهد که
+> فرایند در حال اجرای آزمون است (`unittest`/`pytest`/`python tests/test_x.py`) و پشتیبان را
+> SQLite محلی نگه می‌دارد؛ پس حتی با کلیدهای ابری در محیط، اجرای آزمون‌ها دادهٔ مشتری را
+> آلوده نمی‌کند. راه فرار عمدی: `LEADGEN_TEST_CLOUD=1`.
+
+### ۳٫۳ اگر دستی اجرا می‌کنید
 ```bash
 cp .env.example .env      # و کلیدهای Supabase/Gmail را بگذارید
 bash .devcontainer/setup.sh
@@ -180,7 +200,7 @@ tail -f data/logs/worker.log              # لاگ زندهٔ ورکر
 صف؛ و اگر `--deliver` روشن باشد (پیش‌فرض در `start-worker.sh`) بعد از هر اجرای موفق گزارش
 ایمیلی می‌فرستد.
 
-### ۳٫۳ دسترسی به موتور از بیرون Codespace (اختیاری)
+### ۳٫۴ دسترسی به موتور از بیرون Codespace (اختیاری)
 موتور کیت **هیچ احراز هویتی ندارد** → در `docker-compose.yml` روی `127.0.0.1` بسته شده.
 اگر می‌خواهید ورکری جای دیگر (یا لپ‌تاپ) از آن استفاده کند، پراکسی کلیددار بگذارید:
 
@@ -302,7 +322,7 @@ curl -s "$APP/api/diag/osm?city=مشهد&niche=کافه&deep=1"     # با شک�
 python3 scripts/queue_tick.py --url "$APP" --repeat 3
 
 # آزمون‌ها
-python3 -m unittest discover -s tests
+python3 -m unittest discover -t . -s tests        # همیشه SQLite محلی، حتی با کلیدهای ابری
 python3 scripts/check_deploy_config.py         # سازگاری vercel.json/api/index.py/WSGI
 
 # پاک‌سازی داده

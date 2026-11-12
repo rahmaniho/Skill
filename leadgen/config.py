@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -165,10 +166,37 @@ SUPABASE_SCHEMA = env("SUPABASE_SCHEMA", "public") or "public"
 SUPABASE_KEY = SUPABASE_SERVICE_KEY or SUPABASE_ANON_KEY
 
 
+def _looks_like_unittest() -> bool:
+    """آیا این فرایند در حال اجرای آزمون است؟
+
+    چرا؟ در Codespaces/Vercel کلیدهای Supabase به‌صورت متغیر محیطی حاضرند. اگر آزمون‌ها
+    با همان محیط اجرا شوند، `storage` به پایگاه‌دادهٔ **زنده** می‌رود و آزمون‌های صف/
+    ذخیره‌سازی دادهٔ واقعی مشتری را آلوده می‌کنند. این تور ایمنی مستقل از نحوهٔ فراخوانی
+    آزمون‌ها کار می‌کند.
+
+    راه فرار (برای بررسی دستیِ عمدی روی ابر): `LEADGEN_TEST_CLOUD=1`.
+    """
+    if env("LEADGEN_TEST_CLOUD") == "1":
+        return False
+    main = sys.modules.get("__main__")
+    main_file = (getattr(main, "__file__", "") or "").replace("\\", "/")
+    if main_file.endswith("unittest/__main__.py"):
+        return True
+    program = Path(sys.argv[0]).name if sys.argv else ""
+    if program in {"pytest", "py.test"} or program.startswith("unittest"):
+        return True
+    if main_file.endswith(".py"):
+        name = Path(main_file).name
+        return name.startswith("test_") and Path(main_file).parent.name == "tests"
+    return False
+
+
 def _default_db_backend() -> str:
     explicit = env("LEADGEN_DB").lower()
     if explicit in ("sqlite", "supabase", "postgres", "pg"):
         return "supabase" if explicit != "sqlite" else "sqlite"
+    if _looks_like_unittest():
+        return "sqlite"            # آزمون‌ها هرگز پایگاه‌دادهٔ زنده را نمی‌بینند
     return "supabase" if (SUPABASE_URL and SUPABASE_KEY) else "sqlite"
 
 
