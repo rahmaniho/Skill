@@ -950,6 +950,9 @@ function renderQueue(queue, jobs) {
     ["انتظار قدیمی‌ترین", queue.wait_seconds ? waitFa(queue.wait_seconds) : "—"],
     ["آخرین تپش صف", (queue.activity || {}).last_activity_s == null
       ? "—" : (queue.activity.last_activity_fa || "—")],
+    ["وضعیت زمان‌بند", (queue.activity || {}).stalled
+      ? "گیر کرده — کار منتظر مانده"
+      : ((queue.activity || {}).last_activity_s == null ? "—" : "سالم")],
   ].map(([label, value]) => `<div class="stat"><span>${esc(label)}</span><b>${esc(value)}</b></div>`).join("");
 
   $("#jobsTable tbody").innerHTML = jobs.length ? jobs.map((job) => `

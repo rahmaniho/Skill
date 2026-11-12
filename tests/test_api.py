@@ -521,6 +521,25 @@ class ApiTestCase(unittest.TestCase):
         self.assertTrue(activity["cron_ok"])
         self.assertIn("ثانیه پیش", activity["last_activity_fa"])
 
+    def test_20e2_idle_queue_is_healthy_but_stuck_queue_is_not(self):
+        """صف خالی سالم است؛ فقط صفِ با کارِ منتظر و سکوت طولانی «گیر کرده» است."""
+        from leadgen import server as server_mod
+        import time as time_mod
+
+        now = time_mod.time()
+        old_job = {"updated_at": now - 3600}
+        idle = server_mod.queue_activity([old_job], {"pending": 0})
+        self.assertFalse(idle["stalled"])
+        self.assertIsNone(idle["cron_ok"])          # بدون کار، «کارکردن» بی‌معناست
+
+        stuck = server_mod.queue_activity([old_job], {"pending": 2})
+        self.assertTrue(stuck["stalled"])
+        self.assertFalse(stuck["cron_ok"])
+
+        busy = server_mod.queue_activity([{"updated_at": now - 20}], {"pending": 2})
+        self.assertFalse(busy["stalled"])
+        self.assertTrue(busy["cron_ok"])
+
     def test_20f_queue_activity_reads_supabase_timestamps(self):
         """Supabase مقدار updated_at را متنی برمی‌گرداند؛ باید درست خوانده شود."""
         from leadgen import server as server_mod
