@@ -421,6 +421,30 @@ def _city(key: str) -> dict:
     return found
 
 
+def province_info(province: str) -> dict:
+    """برچسب فارسی/انگلیسی + جعبهٔ تقریبی استان.
+
+    جعبه از اجتماع جعبهٔ شهرهای شناخته‌شدهٔ همان استان ساخته می‌شود؛ برای
+    «جست‌وجوی پهن‌تر وقتی شهر کوچک چیزی ندارد» کافی است، نه مرز دقیق.
+    """
+    pid = (province or "").strip().lower()
+    if pid not in PROVINCES:
+        pid = (resolve(province=province) or {}).get("province", "")
+    spec = PROVINCES.get(pid) or {}
+    boxes = []
+    for key in spec.get("cities", []):
+        lat, lon, _country, bbox = geo.CITIES.get(key, (None, None, "", None))
+        if bbox:
+            boxes.append([float(x) for x in bbox])
+    bbox = None
+    if boxes:
+        bbox = [min(b[0] for b in boxes), max(b[1] for b in boxes),
+                min(b[2] for b in boxes), max(b[3] for b in boxes)]
+    return {"id": pid, "fa": spec.get("fa", province), "en": spec.get("en", province),
+            "capital": spec.get("capital", ""), "bbox": bbox,
+            "cities": spec.get("cities", [])}
+
+
 def provinces() -> list[dict]:
     """فهرست استان‌ها + شهرهای هر استان (برای آبشار انتخاب در رابط)."""
     out = []

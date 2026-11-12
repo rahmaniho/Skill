@@ -51,7 +51,9 @@ class Sender:
 
 def _first_name(title: str) -> str:
     """نام کوتاه و محترمانه برای شروع پیام (بدون شکستن حریم شخصی)."""
-    clean = re.sub(r"[()|]", " ", title or "").strip()
+    clean = re.sub(r"\s*\|\s*", "، ", title or "")
+    clean = re.sub(r"[()]", " ", clean)
+    clean = re.sub(r"\s+", " ", clean).strip(" ،")
     return clean or "کسب‌وکار شما"
 
 

@@ -255,6 +255,18 @@ def search(
     return rows
 
 
+def within(row: dict, bbox: list[float], *, margin: float = 0.2) -> bool:
+    """آیا ردیف داخل جعبه است؟ (با حاشیه — برای فیلتر نتایج جست‌وجوی متنی)"""
+    try:
+        lat = float(row.get("latitude"))
+        lon = float(row.get("longitude"))
+        s, n, w, e = (float(x) for x in bbox)
+    except (TypeError, ValueError):
+        return False
+    dlat, dlon = (n - s) * margin, (e - w) * margin
+    return (s - dlat) <= lat <= (n + dlat) and (w - dlon) <= lon <= (e + dlon)
+
+
 def health(*, force: bool = False) -> dict:
     """سلامت سرویس OSM (کش‌شده تا هر ۵ دقیقه — برای /api/health سریع بماند)."""
     now = time.time()

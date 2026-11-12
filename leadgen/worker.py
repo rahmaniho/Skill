@@ -89,6 +89,7 @@ def process_job(job: dict, *, engine_mode: str | None = None, quiet: bool = Fals
             "total": stats.get("total", 0), "hot": stats.get("hot", 0),
             "seconds": round(time.time() - started, 1),
             "engine": (result.run or {}).get("engine"),
+            "empty": bool(stats.get("empty")),
             "warnings": result.warnings or [],
             "exports": result.export_paths or [],
         }
