@@ -467,6 +467,7 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
         _progress(on_progress, run_id, {"stage": mode, "status": "working", "percent": 8,
                                         "message": f"{label} @ {city['lat']},{city['lon']}"})
 
+        coverage: list = []          # پوشش شهرها (فقط جست‌وجوی استانی)
         for index, spec in enumerate(specs, start=1):
             try:
                 job_id, spec_rows = engine.run_job(
@@ -487,7 +488,7 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
             job_ids.append(job_id)
             rows = geo.dedupe(rows + spec_rows)
             # گزارش پوشش شهرها (فقط جست‌وجوی استانی): صادقانه بگو کدام شهر داده نداشت.
-            coverage = getattr(engine, "coverage", None) or []
+            coverage = getattr(engine, "coverage", None) or coverage
             if sweep_boxes and coverage:
                 served = [c for c in coverage if c.get("rows")]
                 empty = [c for c in coverage if not c.get("rows")]
@@ -524,6 +525,12 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                 empty_run.update({"id": run_id, "total": 0, "hot": 0, "warm": 0, "cold": 0,
                                   "avg_score": 0.0, "job_ids": job_ids, "status": "done"})
                 empty_run["analytics"] = analytics.build([], empty_run, niche)
+                if coverage:
+                    empty_run["analytics"]["cities"] = [
+                        {"city": c.get("city") or "", "rows": int(c.get("rows") or 0),
+                         "via": c.get("via") or "", "error": c.get("error") or ""}
+                        for c in coverage
+                    ]
                 storage.update_run(run_id, **empty_run)
                 return ScrapeResult(
                     run_id=run_id, rows=[], analytics=empty_run["analytics"],
@@ -624,6 +631,13 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
             "job_ids": job_ids, "status": "done",
         })
         stats_pack = analytics.build(saved_rows, run_full, niche)
+        if coverage:
+            # پوشش شهری در بستهٔ آمار می‌ماند تا داشبورد و گزارش اجرا هم آن را نشان دهند.
+            stats_pack["cities"] = [
+                {"city": c.get("city") or "", "rows": int(c.get("rows") or 0),
+                 "via": c.get("via") or "", "error": c.get("error") or ""}
+                for c in coverage
+            ]
         # analytics فقط نسخه سبک meta را نگه می‌دارد، پس ارجاع دایره‌ای ساخته نمی‌شود
         run_full["analytics"] = stats_pack
         storage.update_run(run_id, **run_full)
