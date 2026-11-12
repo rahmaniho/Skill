@@ -259,6 +259,16 @@ class OverpassCacheAndTilingTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
 
 
+class MirrorConfigTests(unittest.TestCase):
+    def test_at_least_two_https_mirrors(self):
+        endpoints = config.OVERPASS_ENDPOINTS
+        self.assertGreaterEqual(len(endpoints), 2)
+        for url in endpoints:
+            self.assertTrue(url.startswith("https://"), url)
+            self.assertTrue(url.endswith("/interpreter") or "/interpreter" in url, url)
+        self.assertEqual(len(set(endpoints)), len(endpoints), "آینهٔ تکراری")
+
+
 class OverpassHealthTests(unittest.TestCase):
     """/status کند ≠ سرویس خراب (روی GitHub Actions دیده شد)."""
 

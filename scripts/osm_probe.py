@@ -57,7 +57,10 @@ def probe(city: str, niche: str = "", all_business: bool = False, limit: int = 4
     query = osm.build_overpass_query(filters, bbox, limit=limit)
     t0 = time.time()
     try:
-        rows = osm.overpass_search(filters, bbox=bbox, limit=limit, input_id="probe")
+        # force: probe باید واقعاً Overpass را امتحان کند، حتی اگر همین چند لحظه
+        # پیش یک درخواست دیگر شکست خورده باشد (علامت «پایین» سه‌دقیقه‌ای).
+        rows = osm.overpass_search(filters, bbox=bbox, limit=limit, input_id="probe",
+                                   force=True)
         elapsed = round(time.time() - t0, 1)
         print(f"  ✓ Overpass: {len(rows)} کسب‌وکار در {elapsed}s")
         for row in rows[:5]:
@@ -72,24 +75,29 @@ def probe(city: str, niche: str = "", all_business: bool = False, limit: int = 4
                 cats[row.get("category") or "—"] = cats.get(row.get("category") or "—", 0) + 1
             print(f"    تلفن {with_phone} · سایت {with_site} · نشانی {with_addr} | "
                   f"دسته‌ها: {dict(sorted(cats.items(), key=lambda kv: -kv[1])[:5])}")
-        result = {"ok": bool(rows), "city": area["label"], "rows": len(rows),
+        result = {"overpass_ok": bool(rows), "city": area["label"], "rows": len(rows),
                   "seconds": elapsed, "label": label, "query_chars": len(query),
                   "service": status_probe}
     except Exception as exc:                             # noqa: BLE001 — گزارش روشن
         elapsed = round(time.time() - t0, 1)
         print(f"  ✗ Overpass: {type(exc).__name__}: {exc} ({elapsed}s)")
-        result = {"ok": False, "city": area["label"], "error": str(exc)[:300],
-                  "seconds": elapsed, "service": status_probe}
+        result = {"overpass_ok": False, "city": area["label"], "rows": 0,
+                  "error": str(exc)[:300], "seconds": elapsed, "service": status_probe}
 
     # مقایسه: مسیر متنی قدیمی (Nominatim) روی همان شهر
+    nominatim_rows = 0
     try:
         t1 = time.time()
         term = "restaurant" if all_business else (niches.find_niche(niche or "رستوران").keywords_en or ["restaurant"])[0]
         legacy = osm.search(term, bbox=bbox, country="ir", limit=40, timeout=15)
-        print(f"  • Nominatim «{term}»: {len(legacy)} ردیف در {round(time.time() - t1, 1)}s")
+        nominatim_rows = len(legacy)
+        print(f"  • Nominatim «{term}»: {nominatim_rows} ردیف در {round(time.time() - t1, 1)}s")
     except Exception as exc:                             # noqa: BLE001
         print(f"  • Nominatim: {type(exc).__name__}: {exc}")
 
+    result["nominatim_rows"] = nominatim_rows
+    # «موفق» یعنی محصول از این مسیر دادهٔ واقعی می‌گیرد؛ Overpass یکی از دو مسیر است.
+    result["ok"] = bool(result.get("overpass_ok") or nominatim_rows)
     result["total_seconds"] = round(time.time() - started, 1)
     return result
 
@@ -110,7 +118,9 @@ def main(argv: list[str] | None = None) -> int:
 
     results = [probe(city, niche, all_business) for city, niche, all_business in targets]
     ok = sum(1 for r in results if r.get("ok"))
-    print(f"\nنتیجه: {ok}/{len(results)} درخواست نتیجهٔ واقعی داد.")
+    overpass_ok = sum(1 for r in results if r.get("overpass_ok"))
+    print(f"\nنتیجه: {ok}/{len(results)} درخواست دادهٔ واقعی داد "
+          f"(Overpass در {overpass_ok} مورد).")
     if args.json:
         print(json.dumps(results, ensure_ascii=False, indent=2))
     return 0 if ok else 1
