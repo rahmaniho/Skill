@@ -117,6 +117,8 @@ def viewbox_param(bbox: list[float]) -> str:
 _OVERPASS_LOCK = threading.Lock()
 _OVERPASS_LAST = [0.0]
 _OVERPASS_HEALTH: dict = {"ts": 0.0, "payload": None}
+# آخرین جست‌وجوی موفق: نقطهٔ /status گاهی کند/بی‌جواب است ولی سرویس سالم است.
+_OVERPASS_LAST_OK = [0.0]
 
 
 def _overpass_throttle() -> None:
@@ -208,6 +210,7 @@ def _overpass_request(query: str, *, timeout: float, retries: int = 1) -> dict:
                 errors.append(f"{host}: {remark[:120]}")
                 break
             _OVERPASS_COOLDOWN.pop(endpoint, None)
+            _OVERPASS_LAST_OK[0] = time.time()
             return data
     raise OSMDownError("Overpass پاسخ نداد (" + "; ".join(errors[:4]) + ")")
 
@@ -616,7 +619,7 @@ def overpass_health(*, force: bool = False, probe: bool = True) -> dict:
         _overpass_throttle()
         req = urllib.request.Request(endpoint.replace("/interpreter", "/status"),
                                      headers={"User-Agent": USER_AGENT})
-        with urllib.request.urlopen(req, timeout=8) as resp:
+        with urllib.request.urlopen(req, timeout=5) as resp:
             status = getattr(resp, "status", 200)
             text = resp.read().decode("utf-8", "replace")
         low = text.lower()
@@ -625,9 +628,13 @@ def overpass_health(*, force: bool = False, probe: bool = True) -> dict:
                    "ms": int((time.time() - started) * 1000),
                    "error": "" if up else "وضعیت Overpass نامشخص"}
     except Exception as exc:
-        payload = {"up": False, "endpoint": endpoint,
+        last_ok = float(_OVERPASS_LAST_OK[0] or 0)
+        recent_ok = last_ok and (time.time() - last_ok) < 600
+        payload = {"up": True if recent_ok else False, "endpoint": endpoint,
                    "ms": int((time.time() - started) * 1000),
-                   "error": f"{type(exc).__name__}: {exc}"[:200]}
+                   "error": "" if recent_ok else f"{type(exc).__name__}: {exc}"[:200],
+                   "note": ("سرویس در ۱۰ دقیقهٔ گذشته پاسخ داده است"
+                            if recent_ok else "")}
     _OVERPASS_HEALTH.update({"ts": now, "payload": payload})
     return dict(payload)
 
