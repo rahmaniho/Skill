@@ -219,11 +219,11 @@ def row_from_overpass(element: dict, *, input_id: str = "", lang: str = "fa") ->
                 return str(value).strip()
         return ""
 
-    address = "، ".join(pick("addr:full", "address", "addr:street", "addr:city") for _ in (0,)
-                        if pick("addr:full", "address", "addr:street", "addr:city"))
-    street = pick("addr:street")
-    house = pick("addr:housenumber")
-    address = "، ".join(x for x in (house, street, pick("addr:suburb", "addr:neighbourhood")) if x)
+    address = pick("addr:full", "address")
+    if not address:
+        address = "، ".join(x for x in (pick("addr:housenumber"), pick("addr:street"),
+                                        pick("addr:suburb", "addr:neighbourhood"),
+                                        pick("addr:city")) if x)
 
     phone = pick("phone", "contact:phone", "mobile", "contact:mobile")
     website = pick("website", "contact:website", "url")

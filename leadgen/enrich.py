@@ -16,6 +16,7 @@ import functools
 import re
 import urllib.parse
 import urllib.request
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from . import config
@@ -258,7 +259,8 @@ def normalize_row(row: dict) -> dict:
 # ── اجرای موازی غنی‌سازی ──────────────────────────────────────────────────────
 def enrich_rows(rows: list[dict], *, socials: bool = True, deep_emails: bool = True,
                 signals: bool = True, workers: int | None = None,
-                allow_network: bool = True, on_progress=None) -> dict:
+                allow_network: bool = True, budget_s: float | None = None,
+                on_progress=None) -> dict:
     """غنی‌سازی دسته‌ای ردیف‌ها (در جا، بدون کپی). گزارش آماری برمی‌گرداند."""
     workers = workers or config.ENRICH_WORKERS
     # ⚠ در جا جایگزین می‌کنیم (slice) تا فهرستِ فراخوان هم به‌روز شود؛
@@ -278,6 +280,11 @@ def enrich_rows(rows: list[dict], *, socials: bool = True, deep_emails: bool = T
 
     stats["network_used"] = True
     todo = [r for r in rows if r.get("website")]
+    # سقف زمانی: در سرورلس کل اجرا باید در بودجهٔ تابع جا شود؛ اگر وقت تمام شد
+    # بقیهٔ ردیف‌ها بدون غنی‌سازی ذخیره می‌شوند (بهتر از شکست کامل اجرا).
+    fallback_budget = float(budget_s if budget_s is not None else config.ENRICH_BUDGET)
+    deadline = time.monotonic() + max(1.0, fallback_budget)
+    stats["skipped_due_time"] = 0
 
     def work(row: dict) -> None:
         home = _fetch_cached(row["website"])
@@ -307,8 +314,14 @@ def enrich_rows(rows: list[dict], *, socials: bool = True, deep_emails: bool = T
             row["signals"] = detect_signals(home)
 
     done = 0
+    def guarded(row: dict) -> None:
+        if time.monotonic() > deadline:
+            stats["skipped_due_time"] += 1
+            return
+        work(row)
+
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        for _ in pool.map(work, todo):
+        for _ in pool.map(guarded, todo):
             done += 1
             if on_progress and (done % 5 == 0 or done == len(todo)):
                 on_progress({"stage": "enrich", "status": "working",

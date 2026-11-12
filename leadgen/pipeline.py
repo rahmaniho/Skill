@@ -501,6 +501,8 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
         # سقف نهایی بعد از امتیازدهی اعمال می‌شود تا «بهترین‌ها» بمانند نه «اولین‌ها».
         # اینجا فقط یک سقف محافظه‌کارانه می‌گذاریم تا هزینه غنی‌سازی منفجر نشود.
         pre_cap = max(request.limit * 3, 600) if request.limit else 0
+        if config.MAX_LEADS_PER_RUN:
+            pre_cap = min(pre_cap, config.MAX_LEADS_PER_RUN) if pre_cap else config.MAX_LEADS_PER_RUN
         if pre_cap and len(rows) > pre_cap:
             warnings.append(f"{len(rows) - pre_cap} ردیف برای کنترل هزینه غنی‌سازی موقتاً کنار "
                             f"گذاشته شد؛ سقف نهایی ({request.limit}) بعد از امتیازدهی اعمال می‌شود.")
@@ -532,11 +534,17 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
         if want_enrich and rows:
             _progress(on_progress, run_id, {"stage": "enrich", "status": "enriching", "percent": 76,
                                              "message": "غنی‌سازی: ایمیل عمیق، شبکه‌های اجتماعی و سیگنال‌های سایت"})
+            # بودجهٔ زمانی غنی‌سازی: تا کل اجرا (مثلاً روی Vercel) از سقف تابع بیرون نزند
             enrich_stats = enrich.enrich_rows(
                 rows, socials=request.socials, deep_emails=request.deep_emails and request.emails,
                 signals=request.signals, allow_network=allow_network,
+                budget_s=config.ENRICH_BUDGET,
                 on_progress=lambda p: _progress(on_progress, run_id, {**p, "stage": "enrich"}),
             )
+            if enrich_stats.get("skipped_due_time"):
+                warnings.append(
+                    f"به دلیل محدودیت زمان، {enrich_stats['skipped_due_time']} کسب‌وکار بدون "
+                    f"واکشی سایت ذخیره شد (تلفن/نشانی/لوکیشن کامل است).")
             if allow_network and enrich_stats.get("emails_after", 0) > enrich_stats.get("emails_before", 0):
                 gained = enrich_stats["emails_after"] - enrich_stats["emails_before"]
                 warnings.append(f"پاس عمیق ایمیل {gained} ایمیل جدید از صفحه‌های تماس/درباره پیدا کرد.")

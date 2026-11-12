@@ -260,6 +260,10 @@ def app_base_url() -> str:
 
 # ── غنی‌سازی ─────────────────────────────────────────────────────────────────
 ENRICH_WORKERS = env_int("ENRICH_WORKERS", 8)
+# سقف زمانی غنی‌سازی (ثانیه) — روی Vercel کل اجرا باید زیر ۶۰ ثانیه بماند
+ENRICH_BUDGET = max(3, env_int("ENRICH_BUDGET", 22))
+# سقف لید در هر اجرا (۰ = بی‌سقف) — برای اینکه یک جاروی شهر، صف/پایگاه‌داده را خفه نکند
+MAX_LEADS_PER_RUN = max(0, env_int("MAX_LEADS_PER_RUN", 900))
 
 USER_AGENT = "leadgen-studio/1.0 (built on Mahanaicoach/google-maps-scraper-kit)"
 
@@ -293,6 +297,8 @@ def summary() -> dict:
         "port": PORT,
         "data_dir": str(DATA_DIR),
         "enrich_workers": ENRICH_WORKERS,
+        "enrich_budget": ENRICH_BUDGET,
+        "max_leads_per_run": MAX_LEADS_PER_RUN,
         "lead_fields": LEAD_FIELDS,
         # لایهٔ عملیاتی
         "db_backend": DB_BACKEND,

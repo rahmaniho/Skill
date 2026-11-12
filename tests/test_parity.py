@@ -42,6 +42,12 @@ class ParityFixtureTests(unittest.TestCase):
     def setUpClass(cls):
         if not EXPECTED.exists():
             raise unittest.SkipTest("expected.json ساخته نشده است")
+        # این آزمون باید به پایگاه‌دادهٔ خودش نگاه کند، نه به data/ محلی که ممکن است
+        # اجراهای واقعی داشته باشد (وگرنه نتیجه به محیط توسعه وابسته می‌شود).
+        from leadgen import config as lg_config
+        lg_config.DATA_DIR = _TMP
+        lg_config.DB_PATH = _TMP / "leadgen.db"
+        lg_config.EXPORT_DIR = _TMP / "exports"
         cls.build = _load_build_module()
         cls.expected = json.loads(EXPECTED.read_text(encoding="utf-8"))
         cls.leads = cls.build.build_leads()

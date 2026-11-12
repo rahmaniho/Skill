@@ -32,6 +32,7 @@ import json
 import os
 import re
 import threading
+from collections import Counter
 import time
 import traceback
 import urllib.parse
@@ -39,7 +40,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import (analytics, campaign, config, delivery, engine as engine_mod, enrich,
-               exports, geo, jobs, niches, pipeline, regions, scoring, smart, storage)
+               exports, geo, jobs, niches, osm_tags, pipeline, regions, scoring, smart,
+               storage)
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
@@ -92,9 +94,11 @@ MAX_PROGRESS = 400
 
 # ── محافظ‌های تجاری ───────────────────────────────────────────────────────────
 # مسیرهای عمومی که رابط برای بالا آمدن لازم دارد (حتی وقتی کد دسترسی گذاشته شده)
-_PUBLIC_API = ("/api/health", "/api/meta", "/api/engine", "/api/worker",
+_PUBLIC_API = ("/api/health", "/api/meta", "/api/engine", "/api/worker", "/api/diag/",
                "/api/smart/", "/api/regions", "/api/cities", "/api/catalog")
 _RUN_HITS: dict[str, list[float]] = {}
+_DIAG_HITS: dict[str, list[float]] = {}
+DIAG_PER_HOUR = 60                    # سقف آزمون زندهٔ موتور برای هر IP
 _HITS_LOCK = threading.Lock()
 WORKER_ONLINE_SECONDS = 180          # اگر کار در حال اجرا جدیدتر از این باشد، ورکر زنده است
 
@@ -112,6 +116,19 @@ def _access_ok(handler, path: str, query: dict) -> bool:
         return True
     given = (handler.headers.get("X-Leadgen-Code") or query.get("code") or "").strip()
     return bool(given) and given == config.ACCESS_CODE
+
+
+def _diag_allowed(ip: str, limit: int = DIAG_PER_HOUR) -> bool:
+    """سقف سادهٔ آزمون زنده برای هر IP (ضد سوءاستفاده از سهمیهٔ Overpass)."""
+    now = time.time()
+    with _HITS_LOCK:
+        hits = [t for t in _DIAG_HITS.get(ip, []) if now - t < 3600]
+        if len(hits) >= limit:
+            _DIAG_HITS[ip] = hits
+            return False
+        hits.append(now)
+        _DIAG_HITS[ip] = hits
+    return True
 
 
 def _rate_hit(ip: str) -> bool:
@@ -255,6 +272,14 @@ def parse_multipart(body: bytes, content_type: str) -> dict[str, dict]:
         else:
             fields[name] = {"value": payload.decode("utf-8", "replace").strip()}
     return fields
+
+
+def osm_tags_summary() -> dict:
+    """پوشش نقشهٔ صنف → تگ (برای نمایش در سلامت و دیباگ)."""
+    try:
+        return osm_tags.spec_coverage()
+    except Exception:                                    # noqa: BLE001
+        return {}
 
 
 def _cities_brief(cities: list[dict] | None = None) -> list[dict]:
@@ -434,12 +459,18 @@ class Handler(BaseHTTPRequestHandler):
             return self._static(path[len("/studio/"):], WEB_DIR)
 
         if path == "/api/health":
+            fresh = _flag(query, "fresh") is True
+            osm_health = engine_mod.engine_health("osm", force=fresh)
             return self._json({
                 "ok": True,
                 "version": "1.0.0",
                 "engine": engine_mod.engine_status(),
                 "config": config.summary(),
                 "db": storage.pipeline_stats(),
+                "sources": {"osm": osm_health,
+                            "overpass": {"mode": config.OSM_MODE,
+                                         **engine_mod.engine_health("overpass", force=fresh)}},
+                "tag_map": osm_tags_summary(),
             })
 
         if path == "/api/smart/options":
@@ -487,6 +518,10 @@ class Handler(BaseHTTPRequestHandler):
                                               street=query.get("street", ""),
                                               lat=_num(query.get("lat")),
                                               lon=_num(query.get("lon"))))
+
+        # ── آزمون زندهٔ موتور داده (بدون نوشتن در پایگاه‌داده) ─────────────
+        if path == "/api/diag/osm":
+            return self._json(self._osm_diag(query))
 
         # ── جست‌وجوی قوی در همهٔ داده‌های جمع‌شده (تمام اجراها) ──────────────
         if path == "/api/search":
@@ -815,6 +850,64 @@ class Handler(BaseHTTPRequestHandler):
             "total": storage.count_leads(run_id),
             "statuses": storage.LEAD_STATUS_FA,
         })
+
+    def _osm_diag(self, query: dict) -> dict:
+        """یک درخواست واقعی به Overpass برای یک شهر/صنف و برگرداندن آمار و نمونه.
+
+        چرا؟ برای اینکه «کار می‌کند» با شاهد واقعی سنجیده شود، نه با حدس. بدون
+        نوشتن در پایگاه‌داده و با همان محدودیت نرخ موتور.
+        """
+        from .providers import osm as osm_provider
+
+        city_name = (query.get("city") or "").strip()
+        niche_name = (query.get("niche") or "").strip()
+        all_business = _flag(query, "all") is True or niche_name in ("", "همه", "all")
+        if not _diag_allowed(_client_ip(self)):
+            raise ApiError("تعداد آزمون‌ها زیاد بود؛ چند دقیقه دیگر امتحان کنید.", 429)
+        area = regions.resolve(city=city_name) if city_name else {}
+        if not area.get("lat"):
+            return {"ok": False, "error": f"شهر «{city_name}» پیدا نشد", "city": city_name}
+        key = area.get("city_key") or ""
+        bbox = None
+        if key and key in geo.CITIES:
+            bbox = [float(x) for x in geo.CITIES[key][3]]
+        bbox = bbox or geo.default_bbox(area["lat"], area["lon"], 0.12)
+        span = max(bbox[1] - bbox[0], bbox[3] - bbox[2])
+        niche_obj = None if all_business else niches.find_niche(niche_name)
+        if all_business:
+            filters = osm_tags.all_business_filters()
+            label = "همهٔ کسب‌وکارها"
+        else:
+            filters = osm_tags.filters_for_niche(niche_obj.id, with_names=span < 0.6)
+            label = niche_obj.fa
+        started = time.time()
+        try:
+            rows = osm_provider.overpass_search(
+                filters, bbox=bbox, limit=max(20, min(_int(query.get("limit", 300), 300), 800)),
+                input_id="diag")
+            error = ""
+        except Exception as exc:                          # noqa: BLE001 — گزارش روشن
+            rows, error = [], f"{type(exc).__name__}: {exc}"[:300]
+        elapsed = round(time.time() - started, 2)
+        sample = [{k: row.get(k) for k in ("title", "category", "latitude", "longitude",
+                                           "phone", "website", "instagram", "address")}
+                  for row in rows[:12]]
+        return {
+            "ok": not error and bool(rows),
+            "city": area.get("label") or city_name, "city_key": key,
+            "province": area.get("province", ""), "niche": label,
+            "mode": config.OSM_MODE, "bbox": [round(x, 4) for x in bbox],
+            "filters": len(filters), "rows": len(rows), "seconds": elapsed,
+            "with_phone": sum(1 for r in rows if r.get("phone")),
+            "with_website": sum(1 for r in rows if r.get("website")),
+            "with_address": sum(1 for r in rows if r.get("address")),
+            "with_social": sum(1 for r in rows if r.get("instagram") or r.get("facebook")),
+            "categories": dict(sorted(
+                Counter((r.get("category") or "—") for r in rows).items(),
+                key=lambda kv: -kv[1])[:8]),
+            "sample": sample,
+            "error": error,
+        }
 
     def _search_params(self, query: dict) -> dict:
         """پارامترهای جست‌وجوی قوی از کوئری‌استرینگ (یک تعریف، دو مصرف)."""

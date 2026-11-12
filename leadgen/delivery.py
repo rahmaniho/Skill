@@ -496,7 +496,11 @@ def build_lead_drafts(limit: int = 10, *, channel: str = "email", min_score: int
     drafts = []
     for lead in result.get("leads", [])[:int(limit)]:
         message = campaign.generate(lead, channel=channel, sender=person)
-        drafts.append({"lead_id": lead.get("id"), "title": lead.get("title"),
+        # عنوان پیش‌نویس = همان نامی که در متن ایمیل خطاب می‌شود (نه عنوان خام لید)؛
+        # عنوان کامل هم جدا نگه داشته می‌شود تا در رابط دیده شود.
+        business = str((message.get("context") or {}).get("business") or lead.get("title") or "")
+        drafts.append({"lead_id": lead.get("id"), "title": business,
+                       "lead_title": lead.get("title"),
                        "to": message.get("to"), "subject": message.get("subject"),
                        "text": message.get("body") or message.get("text"),
                        "channel": channel, "score": lead.get("score")})

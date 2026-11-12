@@ -413,10 +413,6 @@ def _kind_of(tags: dict) -> tuple[str, str]:
 
 def niche_for_tags(tags: dict) -> str:
     """تگ‌های OSM → شناسهٔ صنف داخلی (برای جاروی «همهٔ کسب‌وکارها»)."""
-    for key, value in _ORDER_KEYS:
-        if not tags.get(key):
-            continue
-        break
     best = ""
     for niche_id, spec in SPEC.items():
         for key, values in spec.get("tags", {}).items():

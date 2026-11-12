@@ -443,7 +443,8 @@ class DemoEngine:
         # کلیدهای داخلیِ مخصوص موتورهای واقعی نباید خروجی دمو را عوض کنند؛
         # وگرنه با هر تغییر کوچک در پایپ‌لاین، دادهٔ شبیه‌سازی‌شده عوض می‌شود.
         seed_body = {k: v for k, v in body.items()
-                     if k not in ("osm_terms", "province_label", "province_bbox")}
+                     if k not in ("osm_terms", "province_label", "province_bbox",
+                                  "all_business", "tag_filters")}
         seed = self._seed(json.dumps(seed_body, sort_keys=True, ensure_ascii=False, default=str))
         rnd = random.Random(seed)
         job_id = hashlib.sha1(str(seed).encode()).hexdigest()[:8]
@@ -585,11 +586,16 @@ class OSMEngine:
                                      "message": "[OSM] نتیجهٔ تگ‌محور خالی بود؛ جست‌وجوی متنی…"})
 
         strict_overpass = config.OSM_MODE == "overpass"
+        # در حالت hybrid: اگر تگ‌ها نتیجهٔ کافی دادند سهمیهٔ Nominatim را نمی‌سوزانیم؛
+        # اگر نتیجه کم بود، حداکثر دو عبارت را برای تکمیل امتحان می‌کنیم.
+        fallback_left = (2 if 0 < len(rows) < 5 else (0 if rows else len(terms)))
         for index, term in enumerate(terms):
             if strict_overpass and used_overpass:
                 break
-            if used_overpass and len(rows) >= 60:
-                break                        # به‌اندازهٔ کافی از تگ‌ها گرفتیم؛ سهمیهٔ Nominatim نسوزد
+            if used_overpass and (len(rows) >= 60 or fallback_left <= 0):
+                break
+            if used_overpass:
+                fallback_left -= 1
             left = budget - (time.time() - started)
             if left < 6:
                 break
@@ -802,6 +808,26 @@ def make_engine(mode: str | None = None, base_url: str | None = None) -> Engine:
     if osm_engine.health().get("up"):
         return osm_engine
     return DemoEngine()
+
+
+def engine_health(name: str, *, force: bool = False) -> dict:
+    """سلامت یک منبع دادهٔ مشخص: osm | nominatim | overpass | places | docker."""
+    key = (name or "").strip().lower()
+    try:
+        if key in ("osm", "nominatim"):
+            from .providers import osm
+            return osm.health(force=force)
+        if key == "overpass":
+            from .providers import osm
+            return osm.overpass_health(force=force)
+        if key == "places":
+            from .providers import places
+            return places.health()
+        if key == "docker":
+            return DockerEngine().health()
+    except Exception as exc:                              # noqa: BLE001
+        return {"up": False, "error": f"{type(exc).__name__}: {exc}"[:200]}
+    return {"up": False, "error": f"منبع ناشناخته: {name}"}
 
 
 def engine_status(mode: str | None = None) -> dict:
