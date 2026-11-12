@@ -633,9 +633,11 @@
         '<span class="chip">🏃 در حال اجرا: ' + fa(st.running || 0) + "</span>" +
         '<span class="chip">✅ انجام‌شده: ' + fa(st.done || 0) + "</span>" +
         '<span class="chip">⚠️ خطا: ' + fa(st.failed || 0) + "</span>";
-      $("queueNote").textContent = q.active === false
+      var act = q.activity || {};
+      var beat = act.last_activity_s == null ? "" : " · آخرین تپش: " + esc(act.last_activity_fa || "");
+      $("queueNote").textContent = (q.active === false
         ? "صف غیرفعاله — کارها همون لحظه اجرا می‌شن."
-        : (st.oldest_wait_s ? "قدیمی‌ترین کار " + fa(Math.round(st.oldest_wait_s / 60)) + " دقیقه‌ست منتظره." : "صف خلوته؛ هر کاری بزنی زود شروع می‌شه.");
+        : (st.oldest_wait_s ? "قدیمی‌ترین کار " + fa(Math.round(st.oldest_wait_s / 60)) + " دقیقه‌ست منتظره." : "صف خلوته؛ هر کاری بزنی زود شروع می‌شه.")) + beat;
     }, function () { $("queueNote").textContent = ""; });
     API.runs().then(function (j) {
       var runs = j.runs || [];

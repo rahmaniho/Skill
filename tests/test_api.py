@@ -497,6 +497,38 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(status, 404)
         self.assertIn("پیدا نشد", data["error"])
 
+    def test_20e_queue_reports_when_it_last_did_something(self):
+        """«آخرین تپش صف» باید از دادهٔ پایگاه‌داده بیاید (نه حافظهٔ همین پروسه)."""
+        from leadgen import config as config_mod
+
+        original = config_mod.QUEUE_MODE
+        try:
+            config_mod.QUEUE_MODE = "always"
+            with storage._connect() as conn:
+                conn.execute("delete from jobs")
+            storage.enqueue_job("activity-probe", {"run_id": "activity-probe",
+                                                   "city_query": "تهران",
+                                                   "niche_query": "کافه"})
+            status, data = self.get("/api/queue")
+        finally:
+            config_mod.QUEUE_MODE = original
+            with storage._connect() as conn:
+                conn.execute("delete from jobs")
+        self.assertEqual(status, 200)
+        activity = data["activity"]
+        self.assertIsNotNone(activity["last_activity_s"])
+        self.assertLessEqual(activity["last_activity_s"], 60)
+        self.assertTrue(activity["cron_ok"])
+        self.assertIn("ثانیه پیش", activity["last_activity_fa"])
+
+    def test_20f_queue_activity_reads_supabase_timestamps(self):
+        """Supabase مقدار updated_at را متنی برمی‌گرداند؛ باید درست خوانده شود."""
+        from leadgen import server as server_mod
+
+        stamp = server_mod._stamp_of({"updated_at": "2026-11-12T19:04:49.091265+00:00"})
+        self.assertGreater(stamp, 1_700_000_000)
+        self.assertEqual(server_mod._stamp_of({"updated_at": None, "created_at": 5.0}), 5.0)
+
     # ── تپش صف از بیرون (کرون) ──────────────────────────────────────────────
     def _queue_tick_module(self):
         import importlib.util

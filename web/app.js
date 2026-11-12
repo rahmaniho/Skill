@@ -948,6 +948,8 @@ function renderQueue(queue, jobs) {
     ["در انتظار", fa(stats.pending || 0)], ["در حال اجرا", fa(stats.running || 0)],
     ["انجام‌شده", fa(stats.done || 0)], ["ناموفق", fa(stats.failed || 0)],
     ["انتظار قدیمی‌ترین", queue.wait_seconds ? waitFa(queue.wait_seconds) : "—"],
+    ["آخرین تپش صف", (queue.activity || {}).last_activity_s == null
+      ? "—" : (queue.activity.last_activity_fa || "—")],
   ].map(([label, value]) => `<div class="stat"><span>${esc(label)}</span><b>${esc(value)}</b></div>`).join("");
 
   $("#jobsTable tbody").innerHTML = jobs.length ? jobs.map((job) => `

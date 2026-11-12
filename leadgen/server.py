@@ -33,6 +33,7 @@ import os
 import re
 import threading
 from collections import Counter
+from datetime import datetime
 import time
 import traceback
 import urllib.parse
@@ -221,6 +222,52 @@ def get_progress(run_id: str) -> dict:
             return 0.0
 
     return _with_self_drive(persisted if stamp(persisted) >= stamp(local) else local)
+
+
+def _stamp_of(job: dict) -> float:
+    """زمان آخرین فعالیت یک کار (ثانیهٔ یونیکس) — هم SQLite و هم Supabase."""
+    for key in ("updated_at", "finished_at", "started_at", "created_at"):
+        value = job.get(key)
+        if value in (None, ""):
+            continue
+        if isinstance(value, (int, float)):
+            return float(value)
+        text = str(value).strip()
+        try:
+            return float(text)
+        except ValueError:
+            pass
+        try:                                   # timestamptz در Supabase: 2026-11-12T19:04:49+00:00
+            return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            continue
+    return 0.0
+
+
+def queue_activity(jobs: list[dict]) -> dict:
+    """آخرین فعالیت صف — تا بشود فهمید کرون/ورکر واقعاً کار می‌کند یا نه."""
+    stamps = [_stamp_of(job) for job in jobs]
+    last = max(stamps) if stamps else 0.0
+    if not last:
+        return {"last_activity_s": None, "cron_ok": None}
+    age = max(0, int(time.time() - last))
+    return {
+        "last_activity_s": age,
+        "last_activity_fa": jobs_age_fa(age),
+        # کرون هر ۲ دقیقه می‌زند؛ سکوت بیش از ۱۰ دقیقه یعنی چیزی خراب است
+        "cron_ok": age <= 600,
+        "expected_every_s": 120,
+    }
+
+
+def jobs_age_fa(seconds: int) -> str:
+    if seconds < 90:
+        return f"{seconds} ثانیه پیش"
+    if seconds < 5400:
+        return f"{seconds // 60} دقیقه پیش"
+    if seconds < 172800:
+        return f"{seconds // 3600} ساعت پیش"
+    return f"{seconds // 86400} روز پیش"
 
 
 def _with_self_drive(payload: dict) -> dict:
@@ -1214,6 +1261,7 @@ class Handler(BaseHTTPRequestHandler):
         """وضعیت صف برای داشبورد: آمار + کارها + جای اجراها."""
         stats = storage.queue_stats()
         limit = _int(query.get("limit"), 20)
+        recent_jobs = storage.list_jobs(None, limit=max(limit, 30))
         payload = {
             "mode": config.QUEUE_MODE,
             "active": jobs.queue_mode_active(),
@@ -1222,8 +1270,9 @@ class Handler(BaseHTTPRequestHandler):
             "worker_online": worker_online(),
             "self_drive": self_drive_allowed(),
             "stats": stats,
-            "jobs": storage.list_jobs(None, limit=limit),
+            "jobs": recent_jobs,
             "engine": pipeline.engine_status(None),
+            "activity": queue_activity(recent_jobs),
         }
         if stats.get("oldest_wait_s"):
             payload["wait_seconds"] = jobs.wait_time(stats["oldest_wait_s"])
