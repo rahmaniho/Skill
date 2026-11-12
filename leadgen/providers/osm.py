@@ -630,11 +630,17 @@ def overpass_health(*, force: bool = False, probe: bool = True) -> dict:
     except Exception as exc:
         last_ok = float(_OVERPASS_LAST_OK[0] or 0)
         recent_ok = last_ok and (time.time() - last_ok) < 600
-        payload = {"up": True if recent_ok else False, "endpoint": endpoint,
+        # «تایم‌اوتِ /status» با «سرویسِ خراب» یکی نیست: روی GitHub Actions دیدیم
+        # که /status کند است ولی همان لحظه ۳۹۲ نتیجهٔ واقعی برگشت. پس تایم‌اوت را
+        # «نامعلوم» گزارش می‌کنیم، نه «خراب».
+        timed_out = isinstance(exc, TimeoutError) or "timed out" in str(exc).lower()
+        up = True if recent_ok else (None if timed_out else False)
+        payload = {"up": up, "endpoint": endpoint,
                    "ms": int((time.time() - started) * 1000),
-                   "error": "" if recent_ok else f"{type(exc).__name__}: {exc}"[:200],
-                   "note": ("سرویس در ۱۰ دقیقهٔ گذشته پاسخ داده است"
-                            if recent_ok else "")}
+                   "error": "" if recent_ok or timed_out else f"{type(exc).__name__}: {exc}"[:200],
+                   "note": ("سرویس در ۱۰ دقیقهٔ گذشته پاسخ داده است" if recent_ok else
+                            "پاسخ وضعیت دیر آمد؛ نامعلوم (جست‌وجوی واقعی همچنان محک است)"
+                            if timed_out else "")}
     _OVERPASS_HEALTH.update({"ts": now, "payload": payload})
     return dict(payload)
 

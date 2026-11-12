@@ -257,3 +257,40 @@ class OverpassCacheAndTilingTests(unittest.TestCase):
                                             bbox=[35.6, 35.8, 51.3, 51.5], limit=100, tiles=4)
         self.assertEqual(request.call_count, 1)
         self.assertEqual(len(rows), 1)
+
+
+class OverpassHealthTests(unittest.TestCase):
+    """/status کند ≠ سرویس خراب (روی GitHub Actions دیده شد)."""
+
+    def setUp(self):
+        osm._OVERPASS_HEALTH.update({"ts": 0.0, "payload": None})
+        osm._OVERPASS_LAST_OK[0] = 0.0
+
+    def tearDown(self):
+        osm._OVERPASS_HEALTH.update({"ts": 0.0, "payload": None})
+        osm._OVERPASS_LAST_OK[0] = 0.0
+
+    def test_status_timeout_is_unknown_not_down(self):
+        with mock.patch.object(osm.urllib.request, "urlopen", side_effect=TimeoutError("timed out")):
+            payload = osm.overpass_health(force=True)
+        self.assertIsNone(payload["up"])
+        self.assertEqual(payload["error"], "")
+        self.assertIn("نامعلوم", payload["note"])
+
+    def test_recent_success_wins_over_slow_status(self):
+        osm._OVERPASS_LAST_OK[0] = __import__("time").time()
+        with mock.patch.object(osm.urllib.request, "urlopen", side_effect=TimeoutError("timed out")):
+            payload = osm.overpass_health(force=True)
+        self.assertTrue(payload["up"])
+
+    def test_connection_refused_is_down(self):
+        with mock.patch.object(osm.urllib.request, "urlopen",
+                               side_effect=OSError("Connection refused")):
+            payload = osm.overpass_health(force=True)
+        self.assertFalse(payload["up"])
+
+    def test_probe_disabled_returns_unknown_without_network(self):
+        with mock.patch.object(osm.urllib.request, "urlopen", side_effect=AssertionError("شبکه")):
+            payload = osm.overpass_health(probe=False)
+        self.assertIsNone(payload["up"])
+        self.assertIn("سنجیده نشده", payload["note"])
