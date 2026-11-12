@@ -77,7 +77,12 @@ jobs:
         run: |
           # دادهٔ نمونهٔ منطقه‌محور تا «جست‌وجوی قوی» و پروندهٔ لید هم پوشش داده شود
           python scripts/seed_demo_data.py --fresh
-          python -m leadgen.server --host 127.0.0.1 --port 8123 > /tmp/leadgen-server.log 2>&1 &
+          # این گام «رابط کاربری روی سرور واقعی» را می‌سنجد، نه سرعت موتور داده.
+          # با ENGINE_MODE=auto، روی رانر (که اینترنت دارد) موتور به OSM زنده می‌افتد و
+          # اجرا از پنجرهٔ ۹ ثانیه‌ای smoke بیرون می‌زند — و به Nominatim هم بار تحمیل می‌کند.
+          # مسیر OSM جداگانه و قطعی با Nominatim جعلی تست می‌شود (tests/test_osm_live_fake.py).
+          LEADGEN_ENGINE_MODE=demo python -m leadgen.server --host 127.0.0.1 --port 8123 \
+            > /tmp/leadgen-server.log 2>&1 &
           SERVER_PID=$!
           for _ in $(seq 1 60); do
             curl -sf http://127.0.0.1:8123/api/health > /dev/null && break
