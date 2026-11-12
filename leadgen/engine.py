@@ -498,6 +498,7 @@ class OSMEngine:
         # گزارش پوشش: کدام شهر/محدوده است، هر کدام چند ردیف و از کدام مسیر.
         # (لایهٔ بالاتر با این گزارش صادقانه می‌گوید کدام شهر داده نداشت.)
         self.coverage: list[dict] = []
+        self.attempts: list[dict] = []      # هر تلاش جست‌وجوی متنی: {term, rows, city}
 
     def health(self) -> dict:
         from .providers import osm
@@ -556,6 +557,7 @@ class OSMEngine:
         used_overpass = False
 
         self.coverage = []
+        self.attempts = []
         # جعبه‌های جست‌وجو: یا یک جعبهٔ شهر، یا چند شهر برای جست‌وجوی سطح استان
         sweep_boxes: list[dict] = []
         for item in (body.get("sweep_boxes") or []):
@@ -714,7 +716,11 @@ class OSMEngine:
                                          lang=lang, input_id=city_name)
                     except OSMDownError as exc:
                         errors.append(f"nominatim {city_name} «{term}»: {exc}")
+                        self.attempts.append({"term": term, "rows": 0, "city": city_name,
+                                              "error": type(exc).__name__})
                         continue
+                    self.attempts.append({"term": term, "rows": len(got), "city": city_name,
+                                          "error": ""})
                     seen_ids = {r.get("place_id") for r in rows}
                     fresh = [row for row in got if row.get("place_id") not in seen_ids]
                     if fresh:
@@ -769,6 +775,9 @@ class OSMEngine:
             except OSMDownError as exc:
                 errors.append(f"{term}: {exc}")
                 got = []
+                self.attempts.append({"term": term, "rows": 0, "error": type(exc).__name__})
+            else:
+                self.attempts.append({"term": term, "rows": len(got), "error": ""})
             if add(got, term):
                 continue
             # راه دوم: کلمهٔ کلیدیِ تنهایی — عبارت کامل فارسی در OSM کم نتیجه می‌دهد

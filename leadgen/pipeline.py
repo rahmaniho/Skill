@@ -515,6 +515,14 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                 # پیام روشن ببیند و صف سه بار بیهوده تکرار نکند.
                 note = str(empty_hit) if empty_hit is not None else "در این محدوده چیزی پیدا نشد."
                 warnings.append(note)
+                attempts = getattr(engine, "attempts", None) or []
+                if attempts:
+                    detail = "، ".join(
+                        f"«{a.get('term')}» {a.get('rows', 0)}"
+                        + (f" از {a['city']}" if a.get("city") else "")
+                        for a in attempts[:6])
+                    warnings.append(f"مسیر جست‌وجوی متنی هم امتحان شد ({detail}) "
+                                    f"و هیچ‌کدام نتیجه نداد.")
                 warnings.append(
                     "پیشنهاد: محدودهٔ بزرگ‌تری (کل شهر یا استان) یا صنف دیگری را امتحان کن. "
                     "برای پوشش بیشتر، کلید Google Places API را در تنظیمات بگذار.")
