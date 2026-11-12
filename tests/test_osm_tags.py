@@ -366,3 +366,91 @@ class OverpassDownCacheTests(unittest.TestCase):
                                        limit=50, force=True)
         self.assertEqual(len(rows), 1)
         self.assertTrue(osm.overpass_available())      # موفقیت، علامت خرابی را پاک می‌کند
+
+
+class ProvinceBoxTests(unittest.TestCase):
+    """انتخاب «استان» باید چند شهر را بگردد، نه فقط مرکز استان."""
+
+    def test_boxes_sorted_by_population_and_have_bbox(self):
+        from leadgen import regions
+        boxes = regions.province_boxes("tehran-province", limit=5)
+        self.assertEqual(len(boxes), 5)
+        pops = [b["pop"] for b in boxes]
+        self.assertEqual(pops, sorted(pops, reverse=True))
+        self.assertEqual(boxes[0]["id"], "tehran")
+        for box in boxes:
+            self.assertEqual(len(box["bbox"]), 4)
+            s, n, w, e = box["bbox"]
+            self.assertLess(s, n)
+            self.assertLess(w, e)
+            self.assertTrue(box["fa"])
+
+    def test_unknown_province_is_empty(self):
+        from leadgen import regions
+        self.assertEqual(regions.province_boxes("nope", limit=5), [])
+
+    def test_limit_zero_means_no_sweep(self):
+        from leadgen import regions
+        self.assertGreater(len(regions.province_boxes("gilan", limit=0)), 1)
+        self.assertEqual(regions.province_boxes("gilan", limit=2), regions.province_boxes("gilan", limit=2)[:2])
+
+
+class OverpassSweepTests(unittest.TestCase):
+    """موتور OSM باید برای هر جعبهٔ شهر جدا بپرسد و نتیجه‌ها را بی‌تکرار ادغام کند."""
+
+    def _row(self, ident: int, title: str) -> dict:
+        return {"place_id": f"osm:node/{ident}", "title": title, "category": "کافه",
+                "latitude": "35.70", "longitude": "51.40", "phone": "", "website": "",
+                "instagram": "", "facebook": "", "linkedin": "", "address": "",
+                "input_id": "cafe", "source": "openstreetmap"}
+
+    def test_each_sweep_box_is_queried_and_merged(self):
+        from leadgen import engine as engine_mod
+        seen: list[list[float]] = []
+
+        def fake_area(filters, *, bbox, limit=None, timeout=None, input_id="", lang="fa",
+                      tiles=1, max_rows=None, budget_s=None):
+            seen.append(list(bbox))
+            return [self._row(len(seen), f"کافه {len(seen)}")]
+
+        body = {
+            "keywords": ["کافه در گیلان"], "city_label": "گیلان", "lang": "fa",
+            "lat": "37.28", "lon": "49.59", "bbox": [37.20, 37.36, 49.51, 49.67],
+            "radius": 30000, "depth": 3, "max_time": 40,
+            "sweep_boxes": [
+                {"fa": "رشت", "pop": 700000, "bbox": [37.20, 37.36, 49.51, 49.67]},
+                {"fa": "لاهیجان", "pop": 100000, "bbox": [37.15, 37.25, 49.95, 50.05]},
+            ],
+        }
+        with mock.patch.object(osm, "overpass_search_area", side_effect=fake_area), \
+                mock.patch.object(osm, "search", return_value=[]):
+            job_id, rows = engine_mod.OSMEngine().run_job(body)
+        self.assertEqual(len(seen), 2, "برای هر شهر باید یک پرسش جدا زده شود")
+        self.assertEqual(seen[0], [37.20, 37.36, 49.51, 49.67])
+        self.assertEqual(seen[1], [37.15, 37.25, 49.95, 50.05])
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(len({r["place_id"] for r in rows}), 2)
+        self.assertTrue(job_id)
+
+    def test_progress_names_the_city(self):
+        from leadgen import engine as engine_mod
+        events: list[dict] = []
+
+        def fake_area(filters, *, bbox, **kwargs):
+            return [self._row(1, "کافه")]
+
+        body = {
+            "keywords": ["کافه در گیلان"], "city_label": "گیلان", "lang": "fa",
+            "lat": "37.28", "lon": "49.59", "bbox": [37.20, 37.36, 49.51, 49.67],
+            "depth": 3, "max_time": 40,
+            "sweep_boxes": [
+                {"fa": "رشت", "pop": 700000, "bbox": [37.20, 37.36, 49.51, 49.67]},
+                {"fa": "لاهیجان", "pop": 100000, "bbox": [37.15, 37.25, 49.95, 50.05]},
+            ],
+        }
+        with mock.patch.object(osm, "overpass_search_area", side_effect=fake_area), \
+                mock.patch.object(osm, "search", return_value=[]):
+            engine_mod.OSMEngine().run_job(body, on_progress=events.append)
+        messages = " ".join(str(e.get("message") or "") for e in events)
+        self.assertIn("رشت", messages)
+        self.assertIn("لاهیجان", messages)

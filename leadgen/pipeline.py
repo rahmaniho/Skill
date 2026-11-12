@@ -365,6 +365,23 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
 
         province_meta = regions.province_info(request.province) if request.province else {}
 
+        # ── جست‌وجوی سطح «استان»: مرکز استان به‌تنهایی کافی نیست ─────────────
+        # پیش‌تر انتخاب استان فقط شعاع ۳۰ کیلومتری مرکز را می‌گشت؛ حالا موتور واقعی
+        # چند شهر پرجمعیت استان را جدا می‌گردد (قابل تنظیم با PROVINCE_SWEEP_CITIES).
+        sweep_boxes: list[dict] = []
+        if (engine.name == "osm" and request.province and request.area_level == "province"
+                and not (request.district or request.street)
+                and int(getattr(config, "PROVINCE_SWEEP_CITIES", 0) or 0) > 0):
+            sweep_boxes = regions.province_boxes(
+                request.province, limit=int(config.PROVINCE_SWEEP_CITIES))
+            if len(sweep_boxes) > 1:
+                province_fa = province_meta.get("fa") or request.province
+                warnings.append(
+                    f"جست‌وجوی استانی: {len(sweep_boxes)} شهر پرجمعیت «{province_fa}» پوشش "
+                    f"داده می‌شود (قابل تنظیم با PROVINCE_SWEEP_CITIES).")
+            else:
+                sweep_boxes = []
+
         def make_body(term_list: list[str], name: str, cell: dict | None = None) -> dict:
             body = {
                 "name": name,
@@ -395,6 +412,8 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                 "lang_fa": is_fa,
                 # موتور OSM: یک درخواست تگ‌محور برای همهٔ اصناف (بدون ۹۱ کوئری)
                 "all_business": bool(request.all_niches) and engine.name == "osm",
+                # چند جعبهٔ شهری برای جست‌وجوی سطح استان (خالی = همان جعبهٔ شهر)
+                "sweep_boxes": sweep_boxes,
             }
             if cell:
                 body.update(cell)                 # lat/lon/radius/zoom همان کاشی
@@ -423,7 +442,8 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                 event["message"] = f"[job {spec_index}/{total_specs}] {event.get('message', '')}"
             _progress(on_progress, run_id, event)
 
-        mode = "grid" if cells else ("sweep" if request.all_niches else "job")
+        mode = ("province" if sweep_boxes else
+                "grid" if cells else ("sweep" if request.all_niches else "job"))
         label = (f"حالت شبکه {request.grid}×{request.grid} — {len(cells)} کاشی"
                  if cells else
                  (f"جاروی تمامی مشاغل — {len(sweep_niches)} صنف، {len(specs)} job"

@@ -444,7 +444,7 @@ class DemoEngine:
         # وگرنه با هر تغییر کوچک در پایپ‌لاین، دادهٔ شبیه‌سازی‌شده عوض می‌شود.
         seed_body = {k: v for k, v in body.items()
                      if k not in ("osm_terms", "province_label", "province_bbox",
-                                  "all_business", "tag_filters")}
+                                  "all_business", "tag_filters", "sweep_boxes")}
         seed = self._seed(json.dumps(seed_body, sort_keys=True, ensure_ascii=False, default=str))
         rnd = random.Random(seed)
         job_id = hashlib.sha1(str(seed).encode()).hexdigest()[:8]
@@ -535,6 +535,21 @@ class OSMEngine:
         tried: list[str] = []
         used_overpass = False
 
+        # جعبه‌های جست‌وجو: یا یک جعبهٔ شهر، یا چند شهر برای جست‌وجوی سطح استان
+        sweep_boxes: list[dict] = []
+        for item in (body.get("sweep_boxes") or []):
+            if isinstance(item, dict) and isinstance(item.get("bbox"), (list, tuple)) \
+                    and len(item["bbox"]) == 4:
+                try:
+                    sweep_boxes.append({
+                        "label": str(item.get("fa") or item.get("label") or ""),
+                        "bbox": [float(x) for x in item["bbox"]],
+                        "pop": int(item.get("pop") or 0),
+                    })
+                except (TypeError, ValueError):
+                    continue
+        sweep_boxes.sort(key=lambda box: -box["pop"])
+
         # ── گذر اول: Overpass (تگ‌محور) — صدها کسب‌وکار در یک درخواست ─────────
         want_all = bool(body.get("all_business"))
         if config.OSM_MODE in ("hybrid", "overpass") and bbox:
@@ -570,19 +585,47 @@ class OSMEngine:
                     # بودجهٔ این مرحله حداکثر ~۶۰٪ زمانِ باقی‌مانده است تا اگر Overpass
                     # کند بود، مسیر جایگزین (Nominatim) و ذخیره/خروجی هم وقت داشته باشند.
                     phase_budget = max(8.0, min(left - 6, left * 0.6))
-                    try:
-                        found = osm.overpass_search_area(
-                            filters, bbox=list(bbox),
-                            limit=osm.overpass_limit_for(list(bbox)),
-                            timeout=min(float(config.OVERPASS_TIMEOUT),
-                                        max(6.0, phase_budget - 2)),
-                            input_id=(niche_id or (terms[0] if terms else "")),
-                            lang=lang, tiles=tiles,
-                            max_rows=min(1500, int(config.MAX_LEADS_PER_RUN or 1500)),
-                            budget_s=phase_budget)
-                    except OSMDownError as exc:
-                        errors.append(f"overpass: {exc}")
-                        found = []
+                    # یک شهر (حالت عادی) یا چند شهر پرجمعیت (حالت استان)
+                    targets: list[tuple[str, list[float]]] = (
+                        [(box["label"], box["bbox"]) for box in sweep_boxes]
+                        if sweep_boxes else [("", list(bbox))])
+                    cap_rows = min(1500, int(config.MAX_LEADS_PER_RUN or 1500))
+                    found_map: dict[str, dict] = {}
+                    for box_index, (box_label, box) in enumerate(targets, start=1):
+                        box_left = budget - (time.time() - started)
+                        if box_left < 6:
+                            break
+                        remaining = len(targets) - box_index + 1
+                        share = max(8.0, min(box_left - 3,
+                                             phase_budget / remaining * 1.15))
+                        box_span = max(abs(box[1] - box[0]), abs(box[3] - box[2]))
+                        box_tiles = 4 if (deep and share >= 25 and box_span > 0.15) else 1
+                        if on_progress and len(targets) > 1:
+                            on_progress({"stage": "working", "status": "working",
+                                         "percent": 6 + int(16 * (box_index - 1) / len(targets)),
+                                         "job_id": body.get("name") or "osm",
+                                         "message": f"[OSM] {box_label or 'شهر'} "
+                                                    f"({box_index}/{len(targets)}) — جست‌وجوی تگ‌محور"})
+                        try:
+                            got = osm.overpass_search_area(
+                                filters, bbox=box,
+                                limit=osm.overpass_limit_for(box),
+                                timeout=min(float(config.OVERPASS_TIMEOUT),
+                                            max(6.0, share - 2)),
+                                input_id=(niche_id or (terms[0] if terms else "")),
+                                lang=lang, tiles=box_tiles,
+                                max_rows=cap_rows, budget_s=share)
+                        except OSMDownError as exc:
+                            errors.append(f"overpass{' ' + box_label if box_label else ''}: {exc}")
+                            # اگر سرویس کامل پایین است، امتحان بقیهٔ شهرها فقط وقت می‌گیرد.
+                            if not osm.overpass_available():
+                                break
+                            continue
+                        for row in got:
+                            found_map.setdefault(row.get("place_id"), row)
+                        if len(found_map) >= cap_rows:
+                            break
+                    found = list(found_map.values())
                     if found:
                         used_overpass = True
                         tried.append("overpass")

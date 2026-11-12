@@ -587,3 +587,64 @@ class ConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class ProvinceSweepPipelineTest(unittest.TestCase):
+    """انتخاب استان در رابط → چند جعبهٔ شهری به موتور واقعی داده می‌شود."""
+
+    def test_province_request_passes_city_boxes_and_warns(self):
+        captured: list[dict] = []
+
+        class FakeEngine:
+            name = "osm"
+            live = True
+
+            def health(self):
+                return {"up": True}
+
+            def run_job(self, body, on_progress=None):
+                captured.append(body)
+                return "fake-job", []
+
+        original = pipeline.make_engine
+        pipeline.make_engine = lambda mode=None: FakeEngine()
+        try:
+            request = pipeline.ScrapeRequest.from_dict({
+                "niche_query": "کافه", "province": "gilan", "engine_mode": "osm",
+                "lang": "fa", "limit": 20, "depth": 2})
+            result = pipeline.run_scrape(request)
+        finally:
+            pipeline.make_engine = original
+        self.assertTrue(captured, "موتور باید صدا زده شود")
+        boxes = captured[0].get("sweep_boxes") or []
+        self.assertGreater(len(boxes), 1, "استان باید چند شهر را بگردد")
+        for box in boxes:
+            self.assertEqual(len(box["bbox"]), 4)
+            self.assertTrue(box["fa"])
+        self.assertTrue(any("جست‌وجوی استانی" in w for w in result.warnings), result.warnings)
+        self.assertEqual(result.run.get("status"), "done")
+
+    def test_city_request_has_no_sweep(self):
+        captured: list[dict] = []
+
+        class FakeEngine:
+            name = "osm"
+            live = True
+
+            def health(self):
+                return {"up": True}
+
+            def run_job(self, body, on_progress=None):
+                captured.append(body)
+                return "fake-job", []
+
+        original = pipeline.make_engine
+        pipeline.make_engine = lambda mode=None: FakeEngine()
+        try:
+            request = pipeline.ScrapeRequest.from_dict({
+                "niche_query": "کافه", "city_query": "رشت", "engine_mode": "osm",
+                "lang": "fa", "limit": 10, "depth": 2})
+            pipeline.run_scrape(request)
+        finally:
+            pipeline.make_engine = original
+        self.assertEqual(captured[0].get("sweep_boxes"), [])

@@ -294,6 +294,9 @@ curl -s "$APP/api/diag/osm?city=تهران&niche=دندانپزشکی" | python3
 curl -s "$APP/api/diag/osm?city=اوز&all=1"                  # جاروی همهٔ اصناف
 curl -s "$APP/api/diag/osm?city=مشهد&niche=کافه&deep=1"     # با شکستن محدودهٔ شلوغ
 
+# تپش صف از بیرون (کرون GH Actions هر ۱۰ دقیقه همین را می‌زند)
+python3 scripts/queue_tick.py --url "$APP" --repeat 3
+
 # آزمون‌ها
 python3 -m unittest discover -s tests
 python3 scripts/check_deploy_config.py         # سازگاری vercel.json/api/index.py/WSGI
@@ -316,7 +319,7 @@ parity این را به‌عنوان یادداشت نشان می‌دهد، ن�
 | `/api/health` → `db.backend: sqlite` روی Vercel | `SUPABASE_URL`/`SUPABASE_SERVICE_KEY` تنظیم نشده | متغیرها را بگذارید و **Redeploy** کنید |
 | خطای `401/403` از Supabase | کلید `anon` به‌جای `service_role`، یا RLS بدون policy | از `service_role` استفاده کنید |
 | `relation "public.leads" does not exist` | `supabase/schema.sql` اجرا نشده | در SQL Editor اجرا کنید |
-| اجرا برای همیشه «در صف» | ورکری در حال اجرا نیست | `bash .devcontainer/start-worker.sh` در Codespace |
+| اجرا برای همیشه «در صف» | ورکری در حال اجرا نیست | ورکفلو **Queue tick** را دستی اجرا کنید یا `python3 scripts/queue_tick.py --url "$APP"` |
 | کار `failed` با `Connection refused` | موتور داکر پایین است | `docker compose up -d` و `curl :8080/api/v1/jobs` |
 | موتور `422` می‌دهد | `lat/lon` عدد فرستاده شده یا `max_time` کم | رشته بفرستید؛ `max_time` به ثانیه |
 | ایمیل `skipped` / `transport: none` | متغیرهای Gmail نیست یا `DIGEST_TO` خالی | `/api/delivery/status` را ببینید و راهنمایش را دنبال کنید |
