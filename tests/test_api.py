@@ -420,6 +420,23 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(len(data["bbox"]), 4)
         self.assertTrue(search.called)
 
+    def test_diag_bounds_overpass_timeout(self):
+        """سنجش زنده باید داخل سقف تابع serverless بماند (پیش‌فرض ۲۲ ثانیه)."""
+        from leadgen.providers import osm
+        seen = {}
+
+        def fake_search(filters, *, bbox, limit=None, timeout=None, input_id="", lang="fa",
+                        cache=True):
+            seen["timeout"] = timeout
+            return []
+
+        query = urllib.parse.urlencode({"city": "تهران", "niche": "کافه", "timeout": 12})
+        with mock.patch.object(osm, "overpass_search", side_effect=fake_search):
+            status, data = self.get(f"/api/diag/osm?{query}")
+        self.assertEqual(status, 200)
+        self.assertEqual(seen["timeout"], 12)
+        self.assertEqual(data["timeout"], 12)
+
     def test_diag_reports_error_instead_of_crashing(self):
         from leadgen.providers import osm
         query = urllib.parse.urlencode({"city": "رامسر", "niche": "رستوران"})
