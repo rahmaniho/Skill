@@ -314,6 +314,17 @@ class PgStoreTests(unittest.TestCase):
         self.assertFalse(pgstore.set_lead_status("x", "not-a-status"))
         self.assertEqual(self.transport.calls, [])
 
+    def test_heartbeat_never_writes_progress_status_to_job(self):
+        """باگ واقعی صف: payload پیشرفت «working» می‌فرستاد و همین در jobs.status
+        می‌نشست؛ نتیجه: کار نه در «در حال اجرا» شمرده می‌شد نه بازپس‌گیری، و صف
+        همیشه «خالی» دیده می‌شد."""
+        self.transport.responder = lambda r, rec: FakeResponse(True)
+        pgstore.heartbeat_job("job-1", {"stage": "working", "status": "working", "percent": 40},
+                              "working")
+        self.assertEqual(self.transport.last["body"]["p_status"], None)
+        pgstore.heartbeat_job("job-1", {"stage": "working"}, "running")
+        self.assertEqual(self.transport.last["body"]["p_status"], "running")
+
     def test_queue_functions_call_the_right_rpc(self):
         self.transport.responder = lambda r, rec: FakeResponse({"id": "job-1"})
         pgstore.enqueue_job("run-9", {"niche_query": "کافه"}, priority=2)

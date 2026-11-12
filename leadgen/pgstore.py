@@ -409,7 +409,13 @@ def list_jobs(status: str | None = None, limit: int = 50) -> list[dict]:
     return [_job_dict(row) for row in rows]
 
 
+JOB_STATUSES = ("pending", "running", "done", "failed")
+
+
 def heartbeat_job(job_id: str, progress: dict | None = None, status: str | None = None) -> bool:
+    # فقط وضعیت‌های معتبر کار؛ «working»/«enrich»/«done»ِ پیشرفت نباید اینجا بنشیند
+    if status not in JOB_STATUSES:
+        status = None
     return bool(_client().rpc("heartbeat_job", {
         "p_id": job_id, "p_progress": cloud.jsonable(progress) if progress else progress,
         "p_status": status}))
