@@ -12,6 +12,9 @@
   GET  /api/runs/{id}/campaign  متن کمپین برای یک لید یا همه
   POST /api/runs/{id}/rescore   امتیازدهی مجدد با پروفایل دیگر
   POST /api/import           وارد کردن CSV/JSON موجود و امتیازدهی آن
+  POST/GET /api/worker/tick  یک کار از صف را همین‌جا اجرا می‌کند (سرورلس/کرون)
+  GET  /api/worker           وضعیت اجرای زنده: صف، ورکر، موتور
+  GET  /terms , /privacy     صفحه‌های حقوقی
   GET  /api/queue            وضعیت صف اجراها (آمار + کارها + موتور)
   GET  /api/queue/jobs       فهرست کارهای صف با فیلتر وضعیت
   GET  /api/delivery/status  وضعیت پیکربندی ایمیل و آخرین گزارش ارسال‌شده
@@ -497,6 +500,10 @@ class Handler(BaseHTTPRequestHandler):
         match = re.fullmatch(r"/api/runs/([\w\-]+)/progress", path)
         if match:
             return self._json({"progress": get_progress(match.group(1))})
+
+        if path == "/api/worker/tick":
+            # GET هم پشتیبانی می‌شود تا کرون/پینگر بیرونی (بدون JS) صف را جلو ببرد.
+            return self._worker_tick(query)
 
         if path == "/api/worker":
             stats = storage.queue_stats()
