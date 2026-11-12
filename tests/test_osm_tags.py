@@ -454,3 +454,66 @@ class OverpassSweepTests(unittest.TestCase):
         messages = " ".join(str(e.get("message") or "") for e in events)
         self.assertIn("رشت", messages)
         self.assertIn("لاهیجان", messages)
+
+
+class SweepFallbackTests(unittest.TestCase):
+    """اگر Overpass برای شهری جواب نداد، همان شهر با جست‌وجوی متنی گرفته شود."""
+
+    def _row(self, ident: int, title: str) -> dict:
+        return {"place_id": f"osm:node/{ident}", "title": title, "category": "کافه",
+                "latitude": "37.28", "longitude": "49.59", "phone": "", "website": "",
+                "instagram": "", "facebook": "", "linkedin": "", "address": "",
+                "input_id": "cafe", "source": "openstreetmap", "city": ""}
+
+    def _body(self) -> dict:
+        return {
+            "keywords": ["کافه در گیلان"], "city_label": "گیلان", "lang": "fa",
+            "lat": "37.28", "lon": "49.59", "bbox": [37.20, 37.36, 49.51, 49.67],
+            "depth": 2, "max_time": 50,
+            "sweep_boxes": [
+                {"fa": "رشت", "pop": 700000, "bbox": [37.20, 37.36, 49.51, 49.67]},
+                {"fa": "لاهیجان", "pop": 100000, "bbox": [37.15, 37.25, 49.95, 50.05]},
+            ],
+        }
+
+    def test_missing_city_is_covered_by_text_search(self):
+        from leadgen import engine as engine_mod
+        calls = []
+
+        def fake_area(filters, *, bbox, **kwargs):
+            if bbox[2] > 49.9:                      # لاهیجان: Overpass خالی
+                raise osm.OSMDownError("Overpass پاسخ نداد")
+            return [self._row(1, "کافه رشت")]
+
+        def fake_search(term, **kwargs):
+            calls.append((term, kwargs.get("bbox"), kwargs.get("input_id")))
+            return [self._row(2, "کافه لاهیجان")]
+
+        eng = engine_mod.OSMEngine()
+        with mock.patch.object(osm, "overpass_search_area", side_effect=fake_area), \
+                mock.patch.object(osm, "search", side_effect=fake_search):
+            _, rows = eng.run_job(self._body())
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(any(city == "لاهیجان" for _, _, city in calls),
+                        f"باید برای لاهیجان جست‌وجوی متنی زده شود: {calls}")
+        coverage = {c["city"]: c for c in eng.coverage}
+        self.assertEqual(coverage["رشت"]["via"], "overpass")
+        self.assertEqual(coverage["لاهیجان"]["via"], "nominatim")
+        self.assertEqual(coverage["لاهیجان"]["rows"], 1)
+
+    def test_strict_overpass_mode_skips_text_fallback(self):
+        from leadgen import engine as engine_mod
+        eng = engine_mod.OSMEngine()
+
+        def fake_area(filters, *, bbox, **kwargs):
+            return [self._row(1, "کافه")]
+
+        saved = config.OSM_MODE
+        config.OSM_MODE = "overpass"
+        try:
+            with mock.patch.object(osm, "overpass_search_area", side_effect=fake_area), \
+                    mock.patch.object(osm, "search") as search:
+                eng.run_job(self._body())
+            self.assertFalse(search.called)
+        finally:
+            config.OSM_MODE = saved
