@@ -4,6 +4,13 @@ name: OSM probe
 # اجرای دستی: Actions → OSM probe → Run workflow
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/osm-probe.yml"
+      - "scripts/osm_probe.py"
+      - "leadgen/providers/osm.py"
+      - "leadgen/osm_tags.py"
+      - "leadgen/engine.py"
     inputs:
       city:
         description: "شهر برای آزمون (خالی = تهران/رامسر/اوز)"
