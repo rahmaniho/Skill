@@ -51,6 +51,7 @@ class ScrapeRequest:
     signals: bool = True
     profile: str = "generic"
     enrich_live: bool | None = None  # None = خودکار (فقط اگر موتور واقعی باشد)
+    enrich_budget: float | None = None   # بودجهٔ زمانی واکشی سایت‌ها (ثانیه)
     engine_mode: str | None = None
     export_fmt: str = "xlsx"         # csv | json | xlsx
     sender: dict | None = None
@@ -80,6 +81,11 @@ class ScrapeRequest:
         known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
         clean = {k: v for k, v in (data or {}).items() if k in known}
         clean["zoom_set"] = "zoom" in clean
+        if clean.get("enrich_budget") is not None:
+            try:
+                clean["enrich_budget"] = max(3.0, min(120.0, float(clean["enrich_budget"])))
+            except (TypeError, ValueError):
+                clean.pop("enrich_budget", None)
         for int_key in ("depth", "grid", "radius", "zoom", "max_time", "limit", "area_radius"):
             if int_key in clean and clean[int_key] is not None:
                 try:
@@ -581,7 +587,7 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
             enrich_stats = enrich.enrich_rows(
                 rows, socials=request.socials, deep_emails=request.deep_emails and request.emails,
                 signals=request.signals, allow_network=allow_network,
-                budget_s=config.ENRICH_BUDGET,
+                budget_s=(request.enrich_budget or config.ENRICH_BUDGET),
                 on_progress=lambda p: _progress(on_progress, run_id, {**p, "stage": "enrich"}),
             )
             if enrich_stats.get("skipped_due_time"):

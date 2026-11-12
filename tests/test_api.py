@@ -389,6 +389,40 @@ class ApiTestCase(unittest.TestCase):
             with storage._connect() as conn:
                 conn.execute("delete from jobs")
 
+    def test_21_tick_reserves_a_bounded_enrichment_budget(self):
+        """تپش باید بخشی از بودجه را به غنی‌سازی (ایمیل/شبکه اجتماعی) بدهد، ولی محدود."""
+        from leadgen import config as config_mod, worker as worker_mod
+
+        captured: dict = {}
+
+        def fake_process(job, quiet=True):
+            captured.update(job.get("request") or {})
+            return {"ok": True, "run_id": job.get("run_id"), "total": 0, "hot": 0,
+                    "seconds": 0.1, "empty": True}
+
+        original_queue, original_process = config_mod.QUEUE_MODE, worker_mod.process_job
+        with storage._connect() as conn:
+            conn.execute("delete from jobs")
+        try:
+            config_mod.QUEUE_MODE = "always"
+            storage.enqueue_job("tick-budget-run", {
+                "run_id": "tick-budget-run", "city_query": "تهران", "niche_query": "کافه",
+                "engine_mode": "demo", "max_time": 60})
+            worker_mod.process_job = fake_process
+            status, data = self.get("/api/worker/tick?budget=50")
+        finally:
+            worker_mod.process_job = original_process
+            config_mod.QUEUE_MODE = original_queue
+            with storage._connect() as conn:
+                conn.execute("delete from jobs")
+        self.assertEqual(status, 200)
+        self.assertTrue(data.get("processed"))
+        self.assertTrue(captured.get("enrich_live"))
+        self.assertGreater(captured.get("enrich_budget", 0), 0)
+        self.assertLessEqual(captured.get("enrich_budget", 0), 15)
+        # موتور و غنی‌سازی با هم زیر سقف ۶۰ثانیه‌ای تابع می‌مانند
+        self.assertLessEqual(captured["max_time"] + captured["enrich_budget"], 40)
+
     # ── تپش صف از بیرون (کرون) ──────────────────────────────────────────────
     def _queue_tick_module(self):
         import importlib.util

@@ -1107,10 +1107,18 @@ class Handler(BaseHTTPRequestHandler):
             }, 200)
 
         request = dict(job.get("request") or {})
-        # بودجهٔ زمانی: بخشی برای غنی‌سازی/امتیاز/ذخیره نگه می‌داریم
-        engine_budget = max(12, budget - 14)
+        # بودجهٔ زمانی: بخشی برای غنی‌سازی/امتیاز/ذخیره نگه می‌داریم.
+        # سهم غنی‌سازی، واکشی سایت‌ها برای پیدا کردن ایمیل و شبکه‌های اجتماعی است؛
+        # بدون آن، لیدهای OSM معمولاً بدون ایمیل می‌مانند. با بودجهٔ محدود و
+        # «توقف در مهلت» (enrich.py) داخل سقف ۶۰ثانیه‌ای تابع جا می‌شود.
+        enrich_budget = 12.0 if budget >= 40 else 0.0
+        engine_budget = max(12, int(budget - (enrich_budget + 12)))
         request["max_time"] = min(_int(request.get("max_time"), 60), engine_budget)
-        request["enrich_live"] = False          # غنی‌سازی زنده در تابع ۶۰ثانیه‌ای جا نمی‌شود
+        request["enrich_live"] = bool(enrich_budget)
+        if enrich_budget:
+            request["enrich_budget"] = enrich_budget
+        else:
+            request.pop("enrich_budget", None)
         if _int(request.get("limit"), 0):
             request["limit"] = min(_int(request.get("limit"), 40), 60)
         job["request"] = request
