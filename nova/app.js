@@ -614,15 +614,24 @@
       function items(list, kind) {
         stack.innerHTML = list.map(function (x) {
           return '<button class="stack-item" data-act="area-pick" data-kind="' + kind + '" data-id="' + esc(x.id != null ? x.id : x.fa) + '" data-fa="' + esc(x.fa) + '">' +
-            "<span>" + esc(x.fa) + "</span>" + (x.districts != null ? "<small>" + fa(x.districts) + " منطقه</small>" : "") + "</button>";
+            "<span>" + esc(x.fa) + "</span>" + (x.note ? "<small>" + esc(x.note) + "</small>"
+              : x.districts != null ? "<small>" + fa(x.districts) + " منطقه</small>" : "") + "</button>";
         }).join("") || '<p class="muted">چیزی نیست.</p>';
       }
       function loadLevel() {
         if (!st.city) {
           return jget("api/regions").then(function (h) {
-            var provs = [];
-            (h.provinces || []).forEach(function (p) { (p.cities || []).forEach(function (c) { provs.push({ id: p.id + "|" + c.id, fa: p.fa + " — " + c.fa, city: c.id, province: p.id, districts: c.districts }); }); });
-            items(provs.slice(0, 60), "city");
+            var provs = h.provinces || [];
+            if (!st.province) {               // گام اول: همهٔ ۳۱ استان
+              items(provs.map(function (p) {
+                return { id: p.id, fa: p.fa, note: fa((p.cities || []).length) + " شهر" };
+              }), "province");
+              return;
+            }
+            var row = provs.filter(function (p) { return p.id === st.province; })[0];
+            items(((row && row.cities) || []).map(function (c) {
+              return { id: st.province + "|" + c.id, fa: c.fa, city: c.id, province: st.province, districts: c.districts };
+            }), "city");
           });
         }
         if (!st.district) {
@@ -649,7 +658,12 @@
           if (q.length < 2) { loadLevel().catch(function () { }); return; }
           jget("api/regions/search?q=" + encodeURIComponent(q)).then(function (r) {
             var list = (r || []).map ? (r || []) : (r.cities || []).concat(r.districts || [], r.streets || []);
-            items(list.map(function (x) { return { id: x.kind + "|" + (x.province || "") + "|" + (x.city || "") + "|" + (x.name || ""), fa: x.label || x.fa, kind: x.kind, raw: x }; }), "any");
+            items(list.map(function (x) {
+              var title = x.kind === "city"
+                ? (x.fa || x.label) + (x.province_fa ? " — " + x.province_fa : "")
+                : (x.label || x.fa);
+              return { id: x.kind + "|" + (x.province || "") + "|" + (x.city || "") + "|" + (x.name || ""), fa: title, kind: x.kind, raw: x };
+            }), "any");
             stack.querySelectorAll("[data-kind='any']").forEach(function (b, i) { b._raw = list[i]; });
           }).catch(function () { });
         }, 250);
@@ -660,9 +674,12 @@
         if (pick) {
           var kind = pick.dataset.kind, raw = pick._raw;
           if (kind === "any" && raw) {
-            st.province = raw.province || st.province; st.city = raw.city || st.city;
+            st.province = raw.province || st.province;
+            st.city = raw.kind === "city" ? (raw.city || raw.id || st.city) : (raw.city || st.city);
             if (raw.kind === "district") st.district = raw.name; if (raw.kind === "street") { st.district = raw.district || st.district; st.street = raw.name; }
             if (raw.kind === "city") { st.district = ""; st.street = ""; }
+          } else if (kind === "province") {
+            st.province = pick.dataset.id; st.city = ""; st.district = ""; st.street = "";
           } else if (kind === "city") {
             var ids = String(pick.dataset.id).split("|");
             st.province = ids[0]; st.city = ids[1] || ids[0]; st.district = ""; st.street = "";

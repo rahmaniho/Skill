@@ -48,7 +48,7 @@ PROVINCES: dict[str, dict] = {
     "ilam": {"fa": "ایلام", "en": "Ilam", "capital": "ilam", "cities": [
         "ilam", "dehloran", "abdanan", "mehran"]},
     "hamadan": {"fa": "همدان", "en": "Hamadan", "capital": "hamedan", "cities": [
-        "hamedan", "malayer", "borujerd"]},  # بروجرد در لرستان است؛ برای جست‌وجوی راحت فهرست شد
+        "hamedan", "malayer"]},
     "lorestan": {"fa": "لرستان", "en": "Lorestan", "capital": "khorramabad", "cities": [
         "khorramabad", "borujerd"]},
     "khuzestan": {"fa": "خوزستان", "en": "Khuzestan", "capital": "ahvaz", "cities": [
@@ -57,19 +57,19 @@ PROVINCES: dict[str, dict] = {
     "kohgiluyeh": {"fa": "کهگیلویه و بویراحمد", "en": "Kohgiluyeh and Boyer-Ahmad",
                    "capital": "yasuj", "cities": ["yasuj", "dogonbadan", "dehdasht"]},
     "chaharmahal": {"fa": "چهارمحال و بختیاری", "en": "Chaharmahal and Bakhtiari",
-                    "capital": "shahrekord", "cities": ["shahrekord", "borujen", "lordegan", "daran"]},
+                    "capital": "shahrekord", "cities": ["shahrekord", "borujen", "lordegan"]},
     "isfahan": {"fa": "اصفهان", "en": "Isfahan", "capital": "isfahan", "cities": [
         "isfahan", "kashan", "khomeynishahr", "najafabad"]},
     "fars": {"fa": "فارس", "en": "Fars", "capital": "shiraz", "cities": [
         "shiraz", "marvdasht", "jahrom", "fasa", "kazeroon", "lar"]},
     "bushehr": {"fa": "بوشهر", "en": "Bushehr", "capital": "bushehr", "cities": [
-        "bushehr", "borazjan", "ganaveh", "kangan", "asaluyeh", "bastak"]},
+        "bushehr", "borazjan", "ganaveh", "kangan", "asaluyeh"]},
     "hormozgan": {"fa": "هرمزگان", "en": "Hormozgan", "capital": "bandar-abbas", "cities": [
         "bandar-abbas", "minab", "qeshm", "kish"]},
     "kerman": {"fa": "کرمان", "en": "Kerman", "capital": "kerman", "cities": [
         "kerman", "sirjan", "rafsanjan", "jiroft", "bam", "baft"]},
     "yazd": {"fa": "یزد", "en": "Yazd", "capital": "yazd", "cities": [
-        "yazd", "meibod", "ardakan", "tabas"]},
+        "yazd", "meibod", "ardakan"]},
     "razavi-khorasan": {"fa": "خراسان رضوی", "en": "Razavi Khorasan", "capital": "mashhad",
                         "cities": ["mashhad", "neyshabur", "sabzevar", "torbat-heydarieh",
                                    "ghouchan", "torbat-jam"]},
@@ -88,6 +88,20 @@ PROVINCES: dict[str, dict] = {
     "gilan": {"fa": "گیلان", "en": "Gilan", "capital": "rasht", "cities": [
         "rasht", "bandar-anzali", "lahijan"]},
 }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ۱-ب) افزودن همهٔ شهرهای کشور از دادهٔ سراسری (۱٬۳۰۰+ شهر، Wikidata CC0)
+#      ترتیب: شهرهای دستی هر استان (مرکز اول) و پس از آن پرجمعیت‌ترین‌ها.
+# ─────────────────────────────────────────────────────────────────────────────
+_TAKEN_CITY_KEYS = {_key for _p in PROVINCES.values() for _key in _p["cities"]}
+for _pid, _keys in getattr(geo, "NATIONWIDE_BY_PROVINCE", {}).items():
+    _province = PROVINCES.get(_pid)
+    if not _province:
+        continue
+    for _key in _keys:                     # هر شهر فقط در یک استان
+        if _key in geo.CITIES and _key not in _TAKEN_CITY_KEYS:
+            _province["cities"].append(_key)
+            _TAKEN_CITY_KEYS.add(_key)
 
 # شهر → استان (برای جست‌وجوی معکوس و اعتبارسنجی)
 CITY_PROVINCE: dict[str, str] = {}
@@ -413,7 +427,7 @@ def _city(key: str) -> dict:
         resolved = geo.offline_lookup(key)
         if resolved:
             key = resolved
-    found = {c["id"]: c for c in geo.known_cities()}.get(key) or {}
+    found = dict(geo.city_record(key)) or {}
     if not found and key in geo.CITIES:
         lat, lon, country, _bbox = geo.CITIES[key]
         found = {"id": key, "label": key.replace("-", " ").title(), "country": country,
@@ -576,7 +590,12 @@ def _score(needle: str, hay: str) -> float:
     if hay.startswith(needle):
         return 0.92
     if needle in hay:
-        return 0.80
+        # «اوز» داخل «کشاورز» نباید تطبیق بخورد؛ زیررشته فقط از ابتدای یک واژه
+        if re.search(rf"(^|\s){re.escape(needle)}", hay):
+            return 0.80
+        return 0.0
+    if len(needle) < 5:                    # تطبیق تقریبی فقط برای واژه‌های معنادار
+        return 0.0
     ratio = SequenceMatcher(None, needle, hay).ratio()
     return ratio * 0.75 if ratio >= 0.62 else 0.0
 
@@ -592,6 +611,8 @@ def resolve(province: str = "", city: str = "", district: str = "", street: str 
     point: tuple[float, float] | None = None
     level = ""
     city_key = _city(city).get("id", "") if city else ""
+    if city_key and not province:
+        province = CITY_PROVINCE.get(city_key, "")
 
     if street:
         hit = find_area(street, city_key, level="street") or find_area(street, "", "street")
