@@ -7,7 +7,7 @@
 idهایی که خودِ جاوااسکریپت داخل قالب رشته می‌سازد (محتوای کشو/مودال/جدول‌های پویا) پذیرفته‌اند،
 چون پیش از خوانده‌شدن به DOM اضافه می‌شوند.
 
-اجرا:  python3 -m unittest discover -s tests -v
+اجرا:  python3 -m unittest discover -t . -s tests -v
 """
 from __future__ import annotations
 

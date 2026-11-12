@@ -5,7 +5,7 @@
 بدون شبکه می‌سنجد تا اگر منطق جست‌وجو/امتیازدهی عوض شد، فوراً دیده شود؛ سمتِ Postgres
 را `scripts/cloud_parity.py --live` می‌سنجد (نیاز به SUPABASE_URL دارد).
 
-اجرا:  python3 -m unittest discover -s tests -v
+اجرا:  python3 -m unittest discover -t . -s tests -v
 """
 from __future__ import annotations
 

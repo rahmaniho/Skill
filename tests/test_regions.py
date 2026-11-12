@@ -9,7 +9,7 @@
   • مسیرهای HTTP: /api/regions*، /api/search، /api/search/export و پارامترهای تازهٔ parse
   • smart.parse با انتخابگرها و با جملهٔ آزاد
 
-اجرا:  python3 -m unittest discover -s tests -v
+اجرا:  python3 -m unittest discover -t . -s tests -v
 """
 from __future__ import annotations
 

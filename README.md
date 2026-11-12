@@ -437,7 +437,7 @@ docs/CLOUD.md       راهنمای عملیاتی استقرار ابری (گا�
 scripts/            ساخت دادهٔ نمونه، کپی رابط‌ها برای Pages، تست دود سه صفحه،
                     cloud_parity.py (هم‌ارزی SQLite↔Postgres)، engine_proxy.py (پراکسی کلیددار موتور)،
                     gmail_token.py (گرفتن refresh token)، check_deploy_config.py
-tests/              ۲۷۷ تست (پایپ‌لاین، جارو، لوکیشن، ستون‌ها، API، سایت، مغز جمله‌فهم، منطقه‌ها و
+tests/              ۳۱۹ تست (پایپ‌لاین، جارو، لوکیشن، ستون‌ها، API، سایت، مغز جمله‌فهم، منطقه‌ها و
                     جست‌وجوی قوی، **پایگاه‌دادهٔ ابری، صف و ورکر، تحویل ایمیل، لایهٔ WSGI/Vercel،
                     هم‌ارزی SQLite↔Postgres، قرارداد رابط کاربری و پراکسی موتور**)
   fixtures/cloud_parity/  فیکسچر قطعی ۸ لیدی + ۱۳ سناریوی جست‌وجو + انتظارهای commit‌شده
@@ -481,7 +481,7 @@ cp .env.example .env
 ## تست‌ها
 
 ```bash
-python3 -m unittest discover -s tests -v       # ۲۷۷ تست
+python3 -m unittest discover -t . -s tests -v       # ۳۱۹ تست
 python3 scripts/cloud_parity.py                # هم‌ارزی جست‌وجو: SQLite ↔ انتظارهای Postgres (بدون شبکه)
 python3 scripts/check_deploy_config.py         # سازگاری vercel.json / api/index.py / لایهٔ WSGI
 node scripts/smoke_site.js                     # تست دود صفحهٔ Pages (DOM ساختگی، بدون مرورگر)

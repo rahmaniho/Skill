@@ -5,7 +5,7 @@
   ۲) لایهٔ سرویس: /api/smart/{options,suggest,parse}، شروع اجرا از جملهٔ تجزیه‌شده،
      فایل‌های smart/ روی «/» و داشبورد حرفه‌ای روی «/studio/»
 
-اجرا:  python3 -m unittest discover -s tests -v
+اجرا:  python3 -m unittest discover -t . -s tests -v
 """
 from __future__ import annotations
 

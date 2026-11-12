@@ -33,7 +33,7 @@
 | اپ Vercel | کد و پیکربندی آماده (`api/index.py`, `vercel.json`) | در انتظار استقرار + متغیرهای محیطی |
 | موتور در Codespaces | اسکریپت‌ها آماده (`.devcontainer/*`, `scripts/engine_proxy.py`) | باید یک Codespace بسازید |
 | ایمیل (Gmail) | ماژول + مسیرهای API + راهنمای توکن | `scripts/gmail_token.py` |
-| آزمون‌ها | سبز | `python3 -m unittest discover -s tests` |
+| آزمون‌ها | سبز | `python3 -m unittest discover -t . -s tests` |
 
 ---
 
@@ -138,16 +138,34 @@ curl -s https://<app>.vercel.app/api/delivery/status | python3 -m json.tool
 ندارید، Codespaces داکر دارد.
 
 ### ۳٫۱ ساخت Codespace
-1. در صفحهٔ مخزن GitHub → **Code** → **Codespaces** → **Create codespace on main**.
-2. `.devcontainer/devcontainer.json` به‌طور خودکار:
+1. **کلیدها را یک‌بار به‌عنوان Codespaces Secret بگذارید** (پیشنهادی — به‌جای `.env`):
+   GitHub → مخزن → **Settings → Secrets and variables → Codespaces → New repository secret**:
+
+   | نام secret | مقدار |
+   | --- | --- |
+   | `SUPABASE_URL` | `https://<ref>.supabase.co` (همان چیزی که در Vercel گذاشتید) |
+   | `SUPABASE_SERVICE_KEY` | کلید `service_role` |
+   | `DIGEST_TO` | ایمیل گیرندهٔ گزارش (چند آدرس با کاما) |
+   | `APP_BASE_URL` | نشانی عمومی اپ، مثلاً `https://leadgen-studio-umber.vercel.app` |
+   | `GMAIL_APP_PASSWORD` | رمز برنامهٔ Gmail → ارسال SMTP از Codespace (اختیاری) |
+
+   `devcontainer.json` این نام‌ها را در بخش `secrets` اعلام کرده، پس Codespace خودش آن‌ها را
+   به‌صورت **متغیر محیطی** تزریق می‌کند — نه در ریپو، نه در `.env`.
+2. در صفحهٔ مخزن GitHub → **Code** → **Codespaces** → **Create codespace on main**.
+3. `.devcontainer/devcontainer.json` به‌طور خودکار:
    - داکر-داخل-داکر را نصب می‌کند،
-   - `postCreateCommand` → `bash .devcontainer/setup.sh` را اجرا می‌کند (ساخت `.env`،
-     بالا آوردن موتور با `docker compose up -d`، بررسی اتصال Supabase، اجرای آزمون‌ها)،
+   - `postCreateCommand` → `bash .devcontainer/setup.sh`: گزارش وضعیت اعتبارنامه‌ها
+     (**با پنهان‌سازی مقدار کلیدها**)، `docker compose up -d` برای موتور واقعی، یک خواندن
+     واقعی از Supabase (`dashboard_stats`) برای اثبات اتصال، و اجرای آزمون‌ها،
    - `postStartCommand` → `bash .devcontainer/start-worker.sh` (ورکر صف در پس‌زمینه).
+
+> **نکتهٔ ایمنی:** آزمون‌ها همیشه روی SQLite محلی اجرا می‌شوند — حتی اگر کلیدهای ابری در
+> محیط باشند (`tests/__init__.py` + تور ایمنی `config.TESTING`). پس اجرای تست در Codespace
+> پایگاه‌دادهٔ زنده را آلوده نمی‌کند. برای بررسی دستی روی ابر: `LEADGEN_TEST_CLOUD=1`.
 
 ### ۳٫۲ اگر دستی اجرا می‌کنید
 ```bash
-cp .env.example .env      # و کلیدهای Supabase/Gmail را بگذارید
+cp .env.example .env      # و کلیدهای Supabase/Gmail را بگذارید (اگر Secret نگذاشته‌اید)
 bash .devcontainer/setup.sh
 docker compose up -d && curl -s http://127.0.0.1:8080/api/v1/jobs   # موتور واقعی
 bash .devcontainer/start-worker.sh
@@ -267,7 +285,7 @@ python3 scripts/cloud_parity.py --live         # در برابر Supabase واق
 python3 scripts/cloud_parity.py --rebuild      # وقتی عمدی تغییر دادید: انتظارها را بسازید و commit کنید
 
 # آزمون‌ها
-python3 -m unittest discover -s tests
+python3 -m unittest discover -t . -s tests
 python3 scripts/check_deploy_config.py         # سازگاری vercel.json/api/index.py/WSGI
 
 # پاک‌سازی داده

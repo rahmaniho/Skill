@@ -1,6 +1,6 @@
 """تست‌های پایپ‌لاین — فقط با کتابخانه استاندارد (unittest).
 
-اجرا:  python3 -m unittest discover -s tests -v
+اجرا:  python3 -m unittest discover -t . -s tests -v
 """
 from __future__ import annotations
 

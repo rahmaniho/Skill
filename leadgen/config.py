@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -117,7 +118,38 @@ SUPABASE_SCHEMA = env("SUPABASE_SCHEMA", "public") or "public"
 SUPABASE_KEY = SUPABASE_SERVICE_KEY or SUPABASE_ANON_KEY
 
 
+def _looks_like_unittest() -> bool:
+    """آیا فرایند جاری در حال اجرای آزمون است؟
+
+    چرا لازم است؟ در Codespaces/Vercel کلیدهای Supabase به‌صورت متغیر محیطی حضور دارند.
+    اگر آزمون‌ها با همان محیط اجرا شوند، `storage` به پایگاه‌دادهٔ **زنده** می‌رود و
+    تست‌های صف/ذخیره‌سازی دادهٔ واقعی را آلوده می‌کنند. این تور ایمنی، بدون توجه به اینکه
+    آزمون‌ها چگونه صدا زده شده‌اند، پایگاه‌داده را محلی نگه می‌دارد.
+
+    راه فرار (برای بررسی دستی روی ابر): `LEADGEN_TEST_CLOUD=1`.
+    """
+    if env("LEADGEN_TEST_CLOUD") == "1":
+        return False
+    main = sys.modules.get("__main__")
+    main_file = (getattr(main, "__file__", "") or "").replace("\\", "/")
+    if main_file.endswith("unittest/__main__.py"):
+        return True
+    program = Path(sys.argv[0]).name if sys.argv else ""
+    if program in {"pytest", "py.test"} or program.startswith("unittest"):
+        return True
+    # اجرای مستقیم فایل آزمون:  python3 tests/test_x.py
+    if main_file.endswith(".py"):
+        name = Path(main_file).name
+        return name.startswith("test_") and Path(main_file).parent.name == "tests"
+    return False
+
+
+TESTING = _looks_like_unittest()
+
+
 def _default_db_backend() -> str:
+    if TESTING:
+        return "sqlite"          # آزمون‌ها هرگز به پایگاه‌دادهٔ زنده نمی‌روند (مگر LEADGEN_TEST_CLOUD=1)
     explicit = env("LEADGEN_DB").lower()
     if explicit in ("sqlite", "supabase", "postgres", "pg"):
         return "supabase" if explicit != "sqlite" else "sqlite"
@@ -257,7 +289,7 @@ def summary() -> dict:
         "queue_mode": QUEUE_MODE,
         "queue_enabled": queue_enabled(),
         "worker_id": WORKER_ID,
-        "app_base_url": APP_BASE_URL,
+        "app_base_url": app_base_url(),          # زنده — بعد از تغییر env تازه می‌شود
         "email_transport": email_transport(),
-        "digest_to": DIGEST_TO,
+        "digest_to": digest_recipients(),        # زنده (نه مقدار زمان import)
     }

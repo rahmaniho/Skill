@@ -20,9 +20,27 @@
   "postCreateCommand": "bash .devcontainer/setup.sh",
   "postStartCommand": "bash .devcontainer/start-worker.sh",
 
+  "//secrets": "این‌ها را یک‌بار در Settings → Secrets and variables → Codespaces مخزن بگذارید؛",
+  "//secrets2": "Codespace خودش آن‌ها را به‌صورت متغیر محیطی تزریق می‌کند (بدون نوشتن در .env و بدون حضور در ریپو).",
+  "secrets": {
+    "SUPABASE_URL": { "description": "نشانی پروژهٔ Supabase — https://<ref>.supabase.co" },
+    "SUPABASE_SERVICE_KEY": { "description": "کلید service_role (فقط سمت ورکر؛ هرگز در کد یا ریپو)" },
+    "APP_BASE_URL": { "description": "نشانی عمومی اپ روی Vercel — برای لینک‌های داخل ایمیل" },
+    "DIGEST_TO": { "description": "گیرندهٔ گزارش ایمیلی (چند آدرس با کاما)" },
+    "DIGEST_FROM": { "description": "نام/آدرس نمایشی فرستندهٔ گزارش" },
+    "GMAIL_SENDER": { "description": "آدرس Gmail فرستنده" },
+    "GMAIL_APP_PASSWORD": { "description": "رمز برنامهٔ Gmail → SMTP از Codespace (ساده‌ترین راه)" },
+    "GMAIL_REFRESH_TOKEN": { "description": "توکن Gmail API (scripts/gmail_token.py) → ارسال خودکار از ابر" },
+    "GMAIL_CLIENT_ID": { "description": "شناسهٔ کلاینت OAuth گوگل" },
+    "GMAIL_CLIENT_SECRET": { "description": "رمز کلاینت OAuth گوگل" },
+    "SCRAPER_API_KEY": { "description": "اختیاری — کلید دسترسی به موتور از بیرون (scripts/engine_proxy.py)" }
+  },
+
   "remoteEnv": {
     "PYTHONUNBUFFERED": "1",
-    "LEADGEN_WORKER": "1"
+    "LEADGEN_WORKER": "1",
+    "LEADGEN_QUEUE": "always",
+    "LEADGEN_DATA_DIR": "/home/vscode/leadgen-data"
   },
 
   "customizations": {

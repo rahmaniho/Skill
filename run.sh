@@ -35,7 +35,7 @@ case "$CMD" in
     exec python3 scripts/seed_demo_data.py "${2:-}"
     ;;
   test)
-    exec python3 -m unittest discover -s tests -v
+    exec python3 -m unittest discover -t . -s tests -v
     ;;
   smoke)
     node scripts/smoke_site.js

@@ -3,7 +3,7 @@
 این تست‌ها تضمین می‌کنند استقرار روی Vercel دقیقاً همان قراردادی را سرو کند که
 `tests/test_api.py` روی سرور محلی می‌سنجد: کد وضعیت، هدرها، JSON فارسی و فایل‌های رابط.
 
-اجرا:  python3 -m unittest discover -s tests -v
+اجرا:  python3 -m unittest discover -t . -s tests -v
 """
 from __future__ import annotations
 

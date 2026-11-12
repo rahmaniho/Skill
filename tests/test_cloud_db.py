@@ -4,7 +4,7 @@
 درخواست‌ها را ضبط و پاسخ از پیش‌تعیین‌شده برمی‌گرداند. (رفتار سمت SQL به‌صورت جدا
 روی یک پروژهٔ واقعی Supabase اعتبارسنجی شده است — `supabase/schema.sql`.)
 
-اجرا:  python3 -m unittest discover -s tests -v
+اجرا:  python3 -m unittest discover -t . -s tests -v
 """
 from __future__ import annotations
 

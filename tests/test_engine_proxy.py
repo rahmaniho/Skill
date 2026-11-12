@@ -7,7 +7,7 @@
 اینجا یک «موتور ساختگی» (همان مسیرهای واقعی: `/api/v1/jobs` و `/api/v1/jobs/{id}`) بالا
 می‌آید و پراکسی جلوی آن می‌نشیند؛ هر دو روی پورت تصادفی و در رشتهٔ پس‌زمینه.
 
-اجرا:  python3 -m unittest discover -s tests -v
+اجرا:  python3 -m unittest discover -t . -s tests -v
 """
 from __future__ import annotations
 
