@@ -122,6 +122,67 @@ class OSMProviderTest(NoOverpassMixin, unittest.TestCase):
         self.assertIn("countrycodes=ir", seen["url"])
         self.assertIn("limit=10", seen["url"])
 
+    def test_search_can_take_a_second_page_when_the_service_caps_at_40(self):
+        """شهر شلوغ: صفحهٔ دوم با exclude_place_ids گرفته می‌شود (سقف ۴۰ در هر درخواست)."""
+        calls: list[str] = []
+
+        def fake_http(url, *, timeout):
+            calls.append(url)
+            if len(calls) == 1:
+                return [dict(NOMINATIM_ITEM, osm_id=1000 + i) for i in range(40)]
+            return [dict(NOMINATIM_ITEM, osm_id=2000 + i) for i in range(10)]
+
+        original = osm._http_json
+        osm._http_json = fake_http
+        osm._LAST_CALL[0] = 0.0
+        try:
+            rows = osm.search("cafe", bbox=[35.6, 35.8, 51.3, 51.5], country="ir",
+                              limit=80, pages=2)
+        finally:
+            osm._http_json = original
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn("exclude_place_ids", calls[0])
+        self.assertIn("exclude_place_ids=", calls[1])
+        self.assertIn("limit=40", calls[1])          # هر صفحه سقف ۴۰، نه ۸۰
+        self.assertEqual(len(rows), 50)
+
+    def test_search_does_not_ask_for_a_second_page_when_the_first_is_short(self):
+        calls: list[str] = []
+
+        def fake_http(url, *, timeout):
+            calls.append(url)
+            return [dict(NOMINATIM_ITEM, osm_id=3000 + i) for i in range(7)]
+
+        original = osm._http_json
+        osm._http_json = fake_http
+        osm._LAST_CALL[0] = 0.0
+        try:
+            rows = osm.search("cafe", bbox=[35.6, 35.8, 51.3, 51.5], country="ir",
+                              limit=80, pages=3)
+        finally:
+            osm._http_json = original
+        self.assertEqual(len(calls), 1, "صفحهٔ کوتاه یعنی داده تمام شده")
+        self.assertEqual(len(rows), 7)
+
+    def test_search_row_cap_is_page_size_times_pages(self):
+        calls: list[int] = []
+
+        def fake_http(url, *, timeout):
+            calls.append(1)
+            base = 4000 + 100 * len(calls)
+            return [dict(NOMINATIM_ITEM, osm_id=base + i) for i in range(40)]
+
+        original = osm._http_json
+        osm._http_json = fake_http
+        osm._LAST_CALL[0] = 0.0
+        try:
+            rows = osm.search("cafe", bbox=[35.6, 35.8, 51.3, 51.5], country="ir",
+                              limit=40, pages=3)
+        finally:
+            osm._http_json = original
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(rows), 120)          # ۳ صفحه × ۴۰
+
     def test_health_reports_down_on_network_error(self):
         original = osm._http_json
         osm._http_json = lambda url, timeout: (_ for _ in ()).throw(osm.OSMDownError("boom"))

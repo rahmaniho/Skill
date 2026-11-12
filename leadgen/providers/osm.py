@@ -566,6 +566,9 @@ def row_from_item(item: dict, *, input_id: str = "", lang: str = "fa") -> dict |
     }
 
 
+NOMINATIM_MAX_LIMIT = 40          # سقف خودِ سرویس در هر درخواست
+
+
 def search(
     term: str,
     *,
@@ -575,12 +578,23 @@ def search(
     timeout: float = 12.0,
     lang: str = "fa",
     input_id: str = "",
+    pages: int = 1,
 ) -> list[dict]:
-    """یک جست‌وجوی واقعی POI؛ نتیجه محدود به bbox (اگر داده شود)."""
+    """جست‌وجوی واقعی POI؛ نتیجه محدود به bbox (اگر داده شود).
+
+    Nominatim در هر درخواست حداکثر ۴۰ نتیجه می‌دهد. برای شهرهای شلوغ این سقف
+    یعنی «۴۰ کافه از ۲۰۰ کافه» — نه «شهر کوچک». `pages>1` با `exclude_place_ids`
+    صفحهٔ بعد را می‌گیرد (یک درخواست/ثانیه؛ فقط وقتی لازم است).
+    """
+    want = int(limit or config.OSM_LIMIT)
+    per_page = max(1, min(want, NOMINATIM_MAX_LIMIT))
+    # سقف کل = اندازهٔ صفحه × تعداد صفحه‌ها؛ Nominatim به هر درخواست ۴۰ می‌دهد،
+    # پس «۸۰ نتیجه» یعنی دو صفحهٔ ۴۰تایی، نه یک درخواست با limit=۸۰.
+    cap = per_page * max(1, int(pages))
     params = {
         "q": term,
         "format": "jsonv2",
-        "limit": int(limit or config.OSM_LIMIT),
+        "limit": per_page,
         "extratags": 1,
         "addressdetails": 1,
         "accept-language": "fa,en",
@@ -590,18 +604,37 @@ def search(
     cc = (country or config.OSM_COUNTRY or "").strip().lower()
     if cc and len(cc) == 2:
         params["countrycodes"] = cc
-    url = f"{config.OSM_ENDPOINT}/search?" + urllib.parse.urlencode(params)
-    _throttle()
-    data = _http_json(url, timeout=timeout)
-    if not isinstance(data, list):
-        raise OSMDownError("پاسخ OSM فهرست نبود")
-    rows = []
-    for item in data:
-        if not isinstance(item, dict):
-            continue
-        row = row_from_item(item, input_id=input_id, lang=lang)
-        if row:
+
+    rows: list[dict] = []
+    seen_ids: list[str] = []
+    for page in range(max(1, int(pages))):
+        if page:
+            if len(rows) < per_page:      # صفحهٔ قبل پر نشد → چیزی نمانده
+                break
+            params["exclude_place_ids"] = ",".join(seen_ids)
+        url = f"{config.OSM_ENDPOINT}/search?" + urllib.parse.urlencode(params)
+        _throttle()
+        data = _http_json(url, timeout=timeout)
+        if not isinstance(data, list):
+            raise OSMDownError("پاسخ OSM فهرست نبود")
+        got = 0
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            row = row_from_item(item, input_id=input_id, lang=lang)
+            if not row:
+                continue
+            got += 1
+            place = row.get("place_id") or ""
+            if place and place in seen_ids:
+                continue
             rows.append(row)
+            if place:
+                seen_ids.append(place)
+            if len(rows) >= cap:
+                return rows
+        if got < per_page:                # سرویس کمتر از سقف داد → تمام شد
+            break
     return rows
 
 

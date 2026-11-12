@@ -713,7 +713,8 @@ class OSMEngine:
                     try:
                         got = osm.search(term, bbox=box, country=country,
                                          limit=config.OSM_LIMIT, timeout=min(12.0, left),
-                                         lang=lang, input_id=city_name)
+                                         lang=lang, input_id=city_name,
+                                         pages=2 if left >= 10 else 1)
                     except OSMDownError as exc:
                         errors.append(f"nominatim {city_name} «{term}»: {exc}")
                         self.attempts.append({"term": term, "rows": 0, "city": city_name,
@@ -771,8 +772,12 @@ class OSMEngine:
                 return len(found)
 
             try:
+                # دو صفحه: سقف Nominatim ۴۰ نتیجه در هر درخواست است؛ شهر شلوغ
+                # با یک صفحه نصفه می‌ماند. صفحهٔ دوم فقط وقتی وقت داریم.
+                pages = 2 if left >= 10 and not sweep_boxes else 1
                 got = osm.search(term, bbox=bbox, country=country, limit=config.OSM_LIMIT,
-                                 timeout=min(12.0, left), lang=lang, input_id=term)
+                                 timeout=min(12.0, left), lang=lang, input_id=term,
+                                 pages=pages)
             except OSMDownError as exc:
                 errors.append(f"{term}: {exc}")
                 got = []
