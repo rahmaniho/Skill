@@ -939,6 +939,18 @@ async function loadQueue() {
   }
 }
 
+// «این کار در صف دقیقاً چه می‌خواهد بسازد؟» — شهر/صنف یا غنی‌سازی کدام اجرا
+function jobRequestFa(job) {
+  const req = job.request || {};
+  if (req.task === "enrich" || String(job.id || "").startsWith("enrich")) {
+    return `✨ غنی‌سازی اجرای ${req.target_run || req.run_id || "—"}`;
+  }
+  const niche = req.niche_query || "همهٔ کسب‌وکارها";
+  const where = req.city_query || req.province || req.area_label || "—";
+  const kind = req.all_niches ? " · همهٔ صنف‌ها" : "";
+  return `${niche} · ${where}${kind}`;
+}
+
 function renderQueue(queue, jobs) {
   const stats = queue.stats || {};
   $("#queueMode").textContent = queue.active
@@ -959,11 +971,12 @@ function renderQueue(queue, jobs) {
   $("#jobsTable tbody").innerHTML = jobs.length ? jobs.map((job) => `
     <tr>
       <td><code>${esc(job.run_id || job.id || "—")}</code></td>
+      <td>${esc(jobRequestFa(job))}</td>
       <td>${esc(job.status_fa || JOB_STATUS_FA[job.status] || job.status || "—")}</td>
       <td>${fa(job.attempts || 0)} / ${fa(job.max_attempts || 3)}</td>
       <td>${esc(job.worker || "—")}</td>
       <td class="hint">${esc(job.last_error || "")}</td>
-    </tr>`).join("") : `<tr><td colspan="5" class="hint">کاری در صف نیست</td></tr>`;
+    </tr>`).join("") : `<tr><td colspan="6" class="hint">کاری در صف نیست</td></tr>`;
 
   const workers = stats.workers || [];
   $("#workersBox").innerHTML = workers.length
