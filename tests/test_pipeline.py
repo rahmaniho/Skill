@@ -1706,11 +1706,12 @@ class StreetGeometryMemoryTests(unittest.TestCase):
 
     def _run(self, request, **kwargs):
         warnings = kwargs.pop("warnings", None)
+        city = kwargs.pop("city", None) or self._city()
         patches = self._patches(**kwargs)
         for patch in patches:
             patch.start()
         try:
-            return pipeline.refine_area_bbox(request, self._city(), allow_network=True,
+            return pipeline.refine_area_bbox(request, city, allow_network=True,
                                              warnings=warnings, use_cache=True)
         finally:
             for patch in reversed(patches):
@@ -1742,6 +1743,26 @@ class StreetGeometryMemoryTests(unittest.TestCase):
         overpass.assert_not_called()
         self.assertEqual("cache", request.street_memory[0]["source"])
         self.assertEqual(boxes, request.street_boxes)
+
+    def test_suspiciously_short_memory_is_rescanned(self):
+        """نوار ۰٫۵ کیلومتری ذخیره‌شده از نسخهٔ قدیم نباید برای همیشه بچسبد."""
+        request = self._request("خیابان چهارباغ")
+        request.city_key = "isfahan"
+        short = {"bbox": [32.6467, 32.6574, 51.6675, 51.6694],
+                 "boxes": [[32.6467, 32.6574, 51.6675, 51.6694]],
+                 "ways": 1, "age_days": 0.02}
+        wide = {"bbox": [32.6400, 32.6700, 51.6660, 51.6700], "ways": 11,
+                "boxes": [[32.6400, 32.6700, 51.6660, 51.6700]], "siblings": 3,
+                "via": "exact", "length_km": 4.6}
+        self._run(request, cached=short, wide=wide,
+                  city={"bbox": [32.55, 32.75, 51.55, 51.80], "country": "IR",
+                        "label_local": "اصفهان", "key": "isfahan"},
+                  lookup={"bbox": [32.6467, 32.6574, 51.6675, 51.6694],
+                          "label": "خیابان چهارباغ عباسی، اصفهان، ایران"})
+        self.assertEqual("overpass", request.street_memory[0]["source"],
+                         "نوار کوتاه مشکوک باید دوباره از Overpass پرسیده شود")
+        self.assertGreater(request.street_memory[0]["span_km"], 2.0)
+        self.assertNotEqual([short["boxes"][0]], request.street_boxes)
 
     def test_stale_memory_rescues_the_run_when_overpass_is_down(self):
         request = self._request()
