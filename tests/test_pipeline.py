@@ -11,6 +11,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -648,12 +649,32 @@ class ProvinceSweepPipelineTest(unittest.TestCase):
         self.assertGreater(len(boxes), 1, "استان باید چند شهر را بگردد")
         for box in boxes:
             self.assertEqual(len(box["bbox"]), 4)
-            self.assertTrue(box["fa"])
-        self.assertTrue(any("جست‌وجوی استانی" in w for w in result.warnings), result.warnings)
+            self.assertTrue(box.get("fa") or box.get("label"))
+        self.assertTrue(any("اسکراب استانی" in w for w in result.warnings), result.warnings)
         self.assertEqual(result.run.get("status"), "done")
+        # همهٔ شهرهای استان در برنامه‌اند (نه فقط چند شهر پرجمعیت)
+        scan = (result.analytics or {}).get("scan") or {}
+        self.assertTrue(scan.get("full"))
+        self.assertGreaterEqual(scan.get("total") or 0, len(boxes))
 
-    def test_short_budget_reduces_city_count(self):
-        """با بودجهٔ ۳۰ ثانیه‌ای (تابع serverless) تعداد شهرها کم می‌شود تا هر شهر وقت داشته باشد."""
+    def test_province_with_more_cities_than_boxes_still_covers_every_city(self):
+        """اصفهان ۱۱۱ شهر دارد؛ سقف ۴۰ جعبه نباید هیچ شهری را حذف کند."""
+        from leadgen import regions, tiling
+
+        province = next(p for p in regions.provinces() if p["fa"] == "اصفهان")
+        boxes = tiling.plan("province", province=province["id"], max_tiles=40)
+        self.assertLessEqual(len(boxes), 40)
+        self.assertGreater(len(boxes), 20)
+        missed = [c["fa"] for c in province["cities"]
+                  if not any(b["bbox"][0] <= c["lat"] <= b["bbox"][1]
+                             and b["bbox"][2] <= c["lon"] <= b["bbox"][3] for b in boxes)]
+        self.assertEqual(missed, [], f"شهرهای جاافتاده: {missed[:5]}")
+        # برچسب‌ها یکتا و پایدارند (ادامهٔ اسکراب به همان‌ها تکیه می‌کند)
+        labels = [b["label"] for b in boxes]
+        self.assertEqual(len(labels), len(set(labels)))
+
+    def test_province_plans_all_cities_and_reports_continuation(self):
+        """استان = همهٔ شهرها؛ کار در بخش‌های زمانی ادامه می‌یابد تا داده جا نماند."""
         captured: list[dict] = []
 
         class FakeEngine:
@@ -682,9 +703,10 @@ class ProvinceSweepPipelineTest(unittest.TestCase):
             pipeline.make_engine = original
         short_boxes = captured[0].get("sweep_boxes") or []
         long_boxes = captured[1].get("sweep_boxes") or []
-        self.assertGreaterEqual(len(short_boxes), 2)
-        self.assertLessEqual(len(short_boxes), 3)
-        self.assertGreater(len(long_boxes), len(short_boxes))
+        # سقف شهرهای استان بالا رفت: هر دو بودجه همهٔ شهرها را در برنامه می‌بینند،
+        # ولی اجرای کوتاه بقیه را در «ادامه» می‌گذارد (نه اینکه بی‌صدا حذف کند).
+        self.assertGreaterEqual(len(short_boxes), 5)
+        self.assertEqual(len(short_boxes), len(long_boxes))
 
     def test_empty_city_is_reported_in_warnings(self):
         """گزارش باید بگوید کدام شهر داده نداشت (به‌جای سکوت)."""
@@ -972,3 +994,180 @@ class RegionFidelityTests(unittest.TestCase):
         finally:
             pipeline.make_engine = original
         self.assertEqual(captured[0].get("sweep_boxes"), [])
+
+
+class ScanPlanTests(unittest.TestCase):
+    """اسکراب کامل: کاشی‌بندی شهر + ادامهٔ بخش‌های باقی‌مانده + پوشش گزارش‌شده."""
+
+    def _run(self, request: dict, tiles_done: int | None = None):
+        captured: list[dict] = []
+
+        class FakeEngine:
+            name = "osm"
+            live = True
+
+            def __init__(self):
+                self.coverage = []
+                self.tile_coverage = []
+                self.attempts = []
+
+            def health(self):
+                return {"up": True}
+
+            def run_job(self, body, on_progress=None):
+                captured.append(body)
+                tiles = body.get("scan_tiles") or []
+                done = tiles if tiles_done is None else tiles[:tiles_done]
+                self.tile_coverage = (
+                    [{"label": t["label"], "rows": 2, "via": "nominatim", "error": ""}
+                     for t in done]
+                    + [{"label": t["label"], "rows": 0, "via": "",
+                        "error": "بودجهٔ زمانی تمام شد"} for t in tiles[len(done):]])
+                return "fake-job", []
+
+        original = pipeline.make_engine
+        pipeline.make_engine = lambda mode=None: FakeEngine()
+        try:
+            result = pipeline.run_scrape(pipeline.ScrapeRequest.from_dict(request))
+        finally:
+            pipeline.make_engine = original
+        return captured, result
+
+    def test_city_run_is_tiled_into_several_pieces(self):
+        captured, result = self._run({"niche_query": "کافه", "city_key": "tehran",
+                                      "city_query": "تهران", "engine_mode": "osm",
+                                      "lang": "fa", "limit": 30})
+        tiles = captured[0].get("scan_tiles") or []
+        self.assertGreaterEqual(len(tiles), 4, "شهر باید کاشی‌بندی شود")
+        for tile in tiles:
+            self.assertEqual(len(tile["bbox"]), 4)
+            self.assertGreater(tile["bbox"][1], tile["bbox"][0])
+        scan = (result.analytics or {}).get("scan") or {}
+        self.assertTrue(scan.get("full"))
+        self.assertEqual(scan.get("total"), len(tiles))
+        self.assertEqual(scan.get("done"), len(tiles))
+        self.assertEqual(scan.get("remaining"), [])
+        self.assertEqual(result.run.get("area_level"), "city")
+
+    def test_partial_coverage_requests_continuation_and_resumes_it(self):
+        captured, result = self._run({"niche_query": "کافه", "city_key": "tehran",
+                                      "city_query": "تهران", "engine_mode": "osm",
+                                      "lang": "fa", "limit": 30}, tiles_done=2)
+        scan = (result.analytics or {}).get("scan") or {}
+        self.assertEqual(scan.get("done"), 2)
+        self.assertGreater(len(scan.get("remaining") or []), 0)
+        continuation = (result.stats or {}).get("continuation") or {}
+        self.assertTrue(continuation, "بخش باقی‌مانده باید درخواست ادامه بسازد")
+        self.assertEqual(continuation["request"]["resume_of"], result.run_id)
+        self.assertEqual(continuation["request"]["resume_state"]["done"],
+                         scan.get("labels_done"))
+        # اجرای بخش دوم فقط کاشی‌های نمانده را می‌پرسد
+        captured2, result2 = self._run(continuation["request"])
+        tiles2 = captured2[0].get("scan_tiles") or []
+        self.assertEqual(len(tiles2), len(scan.get("remaining") or []))
+        scan2 = (result2.analytics or {}).get("scan") or {}
+        self.assertEqual(result2.run_id, result.run_id, "ادامه همان اجراست")
+        self.assertEqual(scan2.get("done"), scan2.get("total"))
+        self.assertEqual(scan2.get("remaining"), [])
+
+    def test_continuation_chain_covers_a_plan_bigger_than_chunk_default(self):
+        """سقف پیش‌فرض بخش‌ها نباید کاشی‌های شهر بزرگ را نیمه‌کاره رها کند."""
+        from leadgen import config as config_mod
+
+        original = config_mod.SCAN_MAX_CHUNKS
+        config_mod.SCAN_MAX_CHUNKS = 2        # عمداً کوچک‌تر از تعداد کاشی‌ها
+        try:
+            _, result = self._run({"niche_query": "کافه", "city_key": "tehran",
+                                   "city_query": "تهران", "engine_mode": "osm",
+                                   "lang": "fa", "limit": 30}, tiles_done=2)
+        finally:
+            config_mod.SCAN_MAX_CHUNKS = original
+        scan = (result.analytics or {}).get("scan") or {}
+        self.assertGreater(len(scan.get("remaining") or []), 2)
+        # حتی با SCAN_MAX_CHUNKS=2، زنجیرهٔ ادامه باید کاملِ برنامه را پوشش دهد
+        self.assertTrue((result.stats or {}).get("continuation"),
+                        "کاشی‌های باقی‌مانده نباید بی‌ادامه بمانند")
+
+    def test_street_run_uses_one_padded_tile_and_clips_to_city(self):
+        request = pipeline.ScrapeRequest.from_dict({
+            "niche_query": "کافه", "city_query": "یزد", "city_key": "yazd",
+            "street": "خیابان کاشانی", "area_level": "street", "engine_mode": "osm",
+            "lang": "fa", "limit": 10})
+        expected = {"bbox": [31.85, 31.95, 54.30, 54.42]}
+
+        def fake_refine(req, city, **kwargs):
+            req.bbox = list(expected["bbox"])          # مثل نسخهٔ واقعی، درجا می‌نویسد
+            req.lat, req.lon = "31.900000", "54.360000"
+            return list(expected["bbox"])
+
+        with mock.patch.object(pipeline.regions, "resolve", return_value={
+                "lat": 31.897, "lon": 54.36, "radius": 1200, "zoom": 16,
+                "level": "street", "label": "خیابان کاشانی، یزد",
+                "keyword_label": "خیابان کاشانی، یزد", "city_key": "yazd",
+                "city_fa": "یزد", "unresolved": [],
+                "bbox": [31.88, 31.91, 54.35, 54.37]}), \
+                mock.patch.object(pipeline, "refine_area_bbox", side_effect=fake_refine), \
+                mock.patch.object(pipeline, "make_engine"):
+            captured, result = self._run({**request.__dict__})
+        tiles = captured[0].get("scan_tiles") or []
+        self.assertEqual(len(tiles), 1, "خیابان = یک کاشی دقیق")
+        # کاشی همان جعبهٔ OSM است، فقط ۲٪ حاشیهٔ tiling دورش
+        tile_box = tiles[0]["bbox"]
+        for got, want in zip(tile_box, expected["bbox"]):
+            self.assertAlmostEqual(got, want, delta=0.02)
+        self.assertLessEqual(tile_box[0], expected["bbox"][0])
+        self.assertGreaterEqual(tile_box[1], expected["bbox"][1])
+        self.assertEqual(captured[0].get("bbox"), expected["bbox"])
+        scan = (result.analytics or {}).get("scan") or {}
+        self.assertEqual(scan.get("total"), 1)
+
+    def test_unknown_street_still_aborts(self):
+        request = pipeline.ScrapeRequest.from_dict({
+            "niche_query": "کافه", "city_query": "یزد", "city_key": "yazd",
+            "street": "خیابان ناموجود", "area_level": "street", "engine_mode": "demo",
+            "lang": "fa", "limit": 10})
+        with mock.patch.object(pipeline.regions, "resolve", return_value={
+                "lat": 31.897, "lon": 54.36, "radius": 1200, "zoom": 16,
+                "level": "street", "label": "خیابان ناموجود، یزد",
+                "keyword_label": "خیابان ناموجود، یزد", "city_key": "yazd",
+                "city_fa": "یزد", "unresolved": ["street"]}), \
+                mock.patch.object(pipeline, "refine_area_bbox", return_value=[]):
+            with self.assertRaises(pipeline.EngineError) as ctx:
+                pipeline.run_scrape(request)
+        self.assertIn("پیدا نشد", str(ctx.exception))
+
+
+class StreetLookupTests(unittest.TestCase):
+    """جعبهٔ واقعی خیابان از OSM — کل خیابان، نه یک نقطه."""
+
+    def test_lookup_area_returns_padded_nominatim_box(self):
+        from leadgen.providers import osm
+        payload = [{
+            "lat": "31.890", "lon": "54.360", "type": "residential",
+            "class": "highway", "osm_type": "way", "osm_id": 555,
+            "display_name": "خیابان کاشانی، یزد، ایران",
+            "boundingbox": ["31.8835", "31.8965", "54.3535", "54.3665"],
+        }]
+        with mock.patch.object(osm, "_http_json", return_value=payload), \
+                mock.patch.object(osm, "_throttle", return_value=None):
+            found = osm.lookup_area("خیابان کاشانی یزد", bbox=[31.7, 32.1, 54.1, 54.6])
+        self.assertEqual(found["bbox"], [31.8835, 31.8965, 54.3535, 54.3665])
+        self.assertEqual(found["type"], "residential")
+        self.assertIn("کاشانی", found["label"])
+
+    def test_lookup_area_ignores_non_area_results(self):
+        from leadgen.providers import osm
+        payload = [{"lat": "31.89", "lon": "54.36", "type": "city", "class": "place",
+                    "boundingbox": ["31.0", "32.0", "53.0", "55.0"],
+                    "display_name": "یزد"}]
+        with mock.patch.object(osm, "_http_json", return_value=payload), \
+                mock.patch.object(osm, "_throttle", return_value=None):
+            found = osm.lookup_area("یزد", bbox=None)
+        self.assertTrue(found["bbox"])
+
+    def test_lookup_area_network_failure_falls_back_silently(self):
+        from leadgen.providers import osm
+        with mock.patch.object(osm, "_http_json", side_effect=OSError("down")), \
+                mock.patch.object(osm, "_throttle", return_value=None):
+            with self.assertRaises(osm.OSMDownError):
+                osm.lookup_area("خیابان کاشانی یزد", bbox=None)

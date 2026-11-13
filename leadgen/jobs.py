@@ -50,6 +50,8 @@ def enqueue_run(request_dict: dict, *, run_id: str | None = None, priority: int 
             "province": payload.get("province"), "district": payload.get("district"),
             "street": payload.get("street"), "area_label": payload.get("area_label"),
             "area_level": payload.get("area_level"),
+            "city_key": payload.get("city_key"), "country": payload.get("country"),
+            "lat": payload.get("lat"), "lon": payload.get("lon"),
             "progress": {"stage": "queued", "status": "queued", "percent": 1,
                          "message": "در صف اجرا — منتظر ورکر…", "run_id": run_id,
                          "ts": time.time()},

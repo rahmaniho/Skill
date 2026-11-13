@@ -638,6 +638,77 @@ def search(
     return rows
 
 
+# انواع نتیجه‌ای که «محدوده» حساب می‌شوند (خیابان، محله، شهر، مرز)
+STREET_TYPES = {"highway", "road", "residential", "pedestrian", "footway", "service",
+                "place", "neighbourhood", "suburb", "quarter", "borough",
+                "city_district", "district", "administrative", "boundary",
+                "locality", "town", "village", "city"}
+
+
+def lookup_area(query: str, *, bbox: list[float] | None = None,
+                country: str | None = None, timeout: float = 12.0,
+                limit: int = 5) -> dict:
+    """جعبهٔ واقعیِ یک خیابان/محله را از OSM می‌گیرد (نه یک نقطهٔ سرانگشتی).
+
+    چرا؟ «خیابان ولیعصر» ۱۲ کیلومتر طول دارد؛ اگر با شعاع ۸۰۰ متری اسکراب شود،
+    فقط یک تکه‌اش دیده می‌شود. Nominatim برای خیابان‌ها `boundingbox` واقعی
+    می‌دهد؛ همان را برمی‌گردانیم تا پایپ‌لاین کل خیابان را بگردد.
+
+    خروجی: `{"bbox": [s,n,w,e], "lat","lon","label","type","class"}` یا `{}`.
+    """
+    text = (query or "").strip()
+    if len(text) < 3:
+        return {}
+    params = {
+        "q": text, "format": "jsonv2", "limit": max(1, min(10, int(limit))),
+        "extratags": 1, "addressdetails": 1, "accept-language": "fa,en",
+    }
+    if bbox and len(bbox) == 4:
+        params.update({"viewbox": viewbox_param(bbox), "bounded": 1})
+    cc = (country or config.OSM_COUNTRY or "").strip().lower()
+    if cc and len(cc) == 2:
+        params["countrycodes"] = cc
+    url = f"{config.OSM_ENDPOINT}/search?" + urllib.parse.urlencode(params)
+    _throttle()
+    try:
+        data = _http_json(url, timeout=timeout)
+    except Exception as exc:  # noqa: BLE001 — نبودِ جعبه نباید اجرا را بشکند
+        raise OSMDownError(f"جست‌وجوی محدوده در OSM ناموفق بود: {exc}") from exc
+    if not isinstance(data, list):
+        return {}
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("type") or "")
+        klass = str(item.get("class") or item.get("category") or "")
+        if kind not in STREET_TYPES and klass not in STREET_TYPES:
+            continue
+        box = item.get("boundingbox")
+        try:
+            south, north, west, east = (float(x) for x in box)
+        except (TypeError, ValueError):
+            continue
+        if not (north > south and east > west):
+            continue
+        return {
+            "bbox": [round(south, 6), round(north, 6), round(west, 6), round(east, 6)],
+            "lat": _float_or_none(item.get("lat")),
+            "lon": _float_or_none(item.get("lon")),
+            "label": str(item.get("display_name") or ""),
+            "type": kind, "class": klass,
+            "osm_type": str(item.get("osm_type") or ""),
+            "osm_id": item.get("osm_id"),
+        }
+    return {}
+
+
+def _float_or_none(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def within(row: dict, bbox: list[float], *, margin: float = 0.2) -> bool:
     """آیا ردیف داخل جعبه است؟ (با حاشیه — برای فیلتر نتایج جست‌وجوی متنی)"""
     try:

@@ -431,6 +431,15 @@ a { color: var(--brand); text-decoration: none; }
 /* ── کارها / صف ─────────────────────────────────────────────────────── */
 .queue-card { display: grid; gap: 8px; margin-bottom: 16px; }
 .queue-stats { display: flex; flex-wrap: wrap; gap: 6px; }
+.watch-list { display: grid; gap: 8px; }
+.watch-item {
+  display: grid; gap: 6px; border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--surface); padding: 11px 12px;
+}
+.watch-item small { color: var(--ink-2); }
+.watch-item .watch-acts { display: flex; flex-wrap: wrap; gap: 6px; }
+.watch-item .chip { padding: 6px 10px; font-size: 12.5px; }
+.watch-item.is-due { border-color: var(--brand); box-shadow: 0 0 0 1px var(--brand) inset; }
 .view-h { font-size: 16px; margin: 4px 2px 10px; }
 .run-list { display: grid; gap: 10px; }
 .run {

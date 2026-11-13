@@ -423,6 +423,40 @@ class ApiTestCase(unittest.TestCase):
         # موتور و غنی‌سازی با هم زیر سقف ۶۰ثانیه‌ای تابع می‌مانند
         self.assertLessEqual(captured["max_time"] + captured["enrich_budget"], 40)
 
+    def test_21b_tick_keeps_full_scan_limits_proportional(self):
+        """سقف ۶۰تایی فقط برای اجرای سریع است؛ اسکراب کامل همان limit کاربر را نگه می‌دارد."""
+        from leadgen import config as config_mod, worker as worker_mod
+
+        seen: list[dict] = []
+
+        def fake_process(job, quiet=True):
+            seen.append(dict(job.get("request") or {}))
+            return {"ok": True, "run_id": job.get("run_id"), "total": 0, "hot": 0,
+                    "seconds": 0.1, "empty": True}
+
+        original_queue, original_process = config_mod.QUEUE_MODE, worker_mod.process_job
+        try:
+            config_mod.QUEUE_MODE = "always"
+            worker_mod.process_job = fake_process
+            with storage._connect() as conn:
+                conn.execute("delete from jobs")
+            for run_id, extra in (("tick-quick", {}), ("tick-scan", {"scan_full": True})):
+                storage.enqueue_job(run_id, {"run_id": run_id, "city_query": "تهران",
+                                             "niche_query": "کافه", "engine_mode": "demo",
+                                             "limit": 300, "max_time": 60, **extra})
+                self.get("/api/worker/tick?budget=50")
+            with storage._connect() as conn:
+                conn.execute("delete from jobs")
+        finally:
+            worker_mod.process_job = original_process
+            config_mod.QUEUE_MODE = original_queue
+            with storage._connect() as conn:
+                conn.execute("delete from jobs")
+        limits = {item.get("run_id") or "": item.get("limit") for item in seen}
+        self.assertEqual(len(seen), 2)
+        self.assertEqual(seen[0].get("limit"), 60)      # سریع: سقف محافظه‌کارانه
+        self.assertEqual(seen[1].get("limit"), 300)     # اسکراب کامل: عدد کاربر
+
     def test_20b_enrich_run_fills_missing_emails_without_rescraping(self):
         """«غنی‌سازی مجدد»: لیدهای ذخیره‌شده ایمیل/شبکه اجتماعی می‌گیرند، بدون اسکراپ."""
         from leadgen import enrich as enrich_mod
@@ -677,6 +711,130 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertFalse(data["ok"])
         self.assertIn("پیدا نشد", data["error"])
+
+    # ── دیدبان (watchlist) ────────────────────────────────────────────────────
+    def test_26_watchlist_crud_and_validation(self):
+        status, data = self.post("/api/watchlist", {"city": "یزد", "niche_query": "کافه",
+                                                    "interval_days": 7})
+        self.assertEqual(status, 201)
+        watch = data["watch"]
+        self.assertTrue(data["ok"])
+        self.assertEqual(watch["city"], "یزد")
+        self.assertEqual(watch["interval_days"], 7)
+        self.assertEqual(data["label"], "کافه · یزد")
+        watch_id = watch["id"]
+
+        status, listing = self.get("/api/watchlist")
+        self.assertEqual(status, 200)
+        self.assertGreaterEqual(listing["total"], 1)
+        self.assertIn("کافه · یزد", [w["label"] for w in listing["items"]])
+
+        status, updated = self.post(f"/api/watchlist/{watch_id}",
+                                    {"interval_days": 14, "active": False}, method="PATCH")
+        self.assertEqual(status, 200)
+        self.assertEqual(updated["watch"]["interval_days"], 14)
+        self.assertFalse(updated["watch"]["active"])
+
+        status, bad = self.post("/api/watchlist", {"city": "یزد"})
+        self.assertEqual(status, 400)
+        self.assertIn("صنف", bad["error"])
+
+        status, deleted = self.post(f"/api/watchlist/{watch_id}", method="DELETE")
+        self.assertEqual(status, 200)
+        self.assertTrue(deleted["deleted"])
+        self.assertIsNone(storage.get_watch(watch_id))
+
+    def test_26b_watchlist_tick_runs_due_item_and_reports(self):
+        status, data = self.post("/api/watchlist", {"city": "یزد", "niche_query": "کافه"})
+        self.assertEqual(status, 201)
+        watch_id = data["watch"]["id"]
+        storage.update_watch(watch_id, next_run_at=time.time() - 30)
+        status, tick = self.get("/api/watchlist/tick?limit=1")
+        self.assertEqual(status, 200)
+        self.assertGreaterEqual(tick["due"], 1)
+        self.assertTrue(tick["queued"])
+        first = tick["queued"][0]
+        self.assertNotIn("error", first)
+        self.assertTrue(first.get("run_id"))
+        moved = storage.get_watch(watch_id)
+        self.assertGreater(moved["next_run_at"], time.time() + 6 * 86400)
+        self.post(f"/api/watchlist/{watch_id}", method="DELETE")
+
+    def test_27_run_leads_fresh_filter_is_server_side(self):
+        for run_id, ids in (("fresh-old", ["osm:node/1", "osm:node/2"]),
+                            ("fresh-new", ["osm:node/2", "osm:node/3"])):
+            storage.create_run({"id": run_id, "created_at": time.time(), "status": "done",
+                                "city": "یزد", "niche_fa": "کافه", "total": len(ids)})
+            storage.save_leads(run_id, [
+                {"place_id": pid, "title": f"کافه {pid}", "segment": "hot", "score": 70,
+                 "city": "یزد", "status": "new", "latitude": "31.89",
+                 "longitude": "54.36", "signals": {}, "gaps": [], "tags": []}
+                for pid in ids])
+        status, fresh = self.get("/api/runs/fresh-new/leads?fresh=new")
+        self.assertEqual(status, 200)
+        self.assertEqual([r["place_id"] for r in fresh["leads"]], ["osm:node/3"])
+        self.assertEqual(fresh["fresh"]["new"], 1)
+        self.assertEqual(fresh["fresh"]["repeat"], 1)
+        self.assertFalse((fresh["leads"][0].get("signals") or {}).get("repeat"))
+        status, repeats = self.get("/api/runs/fresh-new/leads?fresh=repeat")
+        self.assertEqual([r["place_id"] for r in repeats["leads"]], ["osm:node/2"])
+        self.assertTrue(repeats["leads"][0]["signals"]["repeat"])
+        # همان فیلتر روی جست‌وجوی سراسری هم هست
+        search_q = urllib.parse.urlencode({"fresh": "new", "q": "کافه", "limit": 50})
+        status, allnew = self.get(f"/api/search?{search_q}")
+        self.assertEqual(status, 200)
+        self.assertTrue(all(not (r.get("signals") or {}).get("repeat")
+                            for r in allnew["leads"]))
+
+    def test_28_create_run_persists_analytics_on_sqlite(self):
+        """باگ قبلی: `create_run` کلید analytics را دور می‌ریخت و «ادامه» کار نمی‌کرد."""
+        storage.create_run({"id": "with-analytics", "created_at": time.time(),
+                            "status": "done", "city": "تهران", "niche_fa": "کافه",
+                            "analytics": {"scan": {"full": True, "total": 4,
+                                                   "remaining": ["x"]}}})
+        run = storage.get_run("with-analytics")
+        self.assertEqual((run.get("analytics") or {}).get("scan", {}).get("remaining"), ["x"])
+
+    def test_28_continue_scan_requeues_only_the_rest(self):
+        """دکمهٔ «ادامهٔ اسکراب» بقیهٔ بخش‌ها را با همان run_id در صف می‌گذارد."""
+        run_id = "scan-partial"
+        storage.create_run({"id": run_id, "created_at": time.time(), "status": "done",
+                            "city": "تهران", "niche_fa": "کافه"})
+        storage.update_run(run_id, analytics={"scan": {
+            "full": True, "chunk": 0, "total": 9, "done": 4,
+            "labels_done": [f"تهران · کاشی {i}/۹" for i in range(1, 5)],
+            "remaining": [f"تهران · کاشی {i}/۹" for i in range(5, 10)],
+            "request": {"niche_query": "کافه", "city_query": "تهران", "city_key": "tehran",
+                        "area_level": "city", "engine_mode": "demo", "lang": "fa",
+                        "scan_full": True}}})
+        before = {j["id"] for j in storage.list_jobs(limit=200)}
+        status, data = self.post(f"/api/runs/{run_id}/continue")
+        self.assertIn(status, (200, 202), data)
+        self.assertEqual(data["run_id"], run_id)
+        if data.get("queued"):
+            self.assertEqual(data["remaining"], 5)
+            jobs_now = {j["id"] for j in storage.list_jobs(limit=200)}
+            self.assertIn(run_id, jobs_now - before)
+        else:
+            # اجرای درون‌فرایندی: همان run_id ادامه داده شد و بخش بعدی گزارش شد
+            self.assertIn("scan", data)
+            self.assertEqual(data["run_id"], run_id)
+        # بخش ناتمام، در گزارشِ خودِ اجرا هم دیده می‌شود
+        detail = storage.get_run(run_id)
+        self.assertTrue((detail.get("analytics") or {}).get("scan", {}).get("full"))
+
+    def test_28b_continue_on_a_finished_scan_says_nothing_left(self):
+        run_id = "scan-done"
+        storage.create_run({"id": run_id, "created_at": time.time(), "status": "done",
+                            "city": "یزد", "niche_fa": "کافه"})
+        storage.update_run(run_id, analytics={"scan": {
+            "full": True, "chunk": 1, "total": 4, "done": 4,
+            "labels_done": [], "remaining": [], "request": {}}})
+        status, data = self.post(f"/api/runs/{run_id}/continue")
+        self.assertEqual(status, 200)
+        self.assertTrue(data.get("done"))
+        status, missing = self.post("/api/runs/nope-nope/continue")
+        self.assertEqual(status, 404)
 
 
 if __name__ == "__main__":

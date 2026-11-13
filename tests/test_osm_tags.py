@@ -4,7 +4,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-from leadgen import config, niches, osm_tags
+from leadgen import config, engine, niches, osm_tags
 from leadgen.providers import osm
 
 
@@ -583,3 +583,106 @@ class TermOrderTests(unittest.TestCase):
         terms = osm_terms.derive(["cafe", "cafés & coffee shops"])
         self.assertEqual(terms[-1], "cafés & coffee shops")
         self.assertEqual(terms[0], "cafe")
+
+
+class FullScanTileTests(unittest.TestCase):
+    """موتور OSM: گذر «اسکراب کامل» هر کاشی را جدا می‌پرسد و پوشش را گزارش می‌کند."""
+
+    def _engine(self):
+        return engine.OSMEngine()
+
+    def test_each_tile_is_searched_and_reported(self):
+        calls: list[list[float]] = []
+        counter = [0]
+
+        def fake_search(term, *, bbox, country=None, limit=None, timeout=12.0,
+                        lang="fa", input_id="", pages=1):
+            calls.append(list(bbox))
+            counter[0] += 1
+            center = ((bbox[0] + bbox[1]) / 2, (bbox[2] + bbox[3]) / 2)
+            return [{"place_id": f"osm:node/c{counter[0]}-{i}", "title": f"کافه {i}",
+                     "category": "کافه", "latitude": f"{center[0]:.6f}",
+                     "longitude": f"{center[1]:.6f}", "source": "openstreetmap",
+                     "phone": "", "website": "", "instagram": "", "facebook": "",
+                     "linkedin": "", "address": "یزد", "rating": None, "reviews": 0,
+                     "tags": {}, "input_id": term}
+                    for i in range(3)]
+
+        body = {
+            "name": "scan", "keywords": ["کافه"], "lang": "fa", "lat": "31.89",
+            "lon": "54.36", "radius": 5000, "max_time": 45,
+            "bbox": [31.80, 31.98, 54.25, 54.47],
+            "scan_tiles": [
+                {"label": "یزد · کاشی ۱/۴", "bbox": [31.80, 31.89, 54.25, 54.36]},
+                {"label": "یزد · کاشی ۲/۴", "bbox": [31.80, 31.89, 54.36, 54.47]},
+                {"label": "یزد · کاشی ۳/۴", "bbox": [31.89, 31.98, 54.25, 54.36]},
+                {"label": "یزد · کاشی ۴/۴", "bbox": [31.89, 31.98, 54.36, 54.47]},
+            ],
+            "osm_terms": ["cafe"], "_niche": None,
+        }
+        with mock.patch.object(osm, "overpass_search", return_value=[]), \
+                mock.patch.object(osm, "search", side_effect=fake_search):
+            _name, rows = self._engine().run_job(body)
+        self.assertGreaterEqual(len(calls), 4, "هر کاشی باید جدا پرسیده شود")
+        self.assertGreaterEqual(len(rows), 4)
+        self.assertEqual(len({r["place_id"] for r in rows}), len(rows), "بدون تکرار")
+
+    def test_tile_coverage_records_every_tile(self):
+        eng = self._engine()
+
+        calls = [0]
+
+        def fake_search(term, *, bbox, country=None, limit=None, timeout=12.0,
+                        lang="fa", input_id="", pages=1):
+            calls[0] += 1
+            center = ((bbox[0] + bbox[1]) / 2, (bbox[2] + bbox[3]) / 2)
+            return [{"place_id": f"osm:node/n{calls[0]}", "title": "کافه",
+                     "category": "کافه", "latitude": f"{center[0]:.6f}",
+                     "longitude": f"{center[1]:.6f}", "source": "openstreetmap",
+                     "phone": "", "website": "", "instagram": "", "facebook": "",
+                     "linkedin": "", "address": "یزد", "rating": None, "reviews": 0,
+                     "tags": {}, "input_id": term}]
+
+        body = {
+            "name": "scan", "keywords": ["کافه"], "lang": "fa", "lat": "31.89",
+            "lon": "54.36", "radius": 5000, "max_time": 45,
+            "bbox": [31.80, 31.98, 54.25, 54.47],
+            "scan_tiles": [
+                {"label": "الف", "bbox": [31.80, 31.89, 54.25, 54.36]},
+                {"label": "ب", "bbox": [31.89, 31.98, 54.36, 54.47]},
+            ],
+            "osm_terms": ["cafe"], "_niche": None,
+        }
+        with mock.patch.object(osm, "overpass_search", return_value=[]), \
+                mock.patch.object(osm, "search", side_effect=fake_search):
+            eng.run_job(body)
+        report = {t["label"]: t for t in eng.tile_coverage}
+        self.assertEqual(set(report), {"الف", "ب"})
+        self.assertTrue(all(t["rows"] >= 1 for t in report.values()))
+
+    def test_tile_equal_to_main_box_is_not_re_queried(self):
+        """کاشی هم‌اندازهٔ جعبهٔ اصلی = همان پرسش انجام‌شده؛ شبکه دوباره اذیت نمی‌شود."""
+        eng = self._engine()
+        box = [31.85, 31.95, 54.30, 54.42]
+        calls = []
+
+        def fake_search(term, *, bbox, country=None, limit=None, timeout=12.0,
+                        lang="fa", input_id="", pages=1):
+            calls.append(list(bbox))
+            return []
+
+        base = {"name": "scan", "keywords": ["کافه"], "lang": "fa", "lat": "31.90",
+                "lon": "54.36", "radius": 5000, "max_time": 30, "bbox": box,
+                "osm_terms": ["cafe"], "_niche": None}
+        with mock.patch.object(osm, "overpass_search", return_value=[]), \
+                mock.patch.object(osm, "search", side_effect=fake_search):
+            with self.assertRaises(engine.EmptyResult):
+                eng.run_job(dict(base))          # بدون کاشی
+            plain_calls = len(calls)
+            calls.clear()
+            with self.assertRaises(engine.EmptyResult):
+                eng.run_job({**base, "scan_tiles": [
+                    {"label": "خیابان کاشانی", "bbox": list(box)}]})
+        self.assertEqual(len(calls), plain_calls,
+                         "کاشیِ هم‌اندازهٔ جعبهٔ اصلی نباید پرسش تازه بسازد")
+        self.assertEqual(eng.tile_coverage[0]["via"], "main")
