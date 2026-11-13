@@ -228,10 +228,30 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--nominatim", default="", help="شمارش تکه‌های یک خیابان در Nominatim")
     parser.add_argument("--parts", default="",
                         help="محله‌ها برای تکه‌کردن خیابان: «ونک,تجریش,...» (با --city/--street)")
+    parser.add_argument("--raw", default="",
+                        help="کوئری‌های Overpass جداشده با ||| برای عیب‌یابی")
     parser.add_argument("--coverage", action="store_true",
                         help="کدام آینه دادهٔ تهران/زوریخ دارد؟ (جهانی یا منطقه‌ای)")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+
+    if args.raw:
+        for query in [q.strip() for q in args.raw.split("|||") if q.strip()]:
+            t0 = time.time()
+            try:
+                data = osm.overpass_raw(query, timeout=25, budget_s=40)
+            except Exception as exc:                     # noqa: BLE001
+                print(f"  ✗ {type(exc).__name__}: {str(exc)[:120]} | {query[:70]}")
+                continue
+            elements = data.get("elements") or []
+            with_bb = sum(1 for e in elements if isinstance(e, dict) and e.get("bounds"))
+            names = sorted({str((e.get("tags") or {}).get("name") or "")
+                            for e in elements[:20] if isinstance(e, dict)})
+            print(f"  • {len(elements)} المان، {with_bb} با bounds، "
+                  f"{round(time.time() - t0, 1)}s | {query[:70]}")
+            if names:
+                print(f"    نام‌ها: {[n for n in names if n][:6]}")
+        return 0
 
     if args.parts:
         parts = [p.strip() for p in args.parts.split(",") if p.strip()]
