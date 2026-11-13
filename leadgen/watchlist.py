@@ -210,23 +210,17 @@ def _recipients(item: dict) -> list[str]:
     return [x.strip() for x in config.digest_recipients() if x.strip()]
 
 
-def deliver(run_id: str, watch_id: str, *, limit: int = 200,
-            dry_run: bool | None = None) -> dict:
-    """فقط تازه‌های یک اجرای دیدبانی را ایمیل می‌کند (بدون تکرار)."""
-    item = storage.get_watch(watch_id) if watch_id else None
-    fresh = only_new_leads(run_id, limit=max(int(limit), 1) * 4)
-    if item:
-        storage.update_watch(watch_id, last_new=len(fresh))
-    if not fresh:
-        result = {"status": "empty", "kind": "watch", "run_id": run_id,
-                  "watch": watch_id, "shown": 0, "scope_total": 0,
-                  "reason": "no_new_leads"}
-        storage.log_delivery(kind="watch", channel="email", target="", status="skipped",
-                             subject="", detail={**result})
-        return result
+def _compose(item: dict | None, run_id: str, *, limit: int = 200) -> dict:
+    """ایمیل «فقط تازه‌ها» را می‌سازد — بدون ارسال و بدون ثبت.
 
-    payload = delivery.collect(run_id, segment=None, limit=min(len(fresh), int(limit)))
+    جدا کردن «ساختن» از «فرستادن» یک فایدهٔ عملی دارد: وقتی مسیر ایمیل تنظیم
+    نشده است (روی Vercel بدون GMAIL_REFRESH_TOKEN)، همان ایمیل با
+    `GET /api/watchlist/<id>/new?format=html` در مرورگر باز و خوانده می‌شود؛
+    پس «فقط تازه‌ها» بی‌ایمیل هم قابل استفاده است و کاربر دست‌خالی نمی‌ماند.
+    """
+    fresh = only_new_leads(run_id, limit=max(int(limit), 1) * 4)
     top = fresh[:max(1, int(limit))]
+    payload = delivery.collect(run_id, segment=None, limit=max(1, min(len(fresh), int(limit))))
     payload["leads"] = top
     payload["shown"] = len(top)
     payload["scope_total"] = len(fresh)
@@ -239,23 +233,63 @@ def deliver(run_id: str, watch_id: str, *, limit: int = 200,
         or "منطقه"
     )
     niche = (item or {}).get("niche_query") or "همهٔ کسب‌وکارها"
-    subject = f"👁 دیدبان هفتگی — {len(fresh)} تازه | {niche} · {area}"
-    text = delivery.render_text(payload)
-    html = delivery.render_html(payload)
-    attachment = delivery.build_attachment(payload, with_xlsx=bool(top))
-    recipients = _recipients(item or {})
+    return {
+        "fresh": fresh, "top": top, "payload": payload, "area": area, "niche": niche,
+        "subject": f"👁 دیدبان هفتگی — {len(fresh)} تازه | {niche} · {area}",
+        "text": delivery.render_text(payload),
+        "html": delivery.render_html(payload),
+        "recipients": _recipients(item or {}),
+        "attachment": delivery.build_attachment(payload, with_xlsx=bool(top)),
+    }
+
+
+def email_status() -> dict:
+    """وضعیت مسیر ایمیل: «آماده» یا «فقط پیش‌نمایش در برنامه»."""
+    transport = str(config.email_transport() or "none").lower()
+    recipients = [x for x in config.digest_recipients() if x]
+    ready = transport != "none"
+    return {
+        "transport": transport,
+        "ready": ready,
+        "recipients": recipients,
+        "hint": "" if ready else (
+            "ارسال ایمیل تنظیم نشده (GMAIL_REFRESH_TOKEN یا GMAIL_APP_PASSWORD). "
+            "تا آن موقع، ایمیل «فقط تازه‌ها» در برنامه ساخته و قابل مشاهده/دانلود است."),
+    }
+
+
+def deliver(run_id: str, watch_id: str, *, limit: int = 200,
+            dry_run: bool | None = None) -> dict:
+    """فقط تازه‌های یک اجرای دیدبانی را ایمیل می‌کند (بدون تکرار)."""
+    item = storage.get_watch(watch_id) if watch_id else None
+    composed = _compose(item, run_id, limit=limit)
+    fresh, top = composed["fresh"], composed["top"]
+    subject = composed["subject"]
+    if item:
+        storage.update_watch(watch_id, last_new=len(fresh))
+    if not fresh:
+        result = {"status": "empty", "kind": "watch", "run_id": run_id,
+                  "watch": watch_id, "shown": 0, "scope_total": 0,
+                  "reason": "no_new_leads", "email": email_status()}
+        storage.log_delivery(kind="watch", channel="email", target="", status="skipped",
+                             subject="", detail={**result})
+        return result
+
+    attachment = composed["attachment"]
+    recipients = composed["recipients"]
     if not recipients:
         result = {"status": "skipped", "kind": "watch", "reason": "no_recipient",
                   "run_id": run_id, "watch": watch_id, "subject": subject,
-                  "shown": len(top), "scope_total": len(fresh)}
+                  "shown": len(top), "scope_total": len(fresh), "email": email_status()}
         storage.log_delivery(kind="watch", channel="email", target="", status="skipped",
                              subject=subject, detail={**result})
         return result
     result = delivery.send_email(
-        recipients, subject, html, text,
+        recipients, subject, composed["html"], composed["text"],
         [attachment] if attachment else None, dry_run=dry_run)
     result.update({"kind": "watch", "run_id": run_id, "watch": watch_id,
-                   "subject": subject, "shown": len(top), "scope_total": len(fresh)})
+                   "subject": subject, "shown": len(top), "scope_total": len(fresh),
+                   "email": email_status()})
     storage.log_delivery(kind="watch", channel="email", target=result.get("target", ""),
                          subject=subject, status=result.get("status", "sent"),
                          detail={"shown": len(top), "scope_total": len(fresh),
@@ -263,6 +297,43 @@ def deliver(run_id: str, watch_id: str, *, limit: int = 200,
                                  "path": result.get("path"), "run_id": run_id,
                                  "watch": watch_id})
     return result
+
+
+def preview(watch_id: str, *, limit: int = 200) -> dict:
+    """ایمیل «فقط تازه‌های آخرین اجرا» را برای نمایش/دانلود می‌سازد (بدون ارسال)."""
+    item = storage.get_watch(watch_id)
+    if not item:
+        raise ValueError("دیدبان پیدا نشد.")
+    run_id = str(item.get("last_run_id") or "")
+    composed = _compose(item, run_id, limit=limit)
+    status = email_status()
+    text = (f"{composed['subject']}\n\n{composed['text']}"
+            if composed["fresh"] else "")
+    return {
+        "watch": item,
+        "run_id": run_id,
+        "count": len(composed["fresh"]),
+        "subject": composed["subject"] if composed["fresh"] else "",
+        "html": composed["html"] if composed["fresh"] else "",
+        "text": text,
+        "recipients": composed["recipients"],
+        "email": status,
+        "reason": "" if composed["fresh"] else (
+            "هیچ اجرایی برای این دیدبان ثبت نشده." if not run_id
+            else "آخرین اجرا هیچ لید تازه‌ای نداشت."),
+    }
+
+
+def deliver_last(watch_id: str, *, limit: int = 200,
+                 dry_run: bool | None = None) -> dict:
+    """ارسال (یا ساخت) ایمیل «فقط تازه‌های آخرین اجرا» — دکمهٔ «✉️ ایمیل تازه‌ها»."""
+    item = storage.get_watch(watch_id)
+    if not item:
+        raise ValueError("دیدبان پیدا نشد.")
+    run_id = str(item.get("last_run_id") or "")
+    if not run_id:
+        raise ValueError("این دیدبان هنوز اجرایی ندارد؛ اول «همین حالا بگرد» را بزن.")
+    return deliver(run_id, watch_id, limit=limit, dry_run=dry_run)
 
 
 def maybe_deliver(run_id: str, request: dict, analytics_pack: dict | None = None,
@@ -302,4 +373,7 @@ def overview(now: float | None = None) -> dict:
         "last_delivery": last,
         "next_due_at": min([float(w["next_run_at"]) for w in items
                             if w.get("active") and w.get("next_run_at")], default=None),
+        # آیا ایمیل واقعاً ارسال می‌شود یا فقط ساخته می‌شود؟ رابط با همین تصمیم
+        # می‌گیرد که «✉️ ایمیل تازه‌ها» بفرستد یا «👁 پیش‌نمایش» باز کند.
+        "email": email_status(),
     }

@@ -81,7 +81,9 @@
     }
     return r.json();
   }
-  function jget(url) { return fetch(url, { headers: authHeaders() }).then(ok); }
+  // cache: "no-store" — پاسخ‌ها زنده‌اند؛ هیچ لایهٔ کشی نباید فهرست دیدبان/اجرا را
+  // کهنه نشان دهد (سرور هم Cache-Control: no-store می‌فرستد؛ این تور ایمنی مرورگر است).
+  function jget(url) { return fetch(url, { headers: authHeaders(), cache: "no-store" }).then(ok); }
   function jsend(url, method, body) {
     return fetch(url, { method: method, headers: authHeaders({ "content-type": "application/json" }), body: JSON.stringify(body || {}) }).then(ok);
   }
@@ -227,6 +229,18 @@
     tickWatch: function () {
       if (S.mode === "demo") return Promise.resolve({ due: 0, queued: [] });
       return jget("api/watchlist/tick?limit=5");
+    },
+    watchMail: function (id) {
+      if (S.mode === "demo") return Promise.resolve({ status: "demo", shown: 0 });
+      return jsend("api/watchlist/" + encodeURIComponent(id) + "/deliver", "POST", {});
+    },
+    watchNew: function (id) {
+      if (S.mode === "demo") return Promise.resolve({ leads: [], count: 0, run_id: "" });
+      return jget("api/watchlist/" + encodeURIComponent(id) + "/new?limit=50");
+    },
+    /* نشانی ایمیل «فقط تازه‌ها» — بدون Gmail هم در مرورگر باز/دانلود می‌شود. */
+    watchPreviewUrl: function (id) {
+      return "api/watchlist/" + encodeURIComponent(id) + "/new?format=html&limit=200";
     },
     continueScan: function (runId) {
       if (S.mode === "demo") return Promise.resolve({ done: true, demo: true });
@@ -731,14 +745,22 @@
     var last = w.last_run_at
       ? "آخرین اجرا: " + esc(ago(new Date(w.last_run_at * 1000).toISOString()))
       : "هنوز اجرا نشده";
+    var mailReady = !!(S.watchEmail && S.watchEmail.ready);
+    var mailChip = mailReady
+      ? '<span class="badge ok">ایمیل وصل است ✉️</span>'
+      : '<span class="badge muted">ایمیل تنظیم نشده · پیش‌نمایش در برنامه</span>';
     return '<article class="watch-item' + (w.due ? " is-due" : "") + '">' +
       "<b>" + esc(w.label || "") + "</b>" +
       "<small>هر " + fa(w.interval_days || 7) + " روز · " +
       (w.active ? (w.due ? "🔔 " : "✅ ") : "⏸ خاموش ") + esc(days) + "</small>" +
       "<small>" + last + " · تازه‌هاش: " + fa(w.last_new || 0) + "</small>" +
+      "<small>" + mailChip + "</small>" +
       '<div class="watch-acts">' +
       '<button class="chip" data-act="watch-run" data-id="' + esc(w.id) + '">▶️ همین حالا بگرد</button>' +
       '<button class="chip" data-act="watch-new" data-id="' + esc(w.id) + '">✨ تازه‌هاش</button>' +
+      '<button class="chip" data-act="watch-mail" data-id="' + esc(w.id) + '">' +
+        (mailReady ? "✉️ ایمیل تازه‌ها" : "✉️ ساخت ایمیل تازه‌ها") + '</button>' +
+      '<button class="chip" data-act="watch-preview" data-id="' + esc(w.id) + '">👁 پیش‌نمایش</button>' +
       '<button class="chip" data-act="watch-del" data-id="' + esc(w.id) + '">🗑 حذف</button>' +
       "</div></article>";
   }
@@ -747,6 +769,7 @@
     if (!box) return;
     box.innerHTML = N.skeletonCards(2);
     API.watchlist().then(function (j) {
+      S.watchEmail = (j && j.email) || {};
       var items = (j && j.items) || [];
       if (!items.length) {
         box.innerHTML = '<div class="empty"><span class="ico">👁</span><b>هنوز دیدبانی نساختی</b>' +
@@ -760,6 +783,9 @@
         if (j.due_now) bits.push(fa(j.due_now) + " تا امروز نوبتشونه");
         var lastMail = (j.last_delivery || {}).subject;
         if (lastMail) bits.push("آخرین ایمیل: " + lastMail);
+        if (items.length && S.watchEmail && !S.watchEmail.ready) {
+          bits.push("ایمیل ارسال نمی‌شود — «پیش‌نمایش» را بزن");
+        }
         note.textContent = items.length ? bits.join(" · ") : "";
       }
     }, function (e) {
@@ -806,6 +832,16 @@
       S.filters.run_id = j.run_id || "";
       S.filters.fresh = "new";
       N.setTab("leads");
+    }, function (e) { N.toast(e.message, "err"); });
+  }
+  function watchMail(id) {
+    N.toast("ایمیل «فقط تازه‌ها» رو می‌سازم…");
+    API.watchMail(id).then(function (j) {
+      if (j.status === "sent") N.toast("ایمیل رفت ✉️ (" + fa(j.shown || 0) + " تازه)", "ok");
+      else if (j.status === "dry_run") N.toast("ایمیل ساخته شد (" + fa(j.shown || 0) + " تازه) — مسیر ایمیل تنظیم نیست، «پیش‌نمایش» رو ببین", "ok");
+      else if (j.status === "empty") N.toast("آخرین اجرا لید تازه‌ای نداشت ✅", "ok");
+      else N.toast("ایمیل ارسال نشد: " + (j.reason || j.status || "نامشخص"), "err");
+      loadWatches();
     }, function (e) { N.toast(e.message, "err"); });
   }
   function watchTick() {
@@ -1358,6 +1394,11 @@
       if (act === "watch-save") { saveWatch(); return; }
       if (act === "watch-new") { watchNew(el.dataset.id); return; }
       if (act === "watch-tick") { watchTick(); return; }
+      if (act === "watch-mail") { watchMail(el.dataset.id); return; }
+      if (act === "watch-preview") {
+        window.open(API.watchPreviewUrl(el.dataset.id), "_blank", "noopener");
+        return;
+      }
       if (act === "watch-run") {
         N.toast("دیدبان رو فرستادم برای اجرا…", "ok");
         API.runWatch(el.dataset.id).then(function () { loadWatches(); },

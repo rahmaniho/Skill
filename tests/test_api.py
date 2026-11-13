@@ -760,7 +760,55 @@ class ApiTestCase(unittest.TestCase):
         self.assertGreater(moved["next_run_at"], time.time() + 6 * 86400)
         self.post(f"/api/watchlist/{watch_id}", method="DELETE")
 
+    def test_26c_watchlist_email_preview_and_send(self):
+        """ایمیل «فقط تازه‌ها» بدون Gmail هم ساخته و خوانده می‌شود (format=html)."""
+        status, data = self.post("/api/watchlist", {"city": "یزد", "niche_query": "کافه",
+                                                   "note": "afsharib73@gmail.com"})
+        self.assertEqual(status, 201)
+        watch_id = data["watch"]["id"]
+        self.addCleanup(storage.delete_run, "watch-mail-run")
+        storage.create_run({"id": "watch-mail-run", "created_at": time.time(),
+                            "status": "done", "city": "یزد", "niche_fa": "کافه",
+                            "total": 1,
+                            "analytics": {"scan": {"full": True, "total": 1, "done": 1,
+                                                   "remaining": [], "tiles": []}}})
+        storage.save_leads("watch-mail-run", [{
+            "place_id": "osm:node/watch-mail-1", "title": "کافهٔ تست ایمیل",
+            "category": "کافه", "city": "یزد", "address": "یزد", "score": 61,
+            "segment": "warm", "phone": "", "website": "", "instagram": "",
+            "facebook": "", "linkedin": "", "emails": "", "latitude": "31.89",
+            "longitude": "54.36", "channel": "visit", "status": "new"}])
+        storage.update_watch(watch_id, last_run_id="watch-mail-run")
+
+        status, listing = self.get("/api/watchlist")
+        self.assertEqual(status, 200)
+        self.assertIn("email", listing)
+        self.assertFalse(listing["email"]["ready"])          # تست‌ها بدون Gmail
+        self.assertTrue(listing["email"]["hint"])
+
+        status, mail = self.get(f"/api/watchlist/{watch_id}/new?format=html&limit=10")
+        self.assertEqual(status, 200)
+        html = mail.decode("utf-8")
+        self.assertIn("کافهٔ تست ایمیل", html)
+
+        status, text = self.get(f"/api/watchlist/{watch_id}/new?format=text")
+        self.assertEqual(status, 200)
+        self.assertIn("دیدبان", text.decode("utf-8"))
+
+        status, sent = self.post(f"/api/watchlist/{watch_id}/deliver", {})
+        self.assertEqual(status, 200)
+        self.assertEqual(sent["status"], "dry_run")          # بدون تنظیم Gmail → فایل .eml
+        self.assertGreaterEqual(sent["shown"], 1)
+        self.assertEqual(sent["watch"], watch_id)
+
+        status, empty = self.post(f"/api/watchlist/{watch_id}/deliver", {"limit": 1})
+        self.assertEqual(status, 200)                        # ایمیل دوباره قابل ساخت است
+        self.assertIn(empty["status"], ("dry_run", "empty"))
+        self.post(f"/api/watchlist/{watch_id}", method="DELETE")
+
     def test_27_run_leads_fresh_filter_is_server_side(self):
+        self.addCleanup(storage.delete_run, "fresh-new")
+        self.addCleanup(storage.delete_run, "fresh-old")
         for run_id, ids in (("fresh-old", ["osm:node/1", "osm:node/2"]),
                             ("fresh-new", ["osm:node/2", "osm:node/3"])):
             storage.create_run({"id": run_id, "created_at": time.time(), "status": "done",
