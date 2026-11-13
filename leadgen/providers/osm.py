@@ -645,14 +645,39 @@ STREET_TYPES = {"highway", "road", "residential", "pedestrian", "footway", "serv
                 "locality", "town", "village", "city"}
 
 
+def _squash(text: str) -> str:
+    return " ".join((text or "").replace("\u200c", " ").split()).strip().lower()
+
+
+def _name_matches(query: str, display_name: str) -> bool:
+    """آیا نتیجهٔ Nominatim واقعاً همان خیابان/محله است؟ (نه هم‌نام در جای دیگر)"""
+    wanted = _squash(_strip_street_prefix(query.split("،")[0].split(",")[0]))
+    got = _squash(display_name)
+    if not wanted or not got:
+        return False
+    return wanted in got
+
+
+def _strip_street_prefix(text: str) -> str:
+    for prefix in ("خیابان ", "بلوار ", "بزرگراه ", "اتوبان ", "کوچه ", "میدان ",
+                   "بن‌بست ", "بن بست ", "بازار "):
+        if text.startswith(prefix) and len(text) > len(prefix) + 2:
+            return text[len(prefix):].strip()
+    return text
+
+
 def lookup_area(query: str, *, bbox: list[float] | None = None,
                 country: str | None = None, timeout: float = 12.0,
-                limit: int = 5) -> dict:
+                limit: int = 5, merge: bool = False) -> dict:
     """جعبهٔ واقعیِ یک خیابان/محله را از OSM می‌گیرد (نه یک نقطهٔ سرانگشتی).
 
     چرا؟ «خیابان ولیعصر» ۱۲ کیلومتر طول دارد؛ اگر با شعاع ۸۰۰ متری اسکراب شود،
     فقط یک تکه‌اش دیده می‌شود. Nominatim برای خیابان‌ها `boundingbox` واقعی
     می‌دهد؛ همان را برمی‌گردانیم تا پایپ‌لاین کل خیابان را بگردد.
+
+    `merge=True` (برای خیابان/محله): همهٔ تکه‌های هم‌نام را در یک جعبه جمع می‌کند.
+    Nominatim برای خیابان‌های بلند (ولیعصر تهران، ۱۷ کیلومتر) معمولاً **یک تکه**
+    را برمی‌گرداند؛ بدون جمع‌کردن، فقط ۱ کیلومتر از خیابان اسکراب می‌شد.
 
     خروجی: `{"bbox": [s,n,w,e], "lat","lon","label","type","class"}` یا `{}`.
     """
@@ -676,6 +701,7 @@ def lookup_area(query: str, *, bbox: list[float] | None = None,
         raise OSMDownError(f"جست‌وجوی محدوده در OSM ناموفق بود: {exc}") from exc
     if not isinstance(data, list):
         return {}
+    picked: list[dict] = []
     for item in data:
         if not isinstance(item, dict):
             continue
@@ -690,7 +716,7 @@ def lookup_area(query: str, *, bbox: list[float] | None = None,
             continue
         if not (north > south and east > west):
             continue
-        return {
+        detail = {
             "bbox": [round(south, 6), round(north, 6), round(west, 6), round(east, 6)],
             "lat": _float_or_none(item.get("lat")),
             "lon": _float_or_none(item.get("lon")),
@@ -699,7 +725,23 @@ def lookup_area(query: str, *, bbox: list[float] | None = None,
             "osm_type": str(item.get("osm_type") or ""),
             "osm_id": item.get("osm_id"),
         }
-    return {}
+        if not merge:
+            return detail
+        picked.append(detail)
+    if not picked:
+        return {}
+    if len(picked) == 1:
+        return picked[0]
+    # تکه‌های هم‌نام را یکی کن. اگر نام تطبیق نکند (نتیجهٔ نامرتبط)، همان اولی.
+    named = [d for d in picked if _name_matches(query, d["label"])] or picked[:1]
+    merged = [
+        min(d["bbox"][0] for d in named), max(d["bbox"][1] for d in named),
+        min(d["bbox"][2] for d in named), max(d["bbox"][3] for d in named),
+    ]
+    first = dict(named[0])
+    first["bbox"] = [round(x, 6) for x in merged]
+    first["segments"] = len(named)
+    return first
 
 
 def _float_or_none(value) -> float | None:
