@@ -518,6 +518,10 @@ class OSMEngine:
         # گزارش «اسکراب کامل»: هر کاشی/شهر چه تعداد ردیف داد (لایهٔ بالا با این
         # گزارش می‌گوید کدام بخش‌ها انجام شده و کدام مانده — پایهٔ «ادامهٔ اسکراب»).
         self.tile_coverage: list[dict] = []
+        # آیا جست‌وجوی اصلی (تگ‌محور) کل جعبه را کامل دید؟ اگر سقف نتایج پر نشده
+        # باشد، پرسیدن دوبارهٔ کاشی‌های همان جعبه فقط وقت صف را می‌خورد و دادهٔ
+        # تازه‌ای ندارد (همان داده با یک فیلتر باریک‌تر).
+        self.main_complete = False
 
     def health(self) -> dict:
         from .providers import osm
@@ -667,6 +671,7 @@ class OSMEngine:
                     for box_label, box in targets:
                         _cover(box_label, box)
                     found_map: dict[str, dict] = {}
+                    overpass_limit_used = 0
                     for box_index, (box_label, box) in enumerate(targets, start=1):
                         box_left = budget - (time.time() - started)
                         if box_left < 6:
@@ -682,10 +687,12 @@ class OSMEngine:
                                          "message": f"[OSM] {box_label or 'شهر'} "
                                                     f"({box_index}/{len(targets)}) — جست‌وجوی تگ‌محور"})
                         attempted.add(box_label)
+                        limit_now = min(osm.overpass_limit_for(box), per_box_cap)
+                        overpass_limit_used = max(overpass_limit_used, int(limit_now))
                         try:
                             got = osm.overpass_search_area(
                                 filters, bbox=box,
-                                limit=min(osm.overpass_limit_for(box), per_box_cap),
+                                limit=limit_now,
                                 timeout=min(float(config.OVERPASS_TIMEOUT),
                                             max(6.0, share - 2)),
                                 input_id=(niche_id or (terms[0] if terms else "")),
@@ -704,6 +711,20 @@ class OSMEngine:
                         if len(found_map) >= cap_rows:
                             break
                     found = list(found_map.values())
+                    # سقف پر نشد → همهٔ کسب‌وکارهای تگ‌شدهٔ جعبه آمدند؛ کاشی‌های
+                    # همان جعبه دیگر دادهٔ تازه‌ای ندارند. شرط‌های احتیاطی تا
+                    # «بریدگیِ سکوتی» (تمام‌شدن بودجه وسط پرسش) را کامل حساب نکنیم:
+                    #   • جعبه کوچک باشد (واگرنه overpass_search_area خودش تکه‌تکه
+                    #     می‌کند و ممکن است نیمه‌کاره برگردد)
+                    #   • بعد از این گذر هنوز بودجه مانده باشد
+                    span_main = (max(abs(float(bbox[1]) - float(bbox[0])),
+                                     abs(float(bbox[3]) - float(bbox[2])))
+                                 if bbox and len(bbox) == 4 else 9.0)
+                    if found and not sweep_boxes and overpass_limit_used \
+                            and len(found) < overpass_limit_used \
+                            and span_main < 0.8 \
+                            and (budget - (time.time() - started)) >= 6:
+                        self.main_complete = True
                     if found:
                         used_overpass = True
                         tried.append("overpass")
@@ -912,11 +933,26 @@ class OSMEngine:
                 except (TypeError, ValueError):
                     return False
 
+            def _inside(inner, outer) -> bool:
+                """آیا جعبهٔ کاشی کاملاً داخل جعبهٔ اصلی است؟"""
+                try:
+                    return (float(outer[0]) <= float(inner[0]) and float(inner[1]) <= float(outer[1])
+                            and float(outer[2]) <= float(inner[2]) and float(inner[3]) <= float(outer[3]))
+                except (TypeError, ValueError, IndexError):
+                    return False
+
             for tile_index, tile in enumerate(tiles, start=1):
                 if bbox and _same_box(tile["bbox"], bbox):
                     # کل شهر/خیابان یک‌جا پرسیده شد و همان نتایج در دست است؛
                     # این کاشی «پوشش کامل» دارد و دوباره شبکه را اذیت نمی‌کنیم.
                     self.tile_coverage.append({"label": tile["label"], "rows": len(rows),
+                                               "via": "main", "error": ""})
+                    tried.append(f"tile:{tile['label']}")
+                    continue
+                if bbox and self.main_complete and _inside(tile["bbox"], bbox):
+                    # جست‌وجوی اصلیِ همین جعبه کامل بود (سقف پر نشد) → این کاشی
+                    # از همان داده پوشیده است؛ پرسیدن دوباره فقط وقت صف می‌برد.
+                    self.tile_coverage.append({"label": tile["label"], "rows": 0,
                                                "via": "main", "error": ""})
                     tried.append(f"tile:{tile['label']}")
                     continue
