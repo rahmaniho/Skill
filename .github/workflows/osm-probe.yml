@@ -14,6 +14,10 @@ on:
         description: "صنف (مثلاً رستوران، دندانپزشکی)"
         required: false
         default: ""
+      street:
+        description: "خیابان برای سنجش پوشش کامل (مثلاً ولیعصر) — خالی = سنجش شهر"
+        required: false
+        default: ""
   # اجرای خودکار وقتی موتور داده تغییر می‌کند
   push:
     paths:
@@ -41,10 +45,13 @@ jobs:
           OSM_MODE: hybrid
           CITY: ${{ github.event.inputs.city }}
           NICHE: ${{ github.event.inputs.niche }}
+          STREET: ${{ github.event.inputs.street }}
         run: |
           set -o pipefail
           set +e
-          if [ -n "$CITY" ]; then
+          if [ -n "$STREET" ]; then
+            python3 scripts/osm_probe.py --city "${CITY:-تهران}" --street "$STREET" --json 2>&1 | tee probe.log
+          elif [ -n "$CITY" ]; then
             python3 scripts/osm_probe.py --city "$CITY" --niche "$NICHE" --json 2>&1 | tee probe.log
           else
             python3 scripts/osm_probe.py --json 2>&1 | tee probe.log
