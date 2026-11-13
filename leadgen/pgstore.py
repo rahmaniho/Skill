@@ -480,19 +480,24 @@ def get_street_cache(city_key: str, street: str) -> dict | None:
     if key.endswith("|"):
         return None
     rows: list = []
+    # اول با دو ستون ساده (شهر + نام نرمال‌شده). فیلتر «key» به‌خاطر نویسهٔ «|»
+    # در بعضی نسخه‌های PostgREST به‌عنوان جداکنندهٔ منطقی تفسیر می‌شود.
+    first_error: Exception | None = None
     try:
-        rows, _ = _client().rows("street_cache", select="*", limit=1, key=f"eq.{key}")
-    except CloudError:
+        rows, _ = _client().rows(
+            "street_cache", select="*", limit=1,
+            city_key=f"eq.{(city_key or '').strip().lower()}",
+            street=f"eq.{storage.normalize_street_name(street)}")
+    except CloudError as exc:
         rows = []
+        first_error = exc
     if not rows:
-        # اگر فیلتر «key» (به‌خاطر نویسهٔ |) جواب نداد، با دو ستون ساده بگرد؛
-        # نام خیابان در جدول همان شکل نرمال‌شده ذخیره می‌شود.
         try:
-            rows, _ = _client().rows(
-                "street_cache", select="*", limit=1,
-                city_key=f"eq.{(city_key or '').strip().lower()}",
-                street=f"eq.{storage.normalize_street_name(street)}")
-        except CloudError:
+            rows, _ = _client().rows("street_cache", select="*", limit=1, key=f"eq.{key}")
+        except CloudError as exc:
+            # جدول نبود → None بی‌صدا؛ خطای دیگر را بالا بده تا در کارنامه دیده شود.
+            if first_error is not None and "does not exist" not in str(exc).lower():
+                raise
             return None
     if not rows:
         return None
