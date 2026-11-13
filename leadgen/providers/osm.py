@@ -536,6 +536,15 @@ def _box_overlaps(a: list[float], b: list[float], pad: float = 0.0) -> bool:
                 a[3] < b[2] - pad or b[3] < a[2] - pad)
 
 
+# ریشه‌های عمومی: «شهید بهشتی» و «شهید مطهری» دو خیابان‌اند، نه یک محور. برای
+# این ریشه‌ها هرگز «بلندترین خوشه» را جای تکهٔ Nominatim نمی‌گذاریم.
+_GENERIC_ROOT_WORDS = {
+    "شهید", "شهیدان", "امام", "امیر", "آیت", "ایت", "سید", "میر", "حاج",
+    "دکتر", "استاد", "مهندس", "علامه", "بزرگ", "کوچک", "جدید", "قدیم",
+    "بازار", "شهرک", "دانشگاه", "پیامبر", "ملت", "کارگر", "فرهنگ", "آزادی",
+}
+
+
 def _bbox_gap(a: list[float], b: list[float]) -> float:
     """فاصلهٔ دو جعبه بر حسب درجه (۰ = هم‌پوشان یا چسبیده)."""
     return max(max(b[0] - a[1], a[0] - b[1], 0.0),
@@ -792,6 +801,13 @@ def overpass_street_bbox(names: list[str], *, bbox: list[float], timeout: float 
                 if diag is not None:
                     diag.append(f"family: {joined['ways'] - base_ways} تکه از خیابان‌های "
                                 f"هم‌خانوادهٔ «{pats[0]}» به نوار اضافه شد")
+            else:
+                # چیزی نچسبید: یا کوچهٔ هم‌نام است یا تکهٔ Nominatim خودش یک تکهٔ
+                # دورافتاده از محور اصلی است. در حالت دوم محور اصلی را برمی‌داریم.
+                axis = _family_axis(family, found, root=_family_root(pats[0]),
+                                    diag=diag)
+                if axis:
+                    found = axis
     if found and ttl > 0:
         with _OVERPASS_CACHE_LOCK:
             if len(_STREET_CACHE) >= 256:
@@ -909,6 +925,87 @@ def _join_family(found: dict, family: list[dict]) -> dict:
         "siblings": len({w.get("name") for w in family if w.get("name")}),
     })
     return result
+
+
+def _way_clusters(ways: list[dict], gap: float = 0.004) -> list[dict]:
+    """wayهای هم‌خانواده → خوشه‌های به‌هم‌پیوسته (بلندترین خوشه اول)."""
+    pool = [w for w in (ways or []) if w.get("box")]
+    clusters: list[dict] = []
+    while pool:
+        seed = pool.pop(0)
+        box = list(seed["box"])
+        members = [seed]
+        length = float(seed.get("length_km") or 0.0)
+        grew = True
+        while grew:
+            grew = False
+            for way in list(pool):
+                if _bbox_gap(way["box"], box) <= gap:      # ≤ ~۴۵۰ متر: پیوسته
+                    pool.remove(way)
+                    members.append(way)
+                    length += float(way.get("length_km") or 0.0)
+                    box = [min(box[0], way["box"][0]), max(box[1], way["box"][1]),
+                           min(box[2], way["box"][2]), max(box[3], way["box"][3])]
+                    grew = True
+        clusters.append({"ways": members, "box": box, "length_km": round(length, 3)})
+    clusters.sort(key=lambda c: c["length_km"], reverse=True)
+    return clusters
+
+
+def _axis_km(box: list[float]) -> float:
+    """بلندترین بُعد یک جعبه بر حسب کیلومتر."""
+    height = (float(box[1]) - float(box[0])) * 111.0
+    width = ((float(box[3]) - float(box[2])) * 111.0
+             * max(0.2, abs(math.cos(math.radians((float(box[0]) + float(box[1])) / 2)))))
+    return max(height, width)
+
+
+def _family_axis(family: list[dict], found: dict, *, root: str,
+                 max_gap_km: float = 15.0, diag: list | None = None) -> dict:
+    """تکهٔ کوتاهِ Nominatim را با بلندترین خوشهٔ هم‌خانواده عوض می‌کند.
+
+    چرا؟ Nominatim «چهارباغ» اصفهان را روی یک تکهٔ ۰٫۸ کیلومتریِ شرق شهر می‌بندد،
+    در حالی که محور واقعی (عباسی/بالا/پایین/خواجو) چند کیلومتر آن‌طرف‌تر است و
+    هیچ تکهٔ چسبیده‌ای ندارد؛ پس ادغام پیوسته هیچ‌وقت کل محور را نمی‌ساخت.
+    این‌جا فقط وقتی جابه‌جا می‌شویم که ریشهٔ نام «اختصاصی» باشد (نه شهید/امام…)،
+    تکهٔ فعلی کمتر از ۲ کیلومتر باشد و خوشهٔ دیگر دست‌کم دو برابر آن و ≥۱٫۵
+    کیلومتر باشد و در همان شهر (≤۱۵ کیلومتر) بماند.
+    """
+    plain = "".join(str(root or "").split())
+    if len(plain) < 5 or plain in _GENERIC_ROOT_WORDS:
+        return {}
+    current = float(found.get("length_km") or 0.0)
+    if current >= 2.0:
+        return {}
+    base_box = list(found.get("bbox") or [])
+    if len(base_box) != 4:
+        return {}
+    for cluster in _way_clusters(family):
+        if cluster["length_km"] < 1.5 or cluster["length_km"] < max(2.0, current * 2):
+            continue
+        if _axis_km(cluster["box"]) < 1.0:
+            continue
+        if _bbox_gap(cluster["box"], base_box) * 111.0 > max_gap_km:
+            continue
+        names = {w.get("name") for w in cluster["ways"] if w.get("name")}
+        if not names:
+            continue
+        if diag is not None:
+            diag.append(
+                f"family: تکهٔ Nominatim فقط {current:.1f} کیلومتر بود؛ محور اصلی "
+                f"«{root}» ({cluster['length_km']:.1f} کیلومتر، {len(names)} نام) انتخاب شد")
+        return {
+            "bbox": [round(float(x), 6) for x in cluster["box"]],
+            "boxes": [[round(float(x), 5) for x in w["box"]]
+                      for w in cluster["ways"]][:400],
+            "ways": len(cluster["ways"]),
+            "length_km": round(cluster["length_km"], 2),
+            "anchored": False,
+            "via": "family",
+            "detached": True,
+            "siblings": len(names),
+        }
+    return {}
 
 
 def _bounds_from_elements(data: dict) -> list[list[float]]:

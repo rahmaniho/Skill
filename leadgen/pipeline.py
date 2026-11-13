@@ -409,6 +409,7 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
     cache_used = ""
     wide_diag: list = []
     cache_hit = False
+    detached_axis = False      # محور اصلی جای تکهٔ کوتاه Nominatim نشست
     if found and city_box and len(city_box) == 4:
         seed_box = list(found.get("bbox") or [])
         fresh_limit = float(getattr(config, "STREET_CACHE_DAYS", 14) or 0)
@@ -482,9 +483,19 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
                             wide_box[2] <= nb[2] + 1e-6 and wide_box[3] >= nb[3] - 1e-6)
                 wider = contains and ((wide_box[1] - wide_box[0]) * (wide_box[3] - wide_box[2])
                                       > (nb[1] - nb[0]) * (nb[3] - nb[2]))
+                if not wider and wide.get("detached"):
+                    # تکهٔ Nominatim خودش یک تکهٔ کوتاه و دور از محور اصلی بود
+                    # (مثل «چهارباغ» اصفهان)؛ نوار بلندترِ Overpass همان محور
+                    # واقعی است، حتی اگر آن تکهٔ کوچک را در خود نداشته باشد.
+                    # مقایسه با جعبهٔ Nominatim این‌جا بی‌معنی است: آن جعبه گاهی
+                    # اتحاد چند نتیجهٔ Nominatim و ۱۱ کیلومتر است، در حالی که
+                    # محور واقعی خیابان ۲٫۸ کیلومتر است. معیار: نوارِ معنادار.
+                    wide_span = _span_km(list(wide.get("boxes") or []) or [wide_box])
+                    wider = 1.5 <= wide_span <= 25.0 and int(wide.get("ways") or 0) >= 2
             except (KeyError, TypeError, ValueError):
                 wider = False
             if wider:
+                detached_axis = bool(wide.get("detached"))
                 found = {"bbox": wide_box, "label": (found.get("label") or ""),
                          "streets": int(wide.get("ways") or 0),
                          "boxes": wide.get("boxes") or [],
@@ -565,6 +576,8 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
             memory_row["cache_city"] = cache_city
             memory_row["cache_found"] = bool(cached)
             memory_row["cache_key"] = storage.street_cache_key(cache_city, street_name)
+        if detached_axis:
+            memory_row["axis"] = "main"          # محور واقعی، نه تکهٔ کوتاه Nominatim
         if not cache_hit and wide_diag:
             # عیب‌یابی عملیاتی: چرا نوار کامل نیامد؟ (حداکثر ۴ خط)
             memory_row["diag"] = wide_diag[:4]
@@ -574,6 +587,9 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
     if warnings is not None:
         extra = (f" — {found.get('streets')} قطعهٔ خیابان با همین نام جمع شد"
                  if found.get("streets") else "")
+        if detached_axis:
+            extra += (" — تکهٔ کوتاهِ Nominatim رها و محور اصلیِ همین خیابان "
+                      "(بلندترین خوشهٔ هم‌نام) اسکراب شد")
         if street_partial:
             extra += (" — جست‌وجوی کامل خیابان در Overpass نتیجه نداد؛ "
                       "اگر خیابان بلند است، ممکن است بخشی از آن جا بماند")
