@@ -268,7 +268,14 @@ def _overpass_request(query: str, *, timeout: float, retries: int = 1,
                 with urllib.request.urlopen(req, timeout=min(remaining, budget)) as resp:
                     raw = resp.read()
             except urllib.error.HTTPError as exc:
-                errors.append(f"{host} HTTP {exc.code}")
+                detail = ""
+                if exc.code == 400:
+                    # پیام سرور دقیقاً می‌گوید کجای کوئری غلط است (خطای نگارشی ERE).
+                    try:
+                        detail = exc.read().decode("utf-8", "replace").strip()[:160]
+                    except Exception:                     # noqa: BLE001
+                        detail = ""
+                errors.append(f"{host} HTTP {exc.code}" + (f" ({detail})" if detail else ""))
                 if exc.code in _RETRYABLE:
                     _OVERPASS_COOLDOWN[endpoint] = time.monotonic() + _OVERPASS_COOLDOWN_SECONDS
                     if attempt < retries and deadline - time.monotonic() > 3:
