@@ -1029,7 +1029,8 @@ def get_street_cache(city_key: str, street: str) -> dict | None:
     data["bbox"] = _json_or(data.get("bbox"), [])
     data["boxes"] = _json_or(data.get("boxes"), [])
     updated = float(data.get("updated_at") or 0)
-    data["age_days"] = round(max(0.0, (time.time() - updated) / 86400.0), 1)
+    # دو رقم اعشار تا «۳ دقیقه پیش» صفر نشود و تازه‌بودن اشتباه رد نشود.
+    data["age_days"] = round(max(0.0, (time.time() - updated) / 86400.0), 2)
     return data
 
 

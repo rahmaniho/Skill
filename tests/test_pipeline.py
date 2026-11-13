@@ -1685,6 +1685,18 @@ class StreetGeometryMemoryTests(unittest.TestCase):
         self.assertEqual("cache", request.street_memory[0]["source"],
                          "کارنامه باید بگوید نوار از حافظه آمد")
 
+    def test_memory_from_a_few_minutes_ago_is_fresh(self):
+        """سن ۰٫۰ روز (سه دقیقه پیش) نباید «کهنه» حساب شود — باگ or/9999."""
+        request = self._request()
+        boxes = [[35.6600, 35.7600, 51.4000, 51.4300]]
+        cached = {"bbox": [35.6600, 35.7600, 51.4000, 51.4300], "boxes": boxes,
+                  "ways": 57, "length_km": 14.7, "age_days": 0.0}
+        with mock.patch("leadgen.providers.osm.overpass_street_bbox") as overpass:
+            self._run(request, cached=cached)
+        overpass.assert_not_called()
+        self.assertEqual("cache", request.street_memory[0]["source"])
+        self.assertEqual(boxes, request.street_boxes)
+
     def test_stale_memory_rescues_the_run_when_overpass_is_down(self):
         request = self._request()
         boxes = [[35.6600, 35.7600, 51.4000, 51.4300]]
