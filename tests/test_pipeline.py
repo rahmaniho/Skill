@@ -1171,3 +1171,53 @@ class StreetLookupTests(unittest.TestCase):
                 mock.patch.object(osm, "_throttle", return_value=None):
             with self.assertRaises(osm.OSMDownError):
                 osm.lookup_area("خیابان کاشانی یزد", bbox=None)
+
+
+class StreetVariantTests(unittest.TestCase):
+    """«خیابان X» باید با شکل‌های مختلف پرسیده شود تا پیدا شود، نه اینکه خطا بدهد."""
+
+    def test_query_variants_cover_prefixed_and_short_names(self):
+        variants = pipeline._area_query_variants("خیابان کاشانی", "", "یزد")
+        self.assertIn("خیابان کاشانی، یزد", variants)
+        self.assertIn("کاشانی، یزد", variants)
+        self.assertIn("کاشانی", variants)
+        # شهر خالی → فقط شکل‌های نام
+        self.assertEqual(pipeline._area_query_variants("کاشانی", "", ""),
+                         ["کاشانی"])
+
+    def test_refine_uses_next_variant_when_first_returns_nothing(self):
+        request = pipeline.ScrapeRequest.from_dict({
+            "niche_query": "کافه", "city_query": "یزد", "city_key": "yazd",
+            "street": "خیابان کاشانی", "area_level": "street", "engine_mode": "osm"})
+        request.area_label = "خیابان کاشانی، یزد"
+        request.area_unresolved = ["street"]
+        city = {"bbox": [31.70, 32.10, 54.10, 54.60], "country": "IR",
+                "label_local": "یزد"}
+        seen: list[str] = []
+
+        def fake_lookup(query, **kwargs):
+            seen.append(query)
+            if query.startswith("خیابان کاشانی"):
+                return {}                       # Nominatim با نام کامل چیزی نمی‌دهد
+            return {"bbox": [31.8835, 31.8965, 54.3535, 54.3665], "label": query}
+
+        with mock.patch.object(pipeline.config, "OSM_AREA_LOOKUP", True), \
+                mock.patch.object(pipeline.config, "_looks_like_unittest", return_value=False), \
+                mock.patch("leadgen.providers.osm.lookup_area", side_effect=fake_lookup):
+            box = pipeline.refine_area_bbox(request, city, allow_network=True)
+        self.assertEqual(box, [31.8835, 31.8965, 54.3535, 54.3665])
+        self.assertGreaterEqual(len(seen), 2, "باید شکل دوم نام هم پرسیده شود")
+        self.assertEqual(request.area_unresolved, [], "وقتی پیدا شد، «پیدا نشد» پاک می‌شود")
+
+    def test_refine_rejects_city_sized_box_so_only_the_street_is_scraped(self):
+        request = pipeline.ScrapeRequest.from_dict({
+            "niche_query": "کافه", "city_query": "یزد", "city_key": "yazd",
+            "street": "خیابان ناموجود", "area_level": "street", "engine_mode": "osm"})
+        city = {"bbox": [31.70, 32.10, 54.10, 54.60], "country": "IR", "label_local": "یزد"}
+
+        with mock.patch.object(pipeline.config, "OSM_AREA_LOOKUP", True), \
+                mock.patch.object(pipeline.config, "_looks_like_unittest", return_value=False), \
+                mock.patch("leadgen.providers.osm.lookup_area",
+                           return_value={"bbox": [31.70, 32.10, 54.10, 54.60]}):
+            box = pipeline.refine_area_bbox(request, city, allow_network=True)
+        self.assertEqual(box, [], "جعبهٔ هم‌اندازهٔ شهر نباید به‌جای خیابان پذیرفته شود")
