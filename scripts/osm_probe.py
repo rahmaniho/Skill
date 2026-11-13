@@ -184,6 +184,40 @@ def probe_nominatim(query: str) -> dict:
             "labels": [r.get("display_name") for r in rows]}
 
 
+def probe_parts(city: str, street: str, parts: list[str]) -> dict:
+    """آیا پرسیدن «خیابان + محله» تکه‌های مختلف یک خیابان بلند را می‌دهد؟"""
+    area = regions.resolve(city=city)
+    bbox = None
+    if area.get("city_key") and area["city_key"] in geo.CITIES:
+        bbox = [float(x) for x in geo.CITIES[area["city_key"]][3]]
+    bbox = bbox or geo.default_bbox(area["lat"], area["lon"], 0.12)
+    seed = list(osm.lookup_area(f"{street}، {city}", bbox=bbox, country="ir",
+                                limit=5, merge=True).get("bbox") or [])
+    print(f"• پایه («{street}، {city}»): {[round(x, 4) for x in seed] or '—'}")
+    boxes: list[list[float]] = []
+    for part in parts:
+        query = f"{street}، {part}، {city}"
+        try:
+            found = osm.lookup_area(query, bbox=bbox, country="ir", limit=5)
+        except Exception as exc:                         # noqa: BLE001
+            print(f"  ✗ {part}: {type(exc).__name__}")
+            continue
+        box = found.get("bbox") or []
+        if box:
+            boxes.append(box)
+        print(f"  • {part}: {[round(x, 4) for x in box] or '—'} — {found.get('label', '')[:60]}")
+    merged = osm._grow_street_cluster(boxes, seed) if (boxes and seed) else boxes
+    if merged:
+        out = [min(b[0] for b in merged), max(b[1] for b in merged),
+               min(b[2] for b in merged), max(b[3] for b in merged)]
+        span = max(out[1] - out[0], out[3] - out[2]) * 111.0
+        print(f"  ✓ جمع {len(merged)} تکه → {[round(x, 4) for x in out]} ≈ {span:.1f} کیلومتر")
+    else:
+        out = []
+        print("  ✗ چیزی جمع نشد")
+    return {"ok": bool(out), "seed": seed, "boxes": boxes, "bbox": out}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="آزمون دودی موتور دادهٔ OSM")
     parser.add_argument("--city", default="")
@@ -192,10 +226,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--street", default="", help="سنجش پوشش کامل یک خیابان")
     parser.add_argument("--endpoints", action="store_true", help="سنجش آینه‌های Overpass")
     parser.add_argument("--nominatim", default="", help="شمارش تکه‌های یک خیابان در Nominatim")
+    parser.add_argument("--parts", default="",
+                        help="محله‌ها برای تکه‌کردن خیابان: «ونک,تجریش,...» (با --city/--street)")
     parser.add_argument("--coverage", action="store_true",
                         help="کدام آینه دادهٔ تهران/زوریخ دارد؟ (جهانی یا منطقه‌ای)")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+
+    if args.parts:
+        parts = [p.strip() for p in args.parts.split(",") if p.strip()]
+        result = probe_parts(args.city or "تهران", args.street or "ولیعصر", parts)
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result.get("ok") else 1
 
     if args.coverage:
         checks = [
