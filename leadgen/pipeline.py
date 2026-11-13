@@ -369,9 +369,14 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
     if found and city_box and len(city_box) == 4:
         seed_box = list(found.get("bbox") or [])
         fresh_limit = float(getattr(config, "STREET_CACHE_DAYS", 14) or 0)
+        # سن صفر (همین چند دقیقه پیش) با `or` به «خیلی قدیمی» تبدیل می‌شد؛ صریح بخوان.
+        try:
+            cache_age = float(cached["age_days"]) if cached.get("age_days") is not None else 9999.0
+        except (TypeError, ValueError):
+            cache_age = 9999.0
         cache_hit = bool(cache_ok and cached and cached.get("bbox") and cached.get("boxes")
                          and _boxes_overlap(seed_box, cached.get("bbox"))
-                         and float(cached.get("age_days") or 9999) <= fresh_limit)
+                         and cache_age <= fresh_limit)
         if cache_hit:
             # نوار کامل و تازه داریم: نه به Overpass فشار می‌آوریم، نه ریسک تکه‌شدن.
             wide = {"bbox": list(cached.get("bbox") or []),
