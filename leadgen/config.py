@@ -128,10 +128,13 @@ OSM_MODE = (env("OSM_MODE", "hybrid") or "hybrid").lower()
 OVERPASS_ENDPOINTS = [
     url.strip().rstrip("/")
     for url in (env("OVERPASS_ENDPOINT")
-                or "https://overpass-api.de/api/interpreter,"
-                   "https://overpass.osm.ch/api/interpreter,"
+                # سنجش زنده (۱۴ آینه): فقط openstreetmap.fr دادهٔ تهران داشت و سالم بود؛
+                # overpass-api.de مرتب 502 می‌دهد و kumi/private.coffee تایم‌اوت‌اند.
+                or "https://overpass.openstreetmap.fr/api/interpreter,"
+                   "https://overpass-api.de/api/interpreter,"
                    "https://overpass.kumi.systems/api/interpreter,"
-                   "https://overpass.private.coffee/api/interpreter").split(",")
+                   "https://overpass.private.coffee/api/interpreter,"
+                   "https://overpass.osm.ch/api/interpreter").split(",")
     if url.strip()
 ]
 OVERPASS_MIN_INTERVAL = max(0.5, env_float("OVERPASS_MIN_INTERVAL", 1.0))
