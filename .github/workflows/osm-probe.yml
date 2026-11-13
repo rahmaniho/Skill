@@ -18,6 +18,10 @@ on:
         description: "خیابان برای سنجش پوشش کامل (مثلاً ولیعصر) — خالی = سنجش شهر"
         required: false
         default: ""
+      endpoints:
+        description: "سنجش آینه‌های Overpass (1 = بله)"
+        required: false
+        default: ""
   # اجرای خودکار وقتی موتور داده تغییر می‌کند
   push:
     paths:
@@ -46,10 +50,13 @@ jobs:
           CITY: ${{ github.event.inputs.city }}
           NICHE: ${{ github.event.inputs.niche }}
           STREET: ${{ github.event.inputs.street }}
+          ENDPOINTS: ${{ github.event.inputs.endpoints }}
         run: |
           set -o pipefail
           set +e
-          if [ -n "$STREET" ]; then
+          if [ "$ENDPOINTS" = "1" ]; then
+            python3 scripts/osm_probe.py --endpoints --json 2>&1 | tee probe.log
+          elif [ -n "$STREET" ]; then
             python3 scripts/osm_probe.py --city "${CITY:-تهران}" --street "$STREET" --json 2>&1 | tee probe.log
           elif [ -n "$CITY" ]; then
             python3 scripts/osm_probe.py --city "$CITY" --niche "$NICHE" --json 2>&1 | tee probe.log
