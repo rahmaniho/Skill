@@ -721,7 +721,10 @@ class OverpassStreetBBoxTests(unittest.TestCase):
         with mock.patch.object(osm, "_overpass_request", side_effect=[{"elements": []}, boxes]) as call:
             found = osm.overpass_street_bbox(["ولیعصر"], bbox=[35.6, 35.8, 51.2, 51.6])
         self.assertEqual(found["via"], "regex")
-        self.assertIn('way["name"~"^(ولیعصر)$",i]', call.call_args_list[1][0][0])
+        regex_query = call.call_args_list[1][0][0]
+        self.assertIn('way["name"~"^[[:space:]', regex_query)
+        # «ولیعصر» و «ولی عصر» باید یک خیابان حساب شوند (OSM فاصله می‌گذارد)
+        self.assertIn("و[[:space:]\u200c]*ل[[:space:]\u200c]*ی", regex_query)
 
     def test_only_contiguous_segments_join_the_cluster(self):
         """کوچهٔ هم‌نام در محلهٔ دور نباید جعبه را تا انتهای شهر بکشد."""
