@@ -1,0 +1,79 @@
+name: Worker
+
+# ورکر اجراها بیرون از تابع serverless: صفِ Supabase را برمی‌دارد و با موتور
+# واقعی (OSM/Places) تمام می‌کند. چرا؟ Vercel در هر تابع فقط چند ده ثانیه
+# اجازه می‌دهد؛ اجرای کامل یک شهر/خیابان باید جایی اجرا شود که وقت دارد.
+#
+# پیش‌نیاز: Secretهای SUPABASE_URL و SUPABASE_SERVICE_KEY (یا SUPABASE_KEY).
+# اگر تنظیم نشده باشند، اجرا با پیام روشن و بدون خطا رد می‌شود.
+on:
+  workflow_dispatch:
+    inputs:
+      max_jobs:
+        description: "حداکثر تعداد اجرا در این دور (۰ = تا خالی‌شدن صف)"
+        required: false
+        default: "1"
+      engine:
+        description: "موتور: osm | places | auto"
+        required: false
+        default: "osm"
+      deliver:
+        description: "پس از هر اجرا ایمیل بفرست (1 = بله)"
+        required: false
+        default: ""
+  schedule:
+    - cron: "*/20 * * * *"      # پشتیبانِ تپش وب؛ اگر اپ پاسخ ندهد صف نمی‌خوابد
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worker
+  cancel-in-progress: false
+
+jobs:
+  work:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Check credentials
+        id: creds
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        run: |
+          if [ -z "$SUPABASE_URL" ]; then
+            echo "::notice title=worker::SUPABASE_URL تنظیم نشده — ورکر رد شد"
+            echo "ready=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=1" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run one worker round
+        if: steps.creds.outputs.ready == '1'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          LEADGEN_DATA_DIR: /tmp/leadgen-worker
+          LEADGEN_ENGINE: ${{ github.event.inputs.engine || 'osm' }}
+          LEADGEN_ACCESS_CODE: ${{ secrets.LEADGEN_ACCESS_CODE }}
+          MAX_JOBS: ${{ github.event.inputs.max_jobs || '1' }}
+          DELIVER: ${{ github.event.inputs.deliver }}
+        run: |
+          set +e
+          extra=""
+          [ "$DELIVER" = "1" ] && extra="--deliver"
+          python3 -m leadgen.worker --once --max-jobs "$MAX_JOBS" \
+            --engine "${LEADGEN_ENGINE:-osm}" $extra 2>&1 | tee worker.log
+          status=${PIPESTATUS[0]}
+          {
+            echo "### ورکر"
+            echo
+            echo '```'
+            tail -n 30 worker.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
