@@ -510,8 +510,10 @@ def put_street_cache(city_key: str, street: str, *, bbox: list, boxes: list,
         "source": source or "overpass", "updated_at": time.time(),
     }
     try:
-        _client().insert("street_cache", [payload], upsert=True)
-    except CloudError:
+        # کلید اصلی این جدول `key` است، نه `id`؛ بدون on_conflict درست،
+        # PostgREST خطای 42703 می‌دهد و حافظه بی‌صدا خالی می‌ماند.
+        _client().insert("street_cache", [payload], upsert=True, on_conflict="key")
+    except Exception:                      # noqa: BLE001 — کش نباید اجرا را بشکند
         return False
     return True
 
