@@ -1374,6 +1374,23 @@ class StreetCorridorTests(unittest.TestCase):
         self.assertEqual(len(request.street_boxes), 3, "تکه‌های خیابان باید در درخواست بمانند")
         self.assertEqual(request.street_boxes[0], [35.700, 35.710, 51.410, 51.416])
 
+    def test_overpass_corridor_boxes_survive_a_same_size_bbox(self):
+        """اگر Overpass همان جعبهٔ Nominatim را داد، تکه‌های خیابان نباید دور ریخته شوند."""
+        request = pipeline.ScrapeRequest.from_dict({
+            "niche_query": "کافه", "city_query": "تهران", "city_key": "tehran",
+            "street": "خیابان انقلاب", "area_level": "street", "engine_mode": "osm"})
+        box = [35.696, 35.701, 51.391, 51.404]
+        nominatim = {"bbox": box, "label": "خیابان انقلاب، تهران"}
+        overpass = {"bbox": box, "ways": 4, "boxes": [box]}
+        with mock.patch.object(pipeline.config, "OSM_AREA_LOOKUP", True), \
+                mock.patch.object(pipeline.config, "_looks_like_unittest", return_value=False), \
+                mock.patch("leadgen.providers.osm.lookup_area", return_value=dict(nominatim)), \
+                mock.patch("leadgen.providers.osm.overpass_street_bbox", return_value=overpass):
+            pipeline.refine_area_bbox(request, {"bbox": [35.6, 35.9, 51.2, 51.6],
+                                                "country": "IR", "label_local": "تهران"},
+                                      allow_network=True)
+        self.assertEqual([box], request.street_boxes)
+
     def test_city_level_runs_get_no_corridor_filter(self):
         request = pipeline.ScrapeRequest.from_dict({
             "niche_query": "کافه", "city_query": "تهران", "city_key": "tehran",
@@ -1481,6 +1498,38 @@ class MultiStreetTests(unittest.TestCase):
         self.assertEqual(["خیابان ولیعصر"], [a["name"] for a in areas])
         self.assertTrue(any("پیدا نشد" in w and "خیابان خیالی" in w for w in warnings))
         self.assertEqual("خیابان ولیعصر، تهران", request.area_label)
+
+    def test_street_without_overpass_corridor_keeps_its_own_box_and_says_so(self):
+        """اگر Overpass نوار نداد، لیدهای آن خیابان نباید بی‌صدا حذف شوند."""
+        def fake_lookup(query, **kwargs):
+            if "ولیعصر" in query:
+                return {"bbox": [35.700, 35.710, 51.410, 51.414], "label": "ولیعصر"}
+            if "انقلاب" in query:
+                return {"bbox": [35.696, 35.701, 51.391, 51.404], "label": "انقلاب"}
+            return {}
+
+        def fake_overpass(names, **kwargs):
+            if "انقلاب" in " ".join(names):
+                return {}
+            box = list(kwargs.get("near") or [])
+            return {"bbox": box, "ways": 2, "boxes": [box]}
+
+        request = self._request()
+        warnings = []
+        with mock.patch.object(pipeline.config, "OSM_AREA_LOOKUP", True), \
+                mock.patch.object(pipeline.config, "_looks_like_unittest", return_value=False), \
+                mock.patch("leadgen.providers.osm.lookup_area", side_effect=fake_lookup), \
+                mock.patch("leadgen.providers.osm.overpass_street_bbox",
+                           side_effect=fake_overpass):
+            areas = pipeline.resolve_street_areas(request, self._city(),
+                                                  allow_network=True, warnings=warnings)
+        by_name = {a["name"]: a for a in areas}
+        self.assertTrue(by_name["خیابان انقلاب"]["partial"])
+        self.assertEqual([by_name["خیابان انقلاب"]["bbox"]],
+                         by_name["خیابان انقلاب"]["boxes"])
+        self.assertFalse(by_name["خیابان ولیعصر"]["partial"])
+        self.assertEqual(2, len(request.street_boxes))
+        self.assertTrue(any("تکهٔ Nominatim" in w for w in warnings))
 
     def test_all_streets_unresolved_stops_the_run(self):
         request = self._request()
