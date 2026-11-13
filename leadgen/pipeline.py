@@ -733,7 +733,8 @@ def resolve_street_areas(request: "ScrapeRequest", city: dict, *, allow_network:
     missing: list[str] = []
     import copy as _copy
 
-    for name in names:
+    def _probe_one(name: str):
+        """حل محدودهٔ یک خیابان (کپی مستقل؛ برای اجرای موازی امن است)."""
         probe = _copy.copy(request)
         probe.street = name
         probe.streets = []
@@ -746,13 +747,27 @@ def resolve_street_areas(request: "ScrapeRequest", city: dict, *, allow_network:
         if city_fa:
             probe.city_query = city_fa          # وگرنه نام مرکب چندخیابانی به Nominatim می‌رفت
         probe.area_label = f"{name}، {city_fa}".strip(" ،") if city_fa else name
-        probe_warnings: list[str] = []
         try:
             refined = refine_area_bbox(probe, city, allow_network=allow_network,
-                                       warnings=probe_warnings)
+                                       warnings=[])
         except Exception:  # noqa: BLE001 — یک خیابان نباید بقیه را متوقف کند
             refined = []
-        box = list(refined or probe.bbox or [])
+        return name, probe, list(refined or probe.bbox or [])
+
+    # موازی: در میزبان‌های کوتاه‌عمر (Vercel ~۶۰ ثانیه) حل دوم نباید پشت صف
+    # Nominatim/Overpass بماند؛ هر خیابان بودجهٔ زمانی خودش را می‌گیرد.
+    probes: list = []
+    if allow_network and len(names) > 1:
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=min(3, len(names))) as pool:
+                probes = list(pool.map(_probe_one, names))
+        except Exception:  # noqa: BLE001 — اگر thread pool نبود، همان ترتیبی
+            probes = [_probe_one(name) for name in names]
+    else:
+        probes = [_probe_one(name) for name in names]
+
+    for name, probe, box in probes:
         if len(box) != 4:
             missing.append(name)
             continue
