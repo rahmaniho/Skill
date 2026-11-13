@@ -383,6 +383,8 @@ class StreetCacheCloudTests(unittest.TestCase):
         self.assertEqual(body["ways"], 77)
         self.assertEqual(body["source"], "regex")
         self.assertIn("resolution=merge-duplicates", self.transport.last["headers"]["prefer"])
+        self.assertIn("on_conflict=key", self.transport.last["url"],
+                      "کلید اصلی street_cache «key» است، نه id")
 
     def test_get_returns_age_and_boxes(self):
         self.transport.responder = lambda r, rec: FakeResponse([
