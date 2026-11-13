@@ -213,7 +213,8 @@ def probe_overpass_endpoints(candidates: list[str] | None = None, *,
 
 
 def _overpass_request(query: str, *, timeout: float, retries: int = 1,
-                      deadline_s: float | None = None, trip_breaker: bool = True) -> dict:
+                      deadline_s: float | None = None, trip_breaker: bool = True,
+                      per_endpoint_s: float | None = None) -> dict:
     """اجرای کوئری روی آینه‌ها با تلاش دوبارهٔ کوتاه (تحمل خطای سرویس شلوغ).
 
     Overpass یک سرویس عمومی است؛ پاسخ 429/504 در ساعات شلوغ طبیعی است. یک تلاش
@@ -237,7 +238,10 @@ def _overpass_request(query: str, *, timeout: float, retries: int = 1,
                          "Content-Type": "application/x-www-form-urlencoded"},
             )
             try:
-                with urllib.request.urlopen(req, timeout=min(remaining, float(timeout) + 10)) as resp:
+                budget = float(timeout) + 10
+                if per_endpoint_s:
+                    budget = min(budget, float(per_endpoint_s))
+                with urllib.request.urlopen(req, timeout=min(remaining, budget)) as resp:
                     raw = resp.read()
             except urllib.error.HTTPError as exc:
                 errors.append(f"{host} HTTP {exc.code}")
@@ -442,7 +446,7 @@ def _boxes_touch(a: list[float], b: list[float], gap: float) -> bool:
 
 
 def _grow_street_cluster(boxes: list[list[float]], seed: list[float],
-                         gap: float = 0.0015) -> list[list[float]]:
+                         gap: float = 0.0025) -> list[list[float]]:
     """همهٔ تکه‌های هم‌نامِ متصل به تکهٔ Nominatim را جمع می‌کند.
 
     چرا؟ در تهران چند «کوچهٔ ولیعصر» هم وجود دارد؛ اگر همهٔ آن‌ها را با هم جمع
@@ -510,7 +514,8 @@ def overpass_street_bbox(names: list[str], *, bbox: list[float], timeout: float 
         query = f"[out:json][timeout:{seconds}];({body});out bb;"
         try:
             data = _overpass_request(query, timeout=timeout, retries=0,
-                                     deadline_s=budget_s, trip_breaker=False)
+                                     deadline_s=budget_s, trip_breaker=False,
+                                     per_endpoint_s=9.0)
         except OSMDownError as exc:
             if diag is not None:
                 diag.append(f"{via}: {exc}")

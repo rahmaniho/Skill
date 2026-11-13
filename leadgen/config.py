@@ -129,6 +129,7 @@ OVERPASS_ENDPOINTS = [
     url.strip().rstrip("/")
     for url in (env("OVERPASS_ENDPOINT")
                 or "https://overpass-api.de/api/interpreter,"
+                   "https://overpass.osm.ch/api/interpreter,"
                    "https://overpass.kumi.systems/api/interpreter,"
                    "https://overpass.private.coffee/api/interpreter").split(",")
     if url.strip()
