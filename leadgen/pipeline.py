@@ -285,6 +285,28 @@ def _area_query_variants(street: str, district: str, city_fa: str) -> list[str]:
     return out
 
 
+def _name_from_label(label: str, city_fa: str = "", street: str = "") -> str:
+    """نام خیابان از برچسب Nominatim — نامی که خودِ OSM دارد.
+
+    چرا؟ کاربر «خیابان چهارباغ» می‌نویسد و OSM «چهارباغ عباسی» دارد؛ پرسش با
+    همان نام کوتاه هیچ تکه‌ای نمی‌دهد و خیابان بلند به تکهٔ ۰٫۵ کیلومتری سقوط
+    می‌کند. Nominatim خودش نام کامل را در display_name دارد؛ همان را برای پرسش
+    دوم Overpass به کار می‌بریم.
+    """
+    head = (label or "").split("،")[0].split(",")[0].strip()
+    head = _strip_street_prefix(head)
+    plain = "".join((head or "").split())
+    if len(plain) < 5 or len(head) > 60:
+        return ""
+    if any(ch.isdigit() or ch in "۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩" for ch in head):
+        return ""
+    if city_fa and plain == "".join(city_fa.split()):
+        return ""
+    if street and plain == "".join(_strip_street_prefix(street).split()):
+        return ""                                  # همان نام کوتاه؛ چیزی اضافه نمی‌کند
+    return head
+
+
 def _boxes_overlap(first, second, pad: float = 0.004) -> bool:
     """آیا دو جعبه (با ~۴۵۰ متر حاشیه) هم‌پوشانی دارند؟"""
     try:
@@ -385,9 +407,14 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
                     "length_km": float(cached.get("length_km") or 0.0), "via": "cache"}
             cache_used = "fresh"
         else:
+            probe_names = [street_name, request.street or request.district or ""]
+            derived = _name_from_label(str(found.get("label") or ""),
+                                       str(city.get("label_local") or ""), street_name)
+            if derived:
+                probe_names.append(derived)      # نام کاملِ همان خیابان در OSM
             try:
                 wide = osm_provider.overpass_street_bbox(
-                    [street_name, request.street or request.district or ""],
+                    [name for name in dict.fromkeys(probe_names) if name],
                     bbox=list(city_box),
                     timeout=min(20.0, float(getattr(request, "max_time", 60) or 60)),
                     budget_s=20.0, near=seed_box)

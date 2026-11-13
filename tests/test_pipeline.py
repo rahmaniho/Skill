@@ -1310,6 +1310,31 @@ class StreetWholeOverpassTests(unittest.TestCase):
             box = pipeline.refine_area_bbox(request, city, allow_network=True)
         self.assertEqual(len(box), 4, "قطعی Overpass نباید محدودهٔ پیدا‌شده را از بین ببرد")
 
+    def test_osm_full_name_from_the_label_is_asked_too(self):
+        """«چهارباغ» در OSM «چهارباغ عباسی» است؛ نام کامل باید پرسیده شود."""
+        request = pipeline.ScrapeRequest.from_dict({
+            "niche_query": "کافه", "city_query": "اصفهان", "city_key": "isfahan",
+            "street": "خیابان چهارباغ", "area_level": "street", "engine_mode": "osm"})
+        request.area_label = "خیابان چهارباغ، اصفهان"
+        city = {"bbox": [32.55, 32.75, 51.55, 51.80], "country": "IR",
+                "label_local": "اصفهان"}
+        nominatim = {"bbox": [32.6480, 32.6520, 51.6690, 51.6740],
+                     "label": "خیابان چهارباغ عباسی، اصفهان، ایران"}
+        seen: list[dict] = []
+
+        def fake_wide(names, **kwargs):
+            seen.append({"names": names, **kwargs})
+            return {}
+
+        with mock.patch.object(pipeline.config, "OSM_AREA_LOOKUP", True), \
+                mock.patch.object(pipeline.config, "_looks_like_unittest", return_value=False), \
+                mock.patch("leadgen.providers.osm.lookup_area", return_value=dict(nominatim)), \
+                mock.patch("leadgen.providers.osm.overpass_street_bbox", side_effect=fake_wide):
+            pipeline.refine_area_bbox(request, city, allow_network=True)
+        self.assertIn("چهارباغ عباسی", seen[0]["names"],
+                      "نام کاملِ خودِ OSM باید جزو پرسش‌ها باشد")
+        self.assertEqual("چهارباغ", seen[0]["names"][0])
+
     def test_overpass_query_is_anchored_near_the_nominatim_segment(self):
         request = self._request()
         city = {"bbox": [35.60, 35.80, 51.20, 51.60], "country": "IR", "label_local": "تهران"}
