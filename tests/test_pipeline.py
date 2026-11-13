@@ -1755,6 +1755,16 @@ class StreetCacheStorageTests(unittest.TestCase):
         self.assertEqual([[35.66, 35.76, 51.40, 51.412]], got["boxes"])
         self.assertLess(got["age_days"], 1)
 
+    def test_old_rows_are_pruned(self):
+        storage.put_street_cache("cachetest", "خیابان کهنه",
+                                 bbox=[35.66, 35.76, 51.40, 51.43],
+                                 boxes=[[35.66, 35.76, 51.40, 51.43]])
+        with storage._LOCK, storage._connect() as conn:
+            conn.execute("UPDATE street_cache SET updated_at=? WHERE key=?",
+                         (1.0, storage.street_cache_key("cachetest", "خیابان کهنه")))
+        self.assertGreaterEqual(storage.prune_street_cache(120), 1)
+        self.assertIsNone(storage.get_street_cache("cachetest", "خیابان کهنه"))
+
     def test_empty_boxes_are_not_cached(self):
         self.assertFalse(storage.put_street_cache("cachetest", "خیابان انقلاب",
                                                   bbox=[35.7, 35.71, 51.4, 51.41], boxes=[]))

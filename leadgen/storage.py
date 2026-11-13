@@ -1055,7 +1055,23 @@ def put_street_cache(city_key: str, street: str, *, bbox: list, boxes: list,
                  source or "overpass", time.time()))
     except Exception:                                   # noqa: BLE001 — کش نباید اجرا را بشکند
         return False
+    _maybe_prune_street_cache()
     return True
+
+
+# حذف ردیف‌های خیلی قدیمی حداکثر یک‌بار در روز (نه با هر ذخیره).
+_LAST_STREET_PRUNE = [0.0]
+
+
+def _maybe_prune_street_cache(days: int = 120) -> None:
+    now = time.time()
+    if now - _LAST_STREET_PRUNE[0] < 86400:
+        return
+    _LAST_STREET_PRUNE[0] = now
+    try:
+        prune_street_cache(days)
+    except Exception:                                   # noqa: BLE001 — نگهداری نباید اجرا را بشکند
+        pass
 
 
 def prune_street_cache(days: int = 120) -> int:
