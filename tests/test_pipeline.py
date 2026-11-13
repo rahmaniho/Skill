@@ -1208,6 +1208,9 @@ class StreetVariantTests(unittest.TestCase):
         self.assertEqual(box, [31.8835, 31.8965, 54.3535, 54.3665])
         self.assertGreaterEqual(len(seen), 2, "باید شکل دوم نام هم پرسیده شود")
         self.assertEqual(request.area_unresolved, [], "وقتی پیدا شد، «پیدا نشد» پاک می‌شود")
+        # سطح باید «خیابان» شود، نه «شهر» — وگرنه گزارش می‌گوید کل شهر اسکراب شد
+        self.assertEqual(request.area_level, "street")
+        self.assertLess(request.radius, 3000, "شعاع باید اندازهٔ خیابان باشد، نه شهر")
 
     def test_refine_rejects_city_sized_box_so_only_the_street_is_scraped(self):
         request = pipeline.ScrapeRequest.from_dict({
