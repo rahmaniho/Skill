@@ -762,12 +762,138 @@ def overpass_street_bbox(names: list[str], *, bbox: list[float], timeout: float 
             found = candidate
         if cluster["anchored"] and length >= 3.0:
             break                       # خیابان واقعی پیدا شد؛ پرسش بیشتر لازم نیست
+    # ── خواهر-خیابان‌ها: یک خیابانِ تاریخی در OSM چند نام دارد ──────────────
+    # «چهارباغ» اصفهان = چهارباغ عباسی + بالا + پایین + خواجو (۲۰ تکه). کاربر
+    # «خیابان چهارباغ» می‌نویسد و انتظار دارد کل محور را ببیند، نه ۱٫۲ کیلومتر.
+    # فقط وقتی امتدادِ همان محور است می‌چسبانیم: نام با همان واژه شروع شود و
+    # جعبه‌اش به جعبهٔ فعلی بچسبد (≤ ~۴۵۰ متر). خیابان هم‌نامِ محلهٔ دور نمی‌آید.
+    if (found and near and len(near) == 4 and _left() > 6
+            and float(found.get("length_km") or 0) < 6.0 and pats):
+        family = _street_family(pats[0], bbox=bbox, near=near, diag=diag,
+                                budget_s=max(5.0, _left() - 1.0))
+        if family:
+            base_ways = int(found.get("ways") or 0)
+            joined = _join_family(found, family)
+            if joined:
+                found = joined
+                if diag is not None:
+                    diag.append(f"family: {joined['ways'] - base_ways} تکه از خیابان‌های "
+                                f"هم‌خانوادهٔ «{pats[0]}» به نوار اضافه شد")
     if found and ttl > 0:
         with _OVERPASS_CACHE_LOCK:
             if len(_STREET_CACHE) >= 256:
                 _STREET_CACHE.pop(next(iter(_STREET_CACHE)), None)
             _STREET_CACHE[cache_key] = (time.time(), dict(found))
     return found
+
+
+def _family_root(name: str) -> str:
+    """ریشهٔ خانوادگی نام خیابان = نخستین واژهٔ معنادار («چهارباغ عباسی» → «چهارباغ»).
+
+    چرا نخستین واژه؟ در OSM محورهای تاریخی به نام‌های چسبیده تقسیم می‌شوند
+    («چهارباغ عباسی/بالا/پایین/خواجو») و فقط واژهٔ اول مشترک است. برای نام‌های
+    کوتاه («ولی عصر») ریشه ساخته نمی‌شود تا خیابان‌های بی‌ربط «ولی…» نیایند.
+    """
+    clean = " ".join(_squash(_strip_street_prefix(str(name or ""))).split())
+    if not clean:
+        return ""
+    first = clean.split(" ")[0]
+    if len("".join(first.split())) < 4:
+        return ""
+    return first
+
+
+def _is_sibling_name(candidate: str, root: str) -> bool:
+    """آیا «چهارباغ بالا» خواهرِ ریشهٔ «چهارباغ» است (نه «چهارباغی» یا «پیام چهارباغ»)؟
+
+    مقایسه با تحمل فاصله است (OSM «چهار باغ» و «چهارباغ» هر دو را دارد) ولی مرز
+    واژه شرط است: «انقلابی» و «کاشانیان» خیابان دیگری‌اند، نه خواهرِ «انقلاب».
+    """
+    cand = " ".join(_squash(str(candidate or "")).split())
+    base = "".join(" ".join(_squash(_strip_street_prefix(str(root or ""))).split()).split())
+    if not cand or not base:
+        return False
+    i = j = 0
+    while i < len(cand) and j < len(base):
+        if cand[i] == " ":
+            i += 1
+            continue
+        if cand[i] != base[j]:
+            return False
+        i += 1
+        j += 1
+    if j < len(base) or i >= len(cand):
+        return False                       # ریشه کامل نشد یا چیز تازه‌ای نمانده
+    if cand[i] not in " ":               # وسط یک واژهٔ بلندتر قطع شد
+        return False
+    rest = cand[i:].strip()
+    word = rest.split(" ")[0] if rest else ""
+    if not word or word[0] in "۰۱۲۳۴۵۶۷۸۹0123456789":
+        return False                       # «کاشانی ۲۵» خیابان دیگری است
+    return True
+
+
+def _street_family(base: str, *, bbox: list[float], near: list[float] | None,
+                   diag: list | None = None, budget_s: float = 8.0) -> list[dict]:
+    """wayهای هم‌خانوادهٔ یک خیابان (نام با همین واژه ادامه یابد) داخل جعبهٔ شهر."""
+    root = _family_root(base)
+    if not root:
+        return []
+    body = _NAME_GAP.join(re.escape(ch) for ch in "".join(root.split()))
+    s_, n_, w_, e_ = (float(x) for x in bbox)
+    query = (f'[out:json][timeout:20];'
+             f'(way["name"~"{body}",i]({s_},{w_},{n_},{e_}));out geom;')
+    try:
+        data = _overpass_request(query, timeout=20, retries=0, deadline_s=budget_s,
+                                 trip_breaker=False, per_endpoint_s=8.0)
+    except OSMDownError as exc:
+        if diag is not None:
+            diag.append(f"family: {exc}")
+        return []
+    ways: list[dict] = []
+    for element, way in zip((data.get("elements") if isinstance(data, dict) else []) or [],
+                            _ways_from_elements(data)):
+        tags = (element or {}).get("tags") or {}
+        if _is_sibling_name(str(tags.get("name") or ""), root):
+            way["name"] = str(tags.get("name") or "")
+            ways.append(way)
+    if not ways and diag is not None:
+        diag.append(f"family: «{root}» خواهر-خیابانی نداشت")
+    return ways
+
+
+def _join_family(found: dict, family: list[dict]) -> dict:
+    """خواهر-خیابان‌های چسبیده به نوار فعلی را ادغام می‌کند (فقط امتداد همان محور)."""
+    boxes = [list(b) for b in (found.get("boxes") or [])]
+    total_length = float(found.get("length_km") or 0.0)
+    added = 0
+    merged = [min(b[0] for b in boxes), max(b[1] for b in boxes),
+              min(b[2] for b in boxes), max(b[3] for b in boxes)] if boxes else []
+    if not merged:
+        return {}
+    pool = list(family)
+    grew = True
+    while grew and len(boxes) < 400:
+        grew = False
+        for way in list(pool):
+            if _bbox_gap(way["box"], merged) <= 0.004:      # ≤ ~۴۵۰ متر: امتداد محور
+                boxes.append([round(float(x), 5) for x in way["box"]])
+                total_length += float(way.get("length_km") or 0.0)
+                merged = [min(merged[0], way["box"][0]), max(merged[1], way["box"][1]),
+                          min(merged[2], way["box"][2]), max(merged[3], way["box"][3])]
+                pool.remove(way)
+                added += 1
+                grew = True
+    if not added:
+        return {}
+    result = dict(found)
+    result.update({
+        "bbox": [round(float(x), 6) for x in merged],
+        "boxes": boxes[:400], "ways": int(found.get("ways") or 0) + added,
+        "length_km": round(total_length, 2),
+        "siblings": len({w.get("name") for w in family if w.get("name")}),
+    })
+    return result
 
 
 def _bounds_from_elements(data: dict) -> list[list[float]]:

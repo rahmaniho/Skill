@@ -689,6 +689,21 @@ class FullScanTileTests(unittest.TestCase):
         self.assertEqual(eng.tile_coverage[0]["via"], "main")
 
 
+def overpass_sequence(*answers):
+    """پاسخ‌های پشت‌سرهم؛ پرسش‌های اضافه (خانواده/تلاش دوباره) خالی می‌مانند.
+
+    چرا؟ بعد از افزودن پرسش «خانوادهٔ خیابان»، یک تست با دو پاسخ دیگر کافی
+    نیست و mock بی‌دلیل StopIteration می‌دهد؛ این کمکی تست را روی رفتار
+    اصلی متمرکز نگه می‌دارد.
+    """
+    queue = list(answers)
+
+    def responder(query, **kwargs):
+        return queue.pop(0) if queue else {"elements": []}
+
+    return responder
+
+
 class OverpassStreetBBoxTests(unittest.TestCase):
     """همهٔ تکه‌های به‌هم‌پیوستهٔ یک خیابان → یک جعبهٔ واحد (نه یک تکه)."""
 
@@ -719,7 +734,7 @@ class OverpassStreetBBoxTests(unittest.TestCase):
         self.assertEqual(found["via"], "exact")
         self.assertGreater(found["length_km"], 3.0)
         self.assertEqual(len(found["boxes"]), 2, "جعبهٔ هر تکه برای فیلتر «روی خیابان»")
-        query = call.call_args[0][0]
+        query = call.call_args_list[0][0][0]      # پرسش اول: نام دقیق
         self.assertIn('way["name"="ولیعصر"](35.6,51.2,35.9,51.6)', query)
         self.assertIn("out geom;", query, "مختصات گره‌ها برای تشخیص اتصال لازم است")
 
@@ -794,6 +809,85 @@ class OverpassStreetBBoxTests(unittest.TestCase):
         self.assertIn("trip_breaker", inspect.signature(osm._overpass_request).parameters)
 
 
+class StreetFamilyTests(unittest.TestCase):
+    """«چهارباغ» در اصفهان چهار نام دارد؛ کل محور باید با هم بیاید، نه ۱٫۲ کیلومتر."""
+
+    def setUp(self):
+        from leadgen.providers import osm
+        osm._STREET_CACHE.clear()
+
+    @staticmethod
+    def _way(wid, name, start, end, nodes):
+        return {"type": "way", "id": wid, "nodes": nodes,
+                "tags": {"name": name, "highway": "primary"},
+                "geometry": [{"lat": start[0], "lon": start[1]},
+                             {"lat": end[0], "lon": end[1]}]}
+
+    def test_sibling_name_detection(self):
+        from leadgen.providers import osm
+        self.assertTrue(osm._is_sibling_name("چهارباغ عباسی", "چهارباغ"))
+        self.assertTrue(osm._is_sibling_name("چهار باغ بالا", "چهارباغ"))
+        self.assertFalse(osm._is_sibling_name("پیام چهارباغ", "چهارباغ"))
+        self.assertFalse(osm._is_sibling_name("کاشانی ۲۵", "کاشانی"))
+        self.assertFalse(osm._is_sibling_name("چهارباغ", "چهارباغ"))
+        self.assertFalse(osm._is_sibling_name("انقلابی", "انقلاب"))
+        self.assertFalse(osm._is_sibling_name("کاشانیان", "کاشانی"))
+
+    def test_family_root_needs_a_meaningful_first_word(self):
+        from leadgen.providers import osm
+        self.assertEqual("چهارباغ", osm._family_root("خیابان چهارباغ عباسی"))
+        self.assertEqual("انقلاب", osm._family_root("انقلاب اسلامی"))
+        self.assertEqual("", osm._family_root("ولی عصر"))      # نام کوتاه → بی‌خانواده
+        self.assertEqual("", osm._family_root(""))
+
+    def test_contiguous_siblings_extend_the_corridor(self):
+        from leadgen.providers import osm
+        base = {"elements": [self._way(1, "چهارباغ عباسی", (32.6467, 51.6675),
+                                       (32.6574, 51.6694), [1, 2])]}
+        family = {"elements": [
+            self._way(2, "چهارباغ بالا", (32.6574, 51.6694), (32.6700, 51.6700), [2, 3]),
+            self._way(3, "چهارباغ خواجو", (32.6400, 51.6660), (32.6467, 51.6675), [9, 1]),
+            self._way(4, "چهارباغ پایین", (31.9000, 51.4000), (31.9010, 51.4010), [50, 51]),
+        ]}
+        def responder(query, **kwargs):
+            if 'name"~"^' in query:
+                return {"elements": []}          # الگوی نام کوتاه: چیزی ندارد
+            if 'name"="' in query:
+                return base                      # پرسش دقیق: فقط عباسی
+            return family                        # پرسش خانواده
+
+        with mock.patch.object(osm, "_overpass_request",
+                               side_effect=responder) as call:
+            found = osm.overpass_street_bbox(["چهارباغ عباسی"], bbox=[32.60, 32.70, 51.60, 51.72],
+                                             near=[32.6480, 32.6520, 51.6690, 51.6740])
+        self.assertEqual(3, call.call_count, "پرسش سوم: خانوادهٔ همان نام")
+        self.assertEqual(3, found["ways"], "پایینِ دورافتاده نباید بیاید")
+        self.assertGreater(found["length_km"], 2.5)
+        self.assertLess(found["bbox"][0], 32.6467)
+        self.assertGreater(found["bbox"][1], 32.669)
+        self.assertEqual(3, found["siblings"])
+
+    def test_distant_siblings_are_ignored(self):
+        from leadgen.providers import osm
+        base = {"elements": [self._way(1, "چهارباغ عباسی", (32.6467, 51.6675),
+                                       (32.6574, 51.6694), [1, 2])]}
+        family = {"elements": [
+            self._way(4, "چهارباغ پایین", (31.9000, 51.4000), (31.9010, 51.4010), [50, 51])]}
+        def responder(query, **kwargs):
+            if 'name"~"^' in query:
+                return {"elements": []}
+            if 'name"="' in query:
+                return base
+            return family
+
+        with mock.patch.object(osm, "_overpass_request", side_effect=responder):
+            found = osm.overpass_street_bbox(["چهارباغ عباسی"], bbox=[32.60, 32.70, 51.60, 51.72],
+                                             near=[32.6480, 32.6520, 51.6690, 51.6740])
+        self.assertEqual(1, found["ways"])
+        self.assertNotIn("siblings", found)
+        self.assertLess(found["bbox"][1], 32.66)
+
+
 class StreetAnchorTests(unittest.TestCase):
     """تکیه‌گاه باید تکه‌ای باشد که روی جعبهٔ Nominatim نشسته، نه نزدیک‌ترین مرکز."""
 
@@ -827,13 +921,15 @@ class StreetAnchorTests(unittest.TestCase):
             {"type": "way", "id": 6, "nodes": [11, 12],
              "geometry": [{"lat": 35.7200, "lon": 51.4170},
                           {"lat": 35.7400, "lon": 51.4200}]}]}
-        with mock.patch.object(osm, "_overpass_request", side_effect=[stray, real]) as call:
+        with mock.patch.object(osm, "_overpass_request",
+                               side_effect=overpass_sequence(stray, real)) as call:
             found = osm.overpass_street_bbox(["ولیعصر"], bbox=[35.6, 35.85, 51.2, 51.6],
                                              near=[35.7055, 35.7145, 51.4095, 51.4155])
         self.assertEqual(found["via"], "regex", "نام دقیق کوچهٔ بی‌ربط بود؛ باید regex برنده شود")
         self.assertEqual(found["ways"], 2)
         self.assertGreater(found["length_km"], 3.0)
-        self.assertEqual(call.call_count, 2)
+        self.assertGreaterEqual(call.call_count, 2)
+        self.assertIn('name"=', call.call_args_list[0][0][0])
 
 
 class StreetComponentGapTests(unittest.TestCase):
@@ -944,7 +1040,7 @@ class StreetHonorificTests(unittest.TestCase):
              "geometry": [{"lat": 35.6960, "lon": 51.3915},
                           {"lat": 35.6990, "lon": 51.3980}]}]}
         with mock.patch.object(osm, "_overpass_request",
-                               side_effect=[{"elements": []}, data]) as call:
+                               side_effect=overpass_sequence({"elements": []}, data)) as call:
             found = osm.overpass_street_bbox(["خیابان انقلاب"],
                                              bbox=[35.6, 35.9, 51.2, 51.6],
                                              near=[35.6961, 35.7009, 51.3913, 51.4044])
@@ -960,7 +1056,8 @@ class StreetHonorificTests(unittest.TestCase):
             {"type": "way", "id": 7, "nodes": [1, 2],
              "geometry": [{"lat": 31.8798, "lon": 54.3745},
                           {"lat": 31.8850, "lon": 54.3790}]}]}
-        with mock.patch.object(osm, "_overpass_request", side_effect=[plain, real]):
+        with mock.patch.object(osm, "_overpass_request",
+                               side_effect=overpass_sequence(plain, real)):
             found = osm.overpass_street_bbox(["کاشانی"], bbox=[31.85, 31.95, 54.30, 54.45],
                                              near=[31.8799, 31.8849, 54.3744, 54.3790])
         self.assertTrue(found)
