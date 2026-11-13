@@ -203,6 +203,8 @@ class OSMProviderTest(NoOverpassMixin, unittest.TestCase):
             job_id, rows = eng.run_job({
                 "name": "leadgen-c1", "keywords": ["دندانپزشکی در تهران", "کلینیک دندان"],
                 "lat": "35.7", "lon": "51.4", "radius": 8000, "max_time": 40, "lang": "fa",
+                # نتیجهٔ نمونه در ملارد است؛ محدوده هم همان‌جاست تا سد «فقط همان منطقه» عادی کار کند
+                "bbox": [35.62, 35.75, 50.90, 51.03],
             }, on_progress=events.append)
         finally:
             osm.search = original

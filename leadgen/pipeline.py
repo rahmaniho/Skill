@@ -73,6 +73,8 @@ class ScrapeRequest:
     bbox: list = field(default_factory=list)   # جعبهٔ محدودکنندهٔ دلخواه [s,n,w,e]
     area_label: str = ""             # برچسب خوانای منطقه (برای نمایش در خروجی)
     area_level: str = ""             # street|district|city|province
+    city_key: str = ""               # کلید استاندارد شهر (tehran) — انتخاب قطعی رابط
+    area_unresolved: list = field(default_factory=list)  # خیابان/منطقه‌ای که پیدا نشد
     area_applied: bool = False       # آیا نقطهٔ منطقه یک‌بار محاسبه شده؟
     zoom_set: bool = False           # zoom صریحاً داده شده؟ وگرنه از سطح منطقه می‌آید
 
@@ -155,10 +157,15 @@ def apply_area(request: "ScrapeRequest") -> dict:
     except (TypeError, ValueError):
         lat_f = lon_f = None
 
-    area = regions.resolve(province=request.province, city=request.city_query,
+    # انتخاب شهر از سمت رابط (`city_key`) قطعی است؛ نام تایپ‌شده فقط وقتی
+    # به کار می‌آید که کلید نداشته باشیم. قبلاً برچسب ترکیبی («خیابان ونک، تهران»)
+    # به‌جای شهر می‌رفت و جست‌وجو جای دیگری می‌افتاد.
+    city_arg = (request.city_key or "").strip() or request.city_query
+    area = regions.resolve(province=request.province, city=city_arg,
                            district=request.district, street=request.street,
                            lat=lat_f, lon=lon_f, lang=request.lang or "fa")
     request.area_applied = True
+    request.area_unresolved = list(area.get("unresolved") or [])
     if not area.get("lat"):
         return {"lat": request.lat, "lon": request.lon, "label": request.area_label,
                 "level": "", "radius": request.radius}
@@ -169,18 +176,18 @@ def apply_area(request: "ScrapeRequest") -> dict:
     # زوم مناسبِ سطح: خیابان ۱۶، منطقه ۱۵، شهر ۱۳، استان ۱۰ (مگر کاربر خودش zoom داده باشد)
     if area.get("zoom") and not request.zoom_set:
         request.zoom = int(area["zoom"])
-    request.city_query = area["label"] or request.city_query
+    if area.get("city_key"):
+        request.city_key = area["city_key"]
+    # نام تمیز برای نمایش/کلیدواژه؛ برچسب کامل («خیابان ولیعصر، تهران») جدا می‌ماند
+    request.city_query = (area.get("city_fa") or area["label"] or request.city_query)
     request.area_label = area.get("keyword_label") or area["label"]
     request.area_level = area["level"]
     if area["level"] in ("street", "district"):
         request.grid = 0                     # شعاع کوچک است؛ کاشی‌بندی لازم نیست
         request.fast_mode = bool(request.fast_mode)
-    # جعبهٔ محدودکننده فقط برای سطح خیابان/منطقه (وگرنه شهرهای دیگرِ استان بیرون می‌افتند)
-    if area["level"] in ("street", "district"):
-        half = max(0.004, request.radius * 1.3 / 111000.0)
-        lat_f, lon_f = area["lat"], area["lon"]
-        request.bbox = [round(lat_f - half, 4), round(lat_f + half, 4),
-                        round(lon_f - half, 4), round(lon_f + half, 4)]
+    # جعبهٔ دقیق همان سطح (خیابان، منطقه، شهر) — نه شعاع سرانگشتی
+    if area.get("bbox") and area["level"] in ("street", "district"):
+        request.bbox = [float(x) for x in area["bbox"]]
     return {"lat": request.lat, "lon": request.lon, "label": request.area_label,
             "level": request.area_level, "radius": request.radius, "bbox": request.bbox}
 
@@ -281,8 +288,28 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
         niche = resolve_niche(request.niche_query)
         _progress(on_progress, run_id, {"stage": "resolve", "status": "running", "percent": 4,
                                      "message": f"صنف: «{niche.fa}» — شهر: «{request.city_query}»"})
-        city = resolve_city(request.city_query, request.lat, request.lon,
-                            allow_network=engine.live)
+        # خیابان/منطقهٔ ناشناخته: به‌جای چسبیدن به نزدیک‌ترین نام، صریح می‌گوییم
+        # که پیدا نشد — وگرنه کاربر فکر می‌کند «خیابان X» را اسکراب کرده، در حالی
+        # که دادهٔ جای دیگری آمده است.
+        if request.area_unresolved:
+            bad = [request.street if "street" in request.area_unresolved else "",
+                   request.district if "district" in request.area_unresolved else ""]
+            bad = [x for x in bad if x]
+            label_fa = "خیابان" if "street" in request.area_unresolved else "منطقه"
+            raise EngineError(
+                f"{label_fa} «{'، '.join(bad)}» در فهرست پیدا نشد؛ برای اینکه دادهٔ جای "
+                f"دیگری اسکراب نشود، اجرا متوقف شد. املای نام را درست کنید یا از "
+                f"جست‌وجوی منطقه (GET /api/regions/search) نام دقیق را بردارید."
+            )
+
+        if request.area_level == "province" and not request.city_key:
+            # انتخاب «کل استان»: مرکز استان نقطهٔ مبناست و جعبه، کل استان است.
+            prov_meta = regions.province_info(request.province)
+            city = resolve_city(prov_meta.get("capital") or request.city_query,
+                                request.lat, request.lon, allow_network=engine.live)
+        else:
+            city = resolve_city(request.city_key or request.city_query,
+                                request.lat, request.lon, allow_network=engine.live)
         if not city:
             raise EngineError(
                 f"مکان «{request.city_query}» پیدا نشد. یک شهر شناخته‌شده بنویسید یا "
@@ -291,6 +318,11 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
         if request.bbox and len(request.bbox) == 4:
             city = dict(city)
             city["bbox"] = list(request.bbox)
+        elif request.area_level == "province":
+            prov_box = regions.province_info(request.province).get("bbox")
+            if prov_box:
+                city = dict(city)
+                city["bbox"] = list(prov_box)
         if request.area_label:
             # کلیدواژه باید نام منطقه/خیابان را هم داشته باشد، نه فقط شهر
             city = dict(city)
@@ -429,6 +461,10 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                 "all_business": bool(request.all_niches) and engine.name == "osm",
                 # چند جعبهٔ شهری برای جست‌وجوی سطح استان (خالی = همان جعبهٔ شهر)
                 "sweep_boxes": sweep_boxes,
+                # «فقط همان منطقه»: موتور حق ندارد نتیجهٔ بیرون از محدوده بدهد
+                "strict_region": True,
+                # پرش به کل استان فقط وقتی کاربر خودش «کل استان» را خواسته باشد
+                "allow_province_fallback": request.area_level == "province",
             }
             if cell:
                 body.update(cell)                 # lat/lon/radius/zoom همان کاشی
@@ -556,12 +592,32 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                 "همه jobها خالی/ناموفق بودند. احتمالاً IP موقتاً محدود شده — چند دقیقه صبر کنید، "
                 "depth را کم کنید یا پراکسی اضافه کنید."
             )
-        if cells:
-            kept = [r for r in rows if geo.in_bbox(r, city["bbox"])]
+        # ── ۳٫۵) فقط همان منطقه ─────────────────────────────────────────────
+        # آخرین سد: هر ردیفی که مختصاتش بیرون از محدودهٔ انتخاب‌شده باشد حذف می‌شود.
+        # (خیابان = جعبهٔ خیابان، منطقه = جعبهٔ منطقه، شهر = مرز شهر، استان = کل استان)
+        region_box = None
+        if request.area_level in ("street", "district") and request.bbox \
+                and len(request.bbox) == 4:
+            region_box = [float(x) for x in request.bbox]
+        elif cells:
+            region_box = list(city["bbox"])
+        elif request.area_level == "province" and city.get("bbox"):
+            region_box = list(city["bbox"])          # جعبهٔ کل استان
+        elif city.get("bbox"):
+            region_box = list(city["bbox"])          # مرز شهر
+        if region_box:
+            kept = [r for r in rows if geo.in_bbox(r, region_box, margin=0.02)]
             dropped = len(rows) - len(kept)
             if dropped:
-                warnings.append(f"{dropped} ردیف بیرون از محدوده شهر حذف شد.")
-            rows = kept
+                warnings.append(
+                    f"{dropped} ردیف خارج از محدودهٔ «{request.area_label or city['label_local']}» "
+                    f"بود و حذف شد (فقط همان منطقه اسکراب می‌شود).")
+                rows = kept
+            if not rows:
+                # همه بیرون بودند → صادقانه بگو، نه اینکه صفر لید بی‌صدا بماند
+                warnings.append(
+                    "همهٔ نتایج بیرون از محدودهٔ انتخاب‌شده بود؛ موتور دادهٔ این محدوده را "
+                    "برنگرداند. محدوده را بزرگ‌تر کنید یا صنف دیگری را امتحان کنید.")
 
         # سقف نهایی بعد از امتیازدهی اعمال می‌شود تا «بهترین‌ها» بمانند نه «اولین‌ها».
         # اینجا فقط یک سقف محافظه‌کارانه می‌گذاریم تا هزینه غنی‌سازی منفجر نشود.

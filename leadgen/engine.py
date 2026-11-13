@@ -473,6 +473,22 @@ class DemoEngine:
 # ─────────────────────────────────────────────────────────────────────────────
 # موتورهای واقعیِ بدون داکر (OSM / Google Places) — برای اجرای زنده روی Vercel
 # ─────────────────────────────────────────────────────────────────────────────
+def in_region(row: dict, bbox: list[float], margin: float = 0.02) -> bool:
+    """آیا این ردیف داخل محدودهٔ خواسته‌شده است؟
+
+    ردیفِ بی‌مختصات را «داخل» حساب می‌کنیم: نمی‌شود ثابت کرد بیرون است و دادهٔ
+    واقعی OSM هم همیشه مختصات دارد؛ اینجا فقط مرزهای منطقه را سخت‌گیر می‌کنیم.
+    """
+    from .providers import osm
+
+    try:
+        float(row.get("latitude"))
+        float(row.get("longitude"))
+    except (TypeError, ValueError):
+        return True
+    return osm.within(row, bbox, margin=margin)
+
+
 def share_for_box(box_left: float, phase_budget: float, remaining: int,
                   single: bool) -> float:
     """سهم زمانی Overpass برای یک شهر — با ذخیرهٔ زمان برای مسیر متنی.
@@ -541,6 +557,9 @@ class OSMEngine:
             raise EngineError("برای موتور OSM هیچ کلیدواژه‌ای نبود.")
         terms = terms[:9]
 
+        strict_region = bool(body.get("strict_region", True))
+        allow_province_fallback = bool(body.get("allow_province_fallback", False))
+        self.dropped_outside = 0
         bbox = body.get("bbox")
         if not (isinstance(bbox, (list, tuple)) and len(bbox) == 4):
             try:
@@ -572,6 +591,13 @@ class OSMEngine:
                 except (TypeError, ValueError):
                     continue
         sweep_boxes.sort(key=lambda box: -box["pop"])
+        # محدودهٔ مجاز یک جاروی استانی = اجتماع جعبهٔ همهٔ شهرهای آن، نه فقط
+        # جعبهٔ اولین/مرکز شهر (وگرنه لیدهای شهرهای دیگر «بیرون از محدوده» تلقی می‌شدند).
+        region_box = list(bbox) if bbox else None
+        if sweep_boxes:
+            boxes = [box["bbox"] for box in sweep_boxes]
+            region_box = [min(b[0] for b in boxes), max(b[1] for b in boxes),
+                          min(b[2] for b in boxes), max(b[3] for b in boxes)]
 
         # ── گذر اول: Overpass (تگ‌محور) — صدها کسب‌وکار در یک درخواست ─────────
         want_all = bool(body.get("all_business"))
@@ -828,14 +854,15 @@ class OSMEngine:
                     errors.append(f"{term} + {place}: {exc}")
                     wide = []
                 if wide and bbox:
-                    inside = [r for r in wide if osm.within(r, bbox, margin=0.35)]
+                    # حاشیهٔ کوچک: نتایج مرزیِ همان شهر بمانند، شهر همسایه نماند
+                    inside = [r for r in wide if osm.within(r, bbox, margin=0.05)]
                     wide = inside or []
                 if add(wide, f"{term} + {place}"):
                     continue
             # راه سوم: کل استان — شهرهای کوچک OSM پوشش کمی دارند
             prov_label = str(body.get("province_label") or "")
             prov_bbox = body.get("province_bbox")
-            if prov_label and prov_bbox:
+            if allow_province_fallback and prov_label and prov_bbox:
                 left = budget - (time.time() - started)
                 if left < 6:
                     break
@@ -855,6 +882,11 @@ class OSMEngine:
                                        f"{prov_label} اضافه شد (خارج از محدودهٔ شهر)."})
                     continue
 
+        # ── سد نهایی: بیرون از محدوده = دور ریخته ────────────────────────────
+        if strict_region and region_box:
+            kept = [r for r in rows if in_region(r, region_box)]
+            self.dropped_outside = len(rows) - len(kept)
+            rows = kept
         if not rows:
             detail = f" ({'; '.join(errors[:2])})" if errors else ""
             raise EmptyResult(

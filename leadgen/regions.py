@@ -559,6 +559,9 @@ def find_area(text: str, city_key: str = "", level: str = "") -> dict | None:
     if not needle:
         return None
     city_filter = _city(city_key).get("id", "") if city_key else ""
+    # «خیابان ناموجود» نباید به «خیابان مولوی» بچسبد؛ برای سطح خیابان/منطقه فقط
+    # تطبیق قطعی (نام کامل یا شروع نام) پذیرفته می‌شود، نه شباهت تقریبی.
+    min_score = 0.9 if level in ("street", "district") else 0.55
     best: tuple[float, dict] | None = None
     for variant, canonical, city, kind, lat, lon in _name_index():
         if level and kind != level:
@@ -566,6 +569,8 @@ def find_area(text: str, city_key: str = "", level: str = "") -> dict | None:
         if city_filter and city_filter != city:
             continue
         score = _score(needle, variant)
+        if score < min_score:
+            score = 0.0
         if score and (best is None or score > best[0]):
             best = (score, {"kind": kind, "fa": canonical, "matched": variant,
                             "lat": lat, "lon": lon, "city": city})
@@ -575,6 +580,8 @@ def find_area(text: str, city_key: str = "", level: str = "") -> dict | None:
             c = _city(key)
             for name in [c.get("fa", ""), c.get("label", ""), *c.get("aliases", [])]:
                 score = _score(needle, _norm(name).lower())
+                if score < 0.75:
+                    score = 0.0
                 if score and (best is None or score > best[0]):
                     best = (score, {"kind": "city", "fa": name, "matched": needle,
                                     "lat": lat, "lon": lon, "city": key})
@@ -648,18 +655,23 @@ def resolve(province: str = "", city: str = "", district: str = "", street: str 
     label_parts: list[str] = []
     point: tuple[float, float] | None = None
     level = ""
+    unresolved: list[str] = []
     city_key = _city(city).get("id", "") if city else ""
     if city_key and not province:
         province = CITY_PROVINCE.get(city_key, "")
 
     if street:
         hit = find_area(street, city_key, level="street") or find_area(street, "", "street")
+        if not hit:
+            unresolved.append("street")
         label_parts.append(hit["fa"] if hit else street)
         if hit and hit["lat"]:
             point, level = (hit["lat"], hit["lon"]), "street"
             city_key = city_key or hit["city"]
     if district:
         hit = find_area(district, city_key, level="district") or find_area(district, "", "district")
+        if not hit:
+            unresolved.append("district")
         label_parts.append(hit["fa"] if hit else district)
         if not point:
             if hit and hit["lat"]:
@@ -697,22 +709,49 @@ def resolve(province: str = "", city: str = "", district: str = "", street: str 
         level = level or "city"
 
     level = level or ("city" if point else "")
+    radius = RADIUS.get(level, RADIUS["city"])
     joiner = ", " if lang == "en" else "، "
     return {
         "lat": point[0] if point else None,
         "lon": point[1] if point else None,
         "level": level,
         "level_fa": LEVEL_FA.get(level, ""),
-        "radius": RADIUS.get(level, RADIUS["city"]),
+        "radius": radius,
         "zoom": 16 if level == "street" else 15 if level == "district" else 13 if level == "city" else 10,
         "label": joiner.join(reversed([x for x in label_parts if x])),
         # برای کلیدواژهٔ جست‌وجو، ترتیب «جزئی → کلی» نتیجهٔ بهتری روی نقشه می‌دهد
         "keyword_label": joiner.join([x for x in label_parts if x]),
         "city_key": city_key,
+        "city_fa": (_city(city_key).get("fa") or "") if city_key else "",
         "province": province,
+        "province_fa": (PROVINCES.get(province) or {}).get("fa", ""),
         "district": district,
         "street": street,
+        # جعبهٔ دقیق همان سطح — موتور و لایهٔ پایپ‌لاین با همین، نتایج بیرون از
+        # محدوده را دور می‌ریزند (وگرنه «ونک» با «تهران» یکی می‌شود).
+        "bbox": area_bbox(level, point, radius, city_key, province),
+        "unresolved": unresolved,
     }
+
+
+def area_bbox(level: str, point, radius: int, city_key: str = "",
+              province: str = "") -> list[float] | None:
+    """جعبهٔ محدودکنندهٔ یک سطح منطقه‌ای [s, n, w, e]."""
+    if level in ("street", "district") and point:
+        half = max(0.003, float(radius) * 1.25 / 111000.0)
+        return [round(point[0] - half, 5), round(point[0] + half, 5),
+                round(point[1] - half, 5), round(point[1] + half, 5)]
+    if level == "city" and city_key:
+        entry = geo.CITIES.get(city_key)
+        if entry and len(entry) > 3 and entry[3]:
+            return [float(x) for x in entry[3]]
+        if point:
+            return geo.default_bbox(float(point[0]), float(point[1]), 0.06)
+    if level == "province" and province:
+        info = province_info(province)
+        if info.get("bbox"):
+            return [round(float(x), 5) for x in info["bbox"]]
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────

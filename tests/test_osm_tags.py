@@ -411,7 +411,10 @@ class OverpassSweepTests(unittest.TestCase):
         def fake_area(filters, *, bbox, limit=None, timeout=None, input_id="", lang="fa",
                       tiles=1, max_rows=None, budget_s=None):
             seen.append(list(bbox))
-            return [self._row(len(seen), f"کافه {len(seen)}")]
+            row = self._row(len(seen), f"کافه {len(seen)}")
+            row["latitude"] = f"{(bbox[0] + bbox[1]) / 2:.5f}"
+            row["longitude"] = f"{(bbox[2] + bbox[3]) / 2:.5f}"
+            return [row]
 
         body = {
             "keywords": ["کافه در گیلان"], "city_label": "گیلان", "lang": "fa",
@@ -437,7 +440,10 @@ class OverpassSweepTests(unittest.TestCase):
         events: list[dict] = []
 
         def fake_area(filters, *, bbox, **kwargs):
-            return [self._row(1, "کافه")]
+            row = self._row(1, "کافه")
+            row["latitude"] = f"{(bbox[0] + bbox[1]) / 2:.5f}"
+            row["longitude"] = f"{(bbox[2] + bbox[3]) / 2:.5f}"
+            return [row]
 
         body = {
             "keywords": ["کافه در گیلان"], "city_label": "گیلان", "lang": "fa",
