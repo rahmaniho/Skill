@@ -428,7 +428,8 @@ def _grow_street_cluster(boxes: list[list[float]], seed: list[float],
 
 def overpass_street_bbox(names: list[str], *, bbox: list[float], timeout: float = 25.0,
                          budget_s: float | None = None,
-                         near: list[float] | None = None) -> dict:
+                         near: list[float] | None = None,
+                         diag: list | None = None) -> dict:
     """جعبهٔ **کل** یک خیابان از Overpass (همهٔ wayهای هم‌نام، نه یک تکه).
 
     چرا؟ Nominatim برای «خیابان ولیعصر» فقط یک way می‌دهد (≈۱ کیلومتر از ۱۷
@@ -468,10 +469,14 @@ def overpass_street_bbox(names: list[str], *, bbox: list[float], timeout: float 
         try:
             data = _overpass_request(query, timeout=timeout, retries=0,
                                      deadline_s=budget_s, trip_breaker=False)
-        except OSMDownError:
+        except OSMDownError as exc:
+            if diag is not None:
+                diag.append(f"{via}: {exc}")
             break                       # سرویس پایین/شلوغ است؛ تلاش دوم بی‌فایده
         boxes = _bounds_from_elements(data)
         if not boxes:
+            if diag is not None:
+                diag.append(f"{via}: «{pats[0]}» تکه‌ای نداشت")
             continue
         chosen = _grow_street_cluster(boxes, near) if (near and len(near) == 4) else boxes
         if not chosen:
