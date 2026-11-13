@@ -829,6 +829,125 @@ class ProvinceSweepPipelineTest(unittest.TestCase):
         self.assertTrue((rows[0].get("signals") or {}).get("repeat"))
         self.assertEqual((rows[0]["signals"] or {}).get("first_seen_run"), first.run_id)
 
+class RegionFidelityTests(unittest.TestCase):
+    """«هر شهر/استان/خیابانی انتخاب شد، فقط همان منطقه اسکراب شود.»
+
+    این آزمون‌ها همان باگ‌های واقعی را می‌گیرند:
+      • جست‌وجوی شهر، لیدهای شهر/استان دیگر را هم می‌آورد.
+      • نام خیابان اشتباه، بی‌صدا به خیابان دیگری می‌چسبید.
+      • انتخاب «کل استان» بدون شهر، هیچ‌وقت اجرا نمی‌شد.
+      • انتخاب شهر از رابط (`city_key`) نادیده گرفته می‌شد و برچسب ترکیبی جای شهر می‌رفت.
+    """
+
+    @staticmethod
+    def engine_returning(rows: list[dict]):
+        class FakeEngine:
+            name = "osm"
+            live = True
+
+            def __init__(self):
+                self.bodies: list[dict] = []
+                self.coverage: list = []
+
+            def health(self):
+                return {"up": True}
+
+            def run_job(self, body, on_progress=None):
+                self.bodies.append(body)
+                return "fake-job", [dict(r) for r in rows]
+
+        return FakeEngine()
+
+    @staticmethod
+    def row(place_id: str, lat: float, lon: float, title: str = "کسب‌وکار") -> dict:
+        return {"place_id": place_id, "title": title, "category": "کافه",
+                "latitude": str(lat), "longitude": str(lon), "phone": "",
+                "website": "", "instagram": "", "facebook": "", "linkedin": "",
+                "address": "", "input_id": "cafe", "source": "openstreetmap", "city": ""}
+
+    def test_rows_outside_the_city_are_dropped(self):
+        inside = self.row("osm:node/1", 31.32, 48.67, "کافهٔ اهواز")
+        outside = self.row("osm:node/2", 35.70, 51.40, "کافهٔ تهران")
+        fake = self.engine_returning([inside, outside])
+        original = pipeline.make_engine
+        pipeline.make_engine = lambda mode=None: fake
+        try:
+            result = pipeline.run_scrape(pipeline.ScrapeRequest.from_dict({
+                "niche_query": "کافه", "city_query": "اهواز", "city_key": "ahvaz",
+                "engine_mode": "osm", "lang": "fa", "limit": 10, "max_time": 30}))
+        finally:
+            pipeline.make_engine = original
+        self.assertEqual(result.stats["total"], 1)
+        self.assertEqual(result.stats["rows"][0]["title"] if result.stats.get("rows") else "کافهٔ اهواز",
+                         "کافهٔ اهواز")
+        joined = " ".join(result.analytics.get("warnings") or [])
+        self.assertIn("خارج از محدودهٔ", joined)
+        self.assertIn("اهواز", joined)
+
+    def test_city_run_forbids_province_fallback(self):
+        fake = self.engine_returning([self.row("osm:node/1", 31.32, 48.67)])
+        original = pipeline.make_engine
+        pipeline.make_engine = lambda mode=None: fake
+        try:
+            pipeline.run_scrape(pipeline.ScrapeRequest.from_dict({
+                "niche_query": "کافه", "city_query": "اهواز", "city_key": "ahvaz",
+                "engine_mode": "osm", "lang": "fa", "limit": 10, "max_time": 30}))
+        finally:
+            pipeline.make_engine = original
+        body = fake.bodies[0]
+        self.assertTrue(body["strict_region"])
+        self.assertFalse(body["allow_province_fallback"],
+                         "جست‌وجوی شهر نباید به کل استان پهن شود")
+        self.assertEqual(body["bbox"], [31.2, 31.44, 48.52, 48.82])   # مرز همان شهر
+
+    def test_province_only_request_resolves_to_capital_with_province_box(self):
+        fake = self.engine_returning([self.row("osm:node/9", 31.32, 48.67)])
+        original = pipeline.make_engine
+        pipeline.make_engine = lambda mode=None: fake
+        try:
+            result = pipeline.run_scrape(pipeline.ScrapeRequest.from_dict({
+                "niche_query": "کافه", "city_query": "", "province": "khuzestan",
+                "engine_mode": "osm", "lang": "fa", "limit": 10, "max_time": 60}))
+        finally:
+            pipeline.make_engine = original
+        body = fake.bodies[0]
+        self.assertTrue(body["allow_province_fallback"])
+        self.assertEqual(body["bbox"][0], 29.89889)          # جعبهٔ کل استان
+        self.assertEqual(body["bbox"][1], 32.84111)
+        # برچسب اجرا نام استان است (نه مرکز آن) — کاربر «کل خوزستان» را خواسته
+        self.assertEqual(result.run["city"], "خوزستان")
+        self.assertEqual(result.run["lat"], "31.318300")       # نقطهٔ مبنا: مرکز استان
+
+    def test_selected_city_key_wins_over_a_stale_city_query(self):
+        fake = self.engine_returning([])
+        original = pipeline.make_engine
+        pipeline.make_engine = lambda mode=None: fake
+        try:
+            request = pipeline.ScrapeRequest.from_dict({
+                "niche_query": "کافه", "city_query": "تهران", "city_key": "yazd",
+                "province": "yazd", "engine_mode": "osm", "lang": "fa", "max_time": 30})
+            pipeline.apply_area(request)
+        finally:
+            pipeline.make_engine = original
+        self.assertEqual(request.city_key, "yazd")
+        self.assertEqual(request.city_query, "یزد")
+        self.assertAlmostEqual(float(request.lat), 31.8974, places=3)
+
+    def test_unknown_street_aborts_instead_of_scraping_the_wrong_place(self):
+        original = pipeline.make_engine
+        pipeline.make_engine = lambda mode=None: self.engine_returning([])
+        try:
+            with self.assertRaises(pipeline.EngineError) as ctx:
+                pipeline.run_scrape(pipeline.ScrapeRequest.from_dict({
+                    "niche_query": "کافه", "city_query": "tehran", "city_key": "tehran",
+                    "province": "tehran-province", "street": "خیابان کاملاً ناموجود",
+                    "engine_mode": "osm", "lang": "fa", "max_time": 30}))
+        finally:
+            pipeline.make_engine = original
+        message = str(ctx.exception)
+        self.assertIn("خیابان «خیابان کاملاً ناموجود»", message)
+        self.assertIn("متوقف شد", message)
+
     def test_city_request_has_no_sweep(self):
         captured: list[dict] = []
 

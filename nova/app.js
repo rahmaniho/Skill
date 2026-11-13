@@ -786,16 +786,28 @@
     N.sheet("کجا بگردم؟", "", paint);
   }
   function resolveArea(st, body) {
-    function finish(label) {
-      S.area = { label: label || st.city || "تهران", province: st.province, city: st.city, district: st.district, street: st.street };
+    function finish(label, extra) {
+      var info = extra || {};
+      // شهرِ انتخاب‌شده (کلید استاندارد) جدا از برچسب نمایشی نگه داشته می‌شود؛
+      // وگرنه «خیابان ولیعصر، تهران» به‌جای شهر به سرور می‌رفت و جست‌وجو
+      // می‌توانست جای دیگری بیفتد.
+      S.area = { label: label || st.city || "تهران", province: st.province, city: st.city,
+        city_fa: info.city_fa || "", district: st.district, street: st.street,
+        level: info.level || "", bbox: info.bbox || null,
+        unresolved: info.unresolved || [] };
       $("areaLabel").textContent = S.area.label;
       N.sheetHide();
+      if ((info.unresolved || []).length) {
+        N.toast("این " + (info.unresolved.indexOf("street") >= 0 ? "خیابان" : "منطقه") +
+          " را پیدا نکردم؛ یه نام دقیق‌تر بده تا دادهٔ جای دیگه‌ای نیاد.", "warn", 6000);
+        return;
+      }
       N.toast("باشه! می‌گردم توی: " + S.area.label, "ok");
     }
     if (S.mode === "demo") { finish(st.street || st.district || st.cityFa || S.area.label); return; }
     jget("api/regions/resolve?province=" + encodeURIComponent(st.province || "") + "&city=" + encodeURIComponent(st.city || "") +
       "&district=" + encodeURIComponent(st.district || "") + "&street=" + encodeURIComponent(st.street || ""))
-      .then(function (r) { finish(r.keyword_label || r.label); }, function () { finish(st.city); });
+      .then(function (r) { finish(r.keyword_label || r.label, r); }, function () { finish(st.city); });
   }
 
   /* ────────────────────────── شیت صنف ────────────────────────── */
@@ -847,11 +859,13 @@
   function buildRequest() {
     var base = (S.parse && S.parse.request) ? JSON.parse(JSON.stringify(S.parse.request)) : {};
     base.niche_query = S.niche.query || base.niche_query || "همهٔ کسب‌وکارها";
-    base.city_query = S.area.label || base.city_query || "تهران";
+    // شهر باید *نام تمیز* برود، نه برچسب ترکیبی؛ انتخاب قطعی هم با city_key است.
+    base.city_query = S.area.city_fa || S.area.city || S.area.label || base.city_query || "تهران";
     if (S.area.province) base.province = S.area.province;
     if (S.area.city) base.city_key = S.area.city;
-    if (S.area.district) base.district = S.area.district;
-    if (S.area.street) base.street = S.area.street;
+    if (S.area.district) base.district = S.area.district; else delete base.district;
+    if (S.area.street) base.street = S.area.street; else delete base.street;
+    base.area_label = S.area.label || "";
     base.depth = +$("depth").value || 4;
     base.grid = +$("grid").value || 0;
     base.limit = +$("limit").value || 0;

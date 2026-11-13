@@ -204,7 +204,10 @@ class ApplyAreaTestCase(unittest.TestCase):
         self.assertEqual(len(request.bbox), 4)
         self.assertAlmostEqual(request.lat, "35.750000")
         self.assertEqual(request.area_label, "خیابان ملاصدرا، ونک، تهران")
-        self.assertEqual(request.city_query, "تهران، ونک، خیابان ملاصدرا")
+        # city_query نام تمیز شهر است تا resolve_city دقیقاً همان شهر را پیدا کند؛
+        # برچسب کاملِ «خیابان، منطقه، شهر» در area_label می‌ماند.
+        self.assertEqual(request.city_query, "تهران")
+        self.assertEqual(request.city_key, "tehran")
 
     def test_province_level_has_no_tight_bbox(self):
         request = pipeline.ScrapeRequest.from_dict({"niche_query": "کافه", "city_query": "",
