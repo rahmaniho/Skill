@@ -1205,12 +1205,37 @@ class StreetVariantTests(unittest.TestCase):
                 mock.patch.object(pipeline.config, "_looks_like_unittest", return_value=False), \
                 mock.patch("leadgen.providers.osm.lookup_area", side_effect=fake_lookup):
             box = pipeline.refine_area_bbox(request, city, allow_network=True)
-        self.assertEqual(box, [31.8835, 31.8965, 54.3535, 54.3665])
+        # جعبهٔ OSM + حاشیهٔ ~۱۵۰ متری (مغازه‌های دو طرف خیابان)
+        self.assertAlmostEqual(box[0], 31.8820, places=3)
+        self.assertAlmostEqual(box[1], 31.8980, places=3)
+        self.assertAlmostEqual(box[2], 54.3520, places=3)
+        self.assertAlmostEqual(box[3], 54.3680, places=3)
         self.assertGreaterEqual(len(seen), 2, "باید شکل دوم نام هم پرسیده شود")
         self.assertEqual(request.area_unresolved, [], "وقتی پیدا شد، «پیدا نشد» پاک می‌شود")
         # سطح باید «خیابان» شود، نه «شهر» — وگرنه گزارش می‌گوید کل شهر اسکراب شد
         self.assertEqual(request.area_level, "street")
         self.assertLess(request.radius, 3000, "شعاع باید اندازهٔ خیابان باشد، نه شهر")
+
+    def test_lookup_area_merges_segments_of_a_long_street(self):
+        """ولیعصر ۱۷ کیلومتر است؛ Nominatim تکه‌تکه می‌دهد و باید همه یکی شوند."""
+        from leadgen.providers import osm
+        payload = [
+            {"type": "residential", "class": "highway", "osm_type": "way",
+             "display_name": "خیابان ولیعصر، تهران، ایران",
+             "boundingbox": ["35.700", "35.710", "51.410", "51.416"]},
+            {"type": "residential", "class": "highway", "osm_type": "way",
+             "display_name": "خیابان ولیعصر، تهران، ایران",
+             "boundingbox": ["35.760", "35.780", "51.400", "51.405"]},
+            {"type": "residential", "class": "highway", "osm_type": "way",
+             "display_name": "خیابان انقلاب، تهران، ایران",
+             "boundingbox": ["35.700", "35.701", "51.390", "51.391"]},
+        ]
+        with mock.patch.object(osm, "_http_json", return_value=payload), \
+                mock.patch.object(osm, "_throttle", return_value=None):
+            found = osm.lookup_area("خیابان ولیعصر، تهران", bbox=[35.6, 35.8, 51.2, 51.6],
+                                    limit=10, merge=True)
+        self.assertEqual(found["bbox"], [35.7, 35.78, 51.4, 51.416])
+        self.assertEqual(found.get("segments"), 2, "خیابان انقلاب نباید جمع شود")
 
     def test_refine_rejects_city_sized_box_so_only_the_street_is_scraped(self):
         request = pipeline.ScrapeRequest.from_dict({

@@ -286,7 +286,7 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
         try:
             candidate = osm_provider.lookup_area(
                 query, bbox=list(city_box) if city_box else None,
-                country=city.get("country") or None)
+                country=city.get("country") or None, limit=10, merge=True)
         except Exception as exc:  # noqa: BLE001 — شبکه نباید اجرا را بشکند
             last_error = f"{type(exc).__name__}: {exc}"
             break                                      # سرویس پایین است؛ بقیهٔ شکل‌ها بی‌فایده‌اند
@@ -315,6 +315,15 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
                max(float(box[2]), float(city_box[2])), min(float(box[3]), float(city_box[3]))]
         if box[1] <= box[0] or box[3] <= box[2]:
             box = list(found.get("bbox") or [])
+    # حاشیهٔ کوچک (حداقل ~۱۵۰ متر) تا مغازه‌های دو طرف خیابان هم داخل بیایند؛
+    # بی‌حاشیه، باریکهٔ Nominatim فقط محور خیابان را می‌گیرد و لبه‌ها جا می‌مانند.
+    pad_lat = max(0.0015, (float(box[1]) - float(box[0])) * 0.02)
+    pad_lon = max(0.0015, (float(box[3]) - float(box[2])) * 0.02)
+    box = [round(float(box[0]) - pad_lat, 5), round(float(box[1]) + pad_lat, 5),
+           round(float(box[2]) - pad_lon, 5), round(float(box[3]) + pad_lon, 5)]
+    if city_box and len(city_box) == 4:
+        box = [max(box[0], float(city_box[0])), min(box[1], float(city_box[1])),
+               max(box[2], float(city_box[2])), min(box[3], float(city_box[3]))]
     request.bbox = [float(x) for x in box]
     request.area_unresolved = []
     # سطح را از «شهر» به سطح واقعیِ همان چیزی که پیدا شد ارتقا بده؛ وگرنه
