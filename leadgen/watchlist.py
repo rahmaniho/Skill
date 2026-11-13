@@ -210,6 +210,20 @@ def _recipients(item: dict) -> list[str]:
     return [x.strip() for x in config.digest_recipients() if x.strip()]
 
 
+def _subject(item: dict | None, run_id: str, count: int | None = None) -> str:
+    """موضوع ایمیل دیدبان — یک‌جا، تا ایمیل و صفحهٔ پیش‌نمایش یکی باشند."""
+    niche = (item or {}).get("niche_query") or "همهٔ کسب‌وکارها"
+    area = ((item or {}).get("city") or (item or {}).get("province") or "منطقه")
+    head = "👁 دیدبان هفتگی" if count is None else f"👁 دیدبان هفتگی — {_fa(count)} تازه"
+    return f"{head} | {niche} · {area}"
+
+
+def _fa(value) -> str:
+    """عدد فارسی (فقط برای متن‌های انسانی؛ منطق با ارقام لاتین کار می‌کند)."""
+    digits = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+    return str(value).translate(digits)
+
+
 def _compose(item: dict | None, run_id: str, *, limit: int = 200) -> dict:
     """ایمیل «فقط تازه‌ها» را می‌سازد — بدون ارسال و بدون ثبت.
 
@@ -226,6 +240,8 @@ def _compose(item: dict | None, run_id: str, *, limit: int = 200) -> dict:
     payload["scope_total"] = len(fresh)
     payload["analysis"] = analytics.build(top, payload.get("run") or {})
     payload["watch"] = item or {}
+    # عنوان ایمیل/صفحه هم همان «دیدبان …» باشد، نه «گزارش لیدهای داغ».
+    payload["subject"] = _subject(item, run_id)
     area = (
         (item or {}).get("city")
         or ((payload.get("run") or {}).get("area_label"))
@@ -235,7 +251,7 @@ def _compose(item: dict | None, run_id: str, *, limit: int = 200) -> dict:
     niche = (item or {}).get("niche_query") or "همهٔ کسب‌وکارها"
     return {
         "fresh": fresh, "top": top, "payload": payload, "area": area, "niche": niche,
-        "subject": f"👁 دیدبان هفتگی — {len(fresh)} تازه | {niche} · {area}",
+        "subject": f"👁 دیدبان هفتگی — {_fa(len(fresh))} تازه | {niche} · {area}",
         "text": delivery.render_text(payload),
         "html": delivery.render_html(payload),
         "recipients": _recipients(item or {}),

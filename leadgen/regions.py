@@ -558,6 +558,13 @@ def find_area(text: str, city_key: str = "", level: str = "") -> dict | None:
     needle = _norm(text).lower()
     if not needle:
         return None
+    # کاربر معمولاً «خیابان کاشانی» می‌نویسد و فهرست آفلاین «کاشانی» را دارد؛
+    # بدون این حذف پیشوند، نام‌های موجود هم «پیدا نشد» می‌شدند.
+    for prefix in ("خیابان ", "بلوار ", "بزرگراه ", "اتوبان ", "کوچه ", "میدان ",
+                   "بن‌بست ", "بن بست ", "بازار "):
+        if needle.startswith(prefix) and len(needle) > len(prefix) + 2:
+            needle = needle[len(prefix):].strip()
+            break
     city_filter = _city(city_key).get("id", "") if city_key else ""
     # «خیابان ناموجود» نباید به «خیابان مولوی» بچسبد؛ برای سطح خیابان/منطقه فقط
     # تطبیق قطعی (نام کامل یا شروع نام) پذیرفته می‌شود، نه شباهت تقریبی.

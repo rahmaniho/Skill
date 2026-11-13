@@ -103,6 +103,8 @@ def collect(run_id: str | None = None, *, segment: str | None = "hot",
 def subject_for(payload: dict, override: str = "") -> str:
     if override:
         return override
+    if payload.get("subject"):
+        return str(payload["subject"])[:150]
     run = payload.get("run") or {}
     area = run.get("area_label") or run.get("city") or ""
     niche = run.get("niche_fa") or ""

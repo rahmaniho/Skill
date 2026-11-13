@@ -201,6 +201,48 @@ def apply_area(request: "ScrapeRequest") -> dict:
             "level": request.area_level, "radius": request.radius, "bbox": request.bbox}
 
 
+_STREET_PREFIXES = ("خیابانِ ", "خیابان ", "بلوار ", "بزرگراه ", "اتوبان ", "کوچه ",
+                    "میدان ", "بن‌بست ", "بن بست ", "بازار ")
+
+
+def _strip_street_prefix(text: str) -> str:
+    """«خیابان کاشانی» → «کاشانی» (همان کاری که کاربر در ذهنش می‌کند)."""
+    value = (text or "").strip()
+    for prefix in _STREET_PREFIXES:
+        if value.startswith(prefix) and len(value) > len(prefix) + 2:
+            return value[len(prefix):].strip()
+    return value
+
+
+def _area_query_variants(street: str, district: str, city_fa: str) -> list[str]:
+    """شکل‌هایی که از یک خیابان به OSM می‌پرسیم، از دقیق‌ترین به کلی‌ترین.
+
+    تجربهٔ عملی: Nominatim با «خیابان کاشانی، یزد» گاهی هیچ نمی‌دهد ولی با
+    «کاشانی، یزد» یا «کاشانی یزد» جعبهٔ خیابان را می‌دهد. قبلاً فقط یک شکل
+    پرسیده می‌شد و خیابان‌های واقعی «پیدا نشد» می‌شدند.
+    """
+    name = (street or district or "").strip()
+    short = _strip_street_prefix(name)
+    city = (city_fa or "").strip()
+    out: list[str] = []
+
+    def add(value: str) -> None:
+        value = " ".join((value or "").split()).strip(" ،,")
+        if value and value not in out:
+            out.append(value)
+
+    if name and city:
+        add(f"{name}، {city}")
+        add(f"{name} {city}")
+    if short and short != name:
+        if city:
+            add(f"{short}، {city}")
+        add(short)
+    if name:
+        add(name)
+    return out
+
+
 def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: bool,
                      warnings: list | None = None) -> list[float]:
     """جعبهٔ واقعیِ خیابان/محله را از OSM می‌گیرد و روی درخواست می‌گذارد.
@@ -214,19 +256,55 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
     """
     if not config.OSM_AREA_LOOKUP or not allow_network or config._looks_like_unittest():
         return list(request.bbox or [])
-    query = " ".join(x for x in (request.street, request.district,
-                                 request.city_query) if x).strip()
-    if not query:
+    city_fa = request.city_query or city.get("label_local") or ""
+    variants = _area_query_variants(request.street, request.district, city_fa)
+    if not variants:
         return list(request.bbox or [])
     city_box = city.get("bbox") if isinstance(city.get("bbox"), (list, tuple)) else None
+    label = request.area_label or variants[0]
     try:
         from .providers import osm as osm_provider
-        found = osm_provider.lookup_area(query, bbox=list(city_box) if city_box else None,
-                                         country=city.get("country") or None)
-    except Exception as exc:  # noqa: BLE001 — شبکه نباید اجرا را بشکند
+    except Exception:                                  # pragma: no cover - import guard
+        return list(request.bbox or [])
+
+    def too_big(candidate: list[float]) -> bool:
+        """جعبهٔ «شهر» را به‌جای خیابان نپذیر (وگرنه کل شهر اسکراب می‌شود)."""
+        if not (city_box and len(city_box) == 4):
+            return False
+        try:
+            c_dlat = float(candidate[1]) - float(candidate[0])
+            c_dlon = float(candidate[3]) - float(candidate[2])
+            b_dlat = float(city_box[1]) - float(city_box[0])
+            b_dlon = float(city_box[3]) - float(city_box[2])
+        except (TypeError, ValueError):
+            return False
+        return c_dlat >= 0.85 * b_dlat and c_dlon >= 0.85 * b_dlon
+
+    found: dict = {}
+    last_error = ""
+    for query in variants:
+        try:
+            candidate = osm_provider.lookup_area(
+                query, bbox=list(city_box) if city_box else None,
+                country=city.get("country") or None)
+        except Exception as exc:  # noqa: BLE001 — شبکه نباید اجرا را بشکند
+            last_error = f"{type(exc).__name__}: {exc}"
+            break                                      # سرویس پایین است؛ بقیهٔ شکل‌ها بی‌فایده‌اند
+        box_c = list(candidate.get("bbox") or [])
+        if len(box_c) != 4 or too_big(box_c):
+            continue
+        found = candidate
+        break
+    if not found:
         if warnings is not None:
-            warnings.append(f"محدودهٔ دقیق «{request.area_label or query}» از OSM گرفته نشد "
-                            f"({type(exc).__name__}); با شعاع تخمینی ادامه دادیم.")
+            if last_error:
+                warnings.append(
+                    f"محدودهٔ دقیق «{label}» از OSM گرفته نشد ({last_error})؛ "
+                    f"با شعاع تخمینی ادامه دادیم.")
+            else:
+                warnings.append(
+                    f"«{label}» در OSM پیدا نشد؛ برای اینکه دادهٔ جای دیگری اسکراب نشود، "
+                    f"فقط محدودهٔ همین نام (اگر وجود داشت) بررسی می‌شود.")
         return list(request.bbox or [])
     box = list(found.get("bbox") or [])
     if len(box) != 4:
