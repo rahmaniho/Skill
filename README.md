@@ -356,11 +356,31 @@ python3 -m leadgen.cli run --all-niches --city "مشهد" --groups "خدمات �
   و اولویت سطح جزئی‌تر وقتی کاربر نام کامل را نوشته است.
 - شهرهای خارج از ایران زیر «سایر کشورها» گروه‌بندی می‌شوند (۲۲ کشور، ~۴۶ شهر).
 
+### دیدبان شهر — «هر هفته، فقط تازه‌ها»
+یک دیدبان = منطقه + صنف + بازهٔ تکرار (پیش‌فرض ۷ روز). هر روز (کرون یا بازکردن تب «کارها»)
+دیدبان‌های رسیده اجرا می‌شوند و در پایان، **فقط** کسب‌وکارهایی که در هیچ اجرای قبلی
+نبوده‌اند ایمیل می‌شوند. تکراری‌ها هیچ‌وقت دوباره فرستاده نمی‌شوند.
+```bash
+curl -X POST "$APP/api/watchlist" -H 'Content-Type: application/json' \
+     -d '{"city":"یزد","niche_query":"کافه","interval_days":7}'
+curl "$APP/api/watchlist"                       # فهرست + days_left + next_due_at
+curl -X POST "$APP/api/watchlist/tick"          # اجرای رسیده‌ها (کرون همین را صدا می‌زند)
+curl "$APP/api/runs/<id>/leads?fresh=1"         # فقط تازه‌های یک اجرا
+```
+نصب: `supabase/watchlist.sql` + `supabase/cron_watchlist.sql` (برای تیک روزانه).
+
 ### شهرها و پوشش کامل شهر
 - ۱٬۳۰۴ شهر ایرانی با مختصات و محدوده (آفلاین، بدون درخواست شبکه) + هر شهر دیگر از Nominatim.
 - حالت **شبکه (grid)**: شهر را به n×n کاشی تقسیم می‌کند و کاشی‌ها را **پشت‌سرهم** اجرا می‌کند
   تا سقف ~۱۲۰ نتیجه در هر جست‌وجوی گوگل شکسته شود؛ سپس بر اساس `place_id` یکتا می‌کند و
   ردیف‌های بیرون از محدوده شهر را دور می‌ریزد.
+- **اسکراب کامل (پیش‌فرض روشن):** موتور Overpass/Nominatim هر جست‌وجو را حداکثر ۴۰ نتیجه
+  برمی‌گرداند، پس یک جست‌وجوی تک‌نقطه‌ای همیشه ناقص است. با `scan_full` هر اجرا خودش
+  **کاشی‌بندی** می‌شود: خیابان/منطقه = یک جعبهٔ دقیق OSM، شهر = ۲×۲ تا ۴×۴ کاشی
+  (تهران ۹، یزد ۴)، استان = همهٔ شهرهای استان (تا ۴۰). اگر بودجهٔ اجرا تمام شود، بقیه
+  در `analytics.scan.remaining` می‌ماند و ورکر خودکار — یا دکمهٔ «▶️ ادامهٔ اسکراب» — با
+  همان `run_id` ادامه می‌دهد. یعنی «تعداد لید» تابع حجم واقعی منطقه است، نه یک سقف ثابت.
+  تنظیم‌ها: `SCAN_TILES`، `SCAN_MAX_TILES=16`، `SCAN_MAX_BOXES=40`، `SCAN_MAX_CHUNKS=8`.
 
 ---
 
@@ -385,11 +405,17 @@ python3 -m leadgen.cli run --all-niches --city "مشهد" --groups "خدمات �
 | POST | `/api/runs` | شروع اجرا (غیرهمزمان، `202` + `run_id`) |
 | GET | `/api/runs` | فهرست اجراها |
 | GET | `/api/runs/{id}` | جزئیات + پیشرفت + آمار + نمونه لیدها |
-| GET | `/api/runs/{id}/leads` | لیدها با `segment` `status` `channel` `gap` `q` `min_score` `sort` `limit` `offset` |
+| GET | `/api/runs/{id}/leads` | لیدها با `segment` `status` `channel` `gap` `q` `min_score` `sort` `limit` `offset` + **`fresh=1`** (فقط تازه‌ها) / **`repeat=1`** (قبلاً دیده‌شده) |
 | GET | `/api/runs/{id}/analytics` | بسته کامل تحلیل |
 | GET | `/api/runs/{id}/export?fmt=xlsx\|csv\|json` | خروجی فایل (با `segment`، `what=campaign`، `full=1`، **`cols=lead\|contact\|location\|all`**) |
 | GET | `/api/runs/{id}/campaign?channel=email\|whatsapp\|sms\|instagram` | متن کمپین |
 | POST | `/api/runs/{id}/rescore` | امتیازدهی مجدد با پروفایل دیگر |
+| POST | `/api/runs/{id}/continue` | **ادامهٔ اسکراب کامل** بقیهٔ کاشی‌ها/شهرهای همین منطقه با همان `run_id` (`200` اگر همین‌جا تمام شد، `202` اگر در صف رفت) |
+| GET·POST | `/api/watchlist` | **دیدبان شهر**: ساخت (`city`/`province` + `niche_query` + `interval_days`)، فهرست با «نوبت بعدی» |
+| PATCH·DELETE | `/api/watchlist/{id}` | ویرایش / حذف دیدبان |
+| POST | `/api/watchlist/{id}/run` | اجرای فوری دیدبان (`202` + `run_id`) |
+| GET | `/api/watchlist/{id}/new` | فقط **تازه‌های** آخرین اجرای دیدبان |
+| GET·POST | `/api/watchlist/tick` | دیدبان‌های رسیده را اجرا می‌کند (همان چیزی که کرون صدا می‌زند) |
 | POST | `/api/runs/{id}/enrich` | **غنی‌سازی مجدد** لیدهای ذخیره‌شده (ایمیل/شبکه اجتماعی از سایت خودشان، بدون اسکراپ؛ بدنه: `{budget:25, limit:0, socials:true, emails:true}`) |
 | GET | `/api/leads/{id}` | جزئیات لید + breakdown امتیاز + همه متن‌های کمپین |
 | PATCH | `/api/leads/{id}` | تغییر وضعیت پیگیری + یادداشت |

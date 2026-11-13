@@ -471,6 +471,65 @@ def last_delivery(kind: str = "digest") -> dict | None:
     return _client().rpc("last_delivery", {"p_kind": kind})
 
 
+# ── دیدبان (watchlist) ────────────────────────────────────────────────────────
+def _watch_row(item: dict) -> dict:
+    """ردیف دیدبان را به شکل جدول ابری درمی‌آورد (فقط ستون‌های موجود)."""
+    allowed = ("id", "created_at", "province", "city", "city_key", "niche_query",
+               "all_niches", "interval_days", "active", "next_run_at", "last_run_at",
+               "last_run_id", "last_new", "note")
+    return {k: item[k] for k in allowed if k in item and item[k] is not None}
+
+
+def add_watch(item: dict) -> dict:
+    """ردیف دیدبان را در Supabase می‌سازد و همان شکل SQLite را برمی‌گرداند."""
+    row = {
+        "id": item.get("id") or ("watch-" + uuid.uuid4().hex[:10]),
+        "created_at": time.time(),
+        "province": item.get("province") or "", "city": item.get("city") or "",
+        "city_key": item.get("city_key") or "",
+        "niche_query": item.get("niche_query") or "",
+        "all_niches": bool(item.get("all_niches")),
+        "interval_days": max(1, int(item.get("interval_days") or 7)),
+        "active": bool(item.get("active", True)),
+        "next_run_at": float(item.get("next_run_at") or time.time()),
+        "last_run_at": item.get("last_run_at"), "last_run_id": item.get("last_run_id") or "",
+        "last_new": int(item.get("last_new") or 0), "note": item.get("note") or "",
+    }
+    payload = _watch_row(row)
+    payload["created_at"] = float(payload.get("created_at") or time.time())
+    payload["next_run_at"] = float(payload.get("next_run_at") or time.time())
+    payload["all_niches"] = bool(payload.get("all_niches"))
+    payload["active"] = bool(payload.get("active"))
+    _client().insert("watchlist", [payload], upsert=True)
+    return row
+
+
+def list_watch(active_only: bool = False, limit: int = 200) -> list[dict]:
+    filters = {"active": "eq.true"} if active_only else {}
+    rows, _ = _client().rows("watchlist", select="*", order="created_at.asc",
+                             limit=int(limit), **filters)
+    return [_storage()._watch_to_dict(r) for r in rows]
+
+
+def get_watch(watch_id: str) -> dict | None:
+    rows, _ = _client().rows("watchlist", select="*", limit=1, id=f"eq.{watch_id}")
+    return _storage()._watch_to_dict(rows[0]) if rows else None
+
+
+def update_watch(watch_id: str, **fields) -> None:
+    allowed = ("province", "city", "city_key", "niche_query", "all_niches",
+               "interval_days", "active", "next_run_at", "last_run_at",
+               "last_run_id", "last_new", "note")
+    values = {k: v for k, v in fields.items() if k in allowed}
+    if values:
+        _client().update("watchlist", values, id=f"eq.{watch_id}")
+
+
+def delete_watch(watch_id: str) -> bool:
+    _client().delete("watchlist", id=f"eq.{watch_id}")
+    return True
+
+
 def data_dir():
     config.ensure_dirs()
     return config.DATA_DIR

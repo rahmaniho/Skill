@@ -357,13 +357,24 @@ function appendLog(line) {
 }
 
 /* ── اجراها ───────────────────────────────────────────────────────────────── */
+/* پوشش اسکراب کامل منطقه — «چقدر از شهر واقعاً گشته شد؟» */
+function scanBadge(run) {
+  const scan = ((run.analytics || {}).scan) || null;
+  if (!scan || !scan.total) return `<span class="badge muted">—</span>`;
+  const done = scan.done || 0;
+  const total = scan.total || 0;
+  if (done >= total) return `<span class="badge ok">✓ ${fa(total)}/${fa(total)}</span>`;
+  const left = (scan.remaining || []).length;
+  return `<span class="badge warm">${fa(done)}/${fa(total)}${left ? " · " + fa(left) + " مانده" : ""}</span>`;
+}
+
 async function loadRuns() {
   try {
     const data = await api("/api/runs?limit=60");
     state.runs = data.runs;
     renderGlobalStats(data.stats);
     const body = $("#runsTable tbody");
-    if (!data.runs.length) { body.innerHTML = `<tr><td colspan="10">${empty("هنوز اجرایی ندارید — از تب «اسکراپ جدید» شروع کنید")}</td></tr>`; return; }
+    if (!data.runs.length) { body.innerHTML = `<tr><td colspan="11">${empty("هنوز اجرایی ندارید — از تب «اسکراپ جدید» شروع کنید")}</td></tr>`; return; }
     body.innerHTML = data.runs.map((run) => `
       <tr data-run="${esc(run.id)}">
         <td class="num">${esc(run.id)}</td>
@@ -373,6 +384,7 @@ async function loadRuns() {
         <td class="num">${fa(run.total)}</td>
         <td class="num"><span class="badge hot">${fa(run.hot)}</span></td>
         <td class="num">${fa(run.avg_score)}</td>
+        <td>${scanBadge(run)}</td>
         <td>${esc(run.status_fa)}</td>
         <td class="num">${new Date((run.created_at || 0) * 1000).toLocaleDateString("fa-IR")}</td>
         <td>

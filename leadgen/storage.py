@@ -173,6 +173,22 @@ CREATE TABLE IF NOT EXISTS deliveries (
     detail        TEXT NOT NULL DEFAULT '{}',
     created_at    REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS watchlist (
+    id            TEXT PRIMARY KEY,
+    created_at    REAL NOT NULL,
+    province      TEXT,
+    city          TEXT,
+    city_key      TEXT,
+    niche_query   TEXT,
+    all_niches    INTEGER DEFAULT 0,
+    interval_days INTEGER DEFAULT 7,
+    active        INTEGER DEFAULT 1,
+    next_run_at   REAL,
+    last_run_at   REAL,
+    last_run_id   TEXT,
+    last_new      INTEGER DEFAULT 0,
+    note          TEXT
+);
 """
 
 # ستون‌هایی که در جدول leads ذخیره می‌شوند
@@ -259,6 +275,10 @@ def create_run(meta: dict) -> str:
         "street": meta.get("street"),
         "area_label": meta.get("area_label"),
         "area_level": meta.get("area_level"),
+        # `analytics` قبلاً فقط روی ابر ذخیره می‌شد؛ نتیجه: «ادامهٔ اسکراب» در
+        # نسخهٔ SQLite نمی‌دانست چه بخش‌هایی باقی مانده و همه‌چیز از صفر می‌شد.
+        "analytics": _dumps(meta.get("analytics") or {}),
+        "error": meta.get("error"),
     }
     cols = ", ".join(row.keys())
     marks = ", ".join("?" for _ in row)
@@ -951,6 +971,108 @@ def last_delivery(kind: str = "digest") -> dict | None:
     data = dict(row)
     data["detail"] = _json_or(data.get("detail"), {})
     return data
+
+
+# ── دیدبان (watchlist) ────────────────────────────────────────────────────────
+# «هر هفته همین شهر/صنف را بگرد و فقط تازه‌ها را برایم بفرست.» — یک ردیف برای هر
+# دیدبان. اجرا با کرون انجام می‌شود، نه با باز ماندن مرورگر.
+_WATCH_FIELDS = ("province", "city", "city_key", "niche_query", "all_niches",
+                 "interval_days", "active", "next_run_at", "last_run_at",
+                 "last_run_id", "last_new", "note")
+
+
+def _watch_to_dict(row) -> dict:
+    data = dict(row)
+    data["id"] = str(data.get("id") or "")
+    data["all_niches"] = bool(data.get("all_niches"))
+    data["active"] = bool(data.get("active"))
+    try:
+        data["interval_days"] = int(data.get("interval_days") or 7)
+    except (TypeError, ValueError):
+        data["interval_days"] = 7
+    data["last_new"] = int(data.get("last_new") or 0)
+    for key in ("created_at", "next_run_at", "last_run_at"):
+        try:
+            data[key] = float(data[key]) if data.get(key) is not None else None
+        except (TypeError, ValueError):
+            data[key] = None
+    return data
+
+
+def add_watch(item: dict) -> dict:
+    """یک دیدبان تازه می‌سازد و ردیف ذخیره‌شده را برمی‌گرداند."""
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.add_watch(item)
+    now = time.time()
+    interval = max(1, int(item.get("interval_days") or 7))
+    row = {
+        "id": item.get("id") or ("watch-" + uuid.uuid4().hex[:10]),
+        "created_at": now,
+        "province": item.get("province") or "",
+        "city": item.get("city") or "",
+        "city_key": item.get("city_key") or "",
+        "niche_query": item.get("niche_query") or "",
+        "all_niches": int(bool(item.get("all_niches"))),
+        "interval_days": interval,
+        "active": int(bool(item.get("active", True))),
+        "next_run_at": float(item.get("next_run_at") or now),
+        "last_run_at": item.get("last_run_at"),
+        "last_run_id": item.get("last_run_id") or "",
+        "last_new": int(item.get("last_new") or 0),
+        "note": item.get("note") or "",
+    }
+    cols = ", ".join(row.keys())
+    marks = ", ".join("?" for _ in row)
+    with _LOCK, _connect() as conn:
+        conn.execute(f"INSERT OR REPLACE INTO watchlist ({cols}) VALUES ({marks})",
+                     list(row.values()))
+    return row
+
+
+def list_watch(active_only: bool = False, limit: int = 200) -> list[dict]:
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.list_watch(active_only=active_only, limit=limit)
+    sql = "SELECT * FROM watchlist" + (" WHERE active=1" if active_only else "")
+    sql += " ORDER BY created_at ASC LIMIT ?"
+    with _LOCK, _connect() as conn:
+        rows = conn.execute(sql, (int(limit),)).fetchall()
+    return [_watch_to_dict(r) for r in rows]
+
+
+def get_watch(watch_id: str) -> dict | None:
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.get_watch(watch_id)
+    with _LOCK, _connect() as conn:
+        row = conn.execute("SELECT * FROM watchlist WHERE id=?", (watch_id,)).fetchone()
+    return _watch_to_dict(row) if row else None
+
+
+def update_watch(watch_id: str, **fields) -> None:
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.update_watch(watch_id, **fields)
+    fields = {k: v for k, v in fields.items() if k in _WATCH_FIELDS}
+    if not fields:
+        return
+    for key, value in list(fields.items()):
+        if isinstance(value, bool):
+            fields[key] = int(value)
+    assignments = ", ".join(f"{k}=?" for k in fields)
+    with _LOCK, _connect() as conn:
+        conn.execute(f"UPDATE watchlist SET {assignments} WHERE id=?",
+                     [*fields.values(), watch_id])
+
+
+def delete_watch(watch_id: str) -> bool:
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.delete_watch(watch_id)
+    with _LOCK, _connect() as conn:
+        cur = conn.execute("DELETE FROM watchlist WHERE id=?", (watch_id,))
+    return bool(cur.rowcount)
 
 
 def dashboard_stats() -> dict:

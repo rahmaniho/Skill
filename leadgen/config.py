@@ -139,6 +139,16 @@ OVERPASS_TIMEOUT = max(8, min(90, env_int("OVERPASS_TIMEOUT", 30)))
 # کش نتیجهٔ Overpass: جست‌وجوی تکراری (همان شهر/صنف) بدون فشار دوباره به سرویس
 OVERPASS_CACHE_TTL = max(0, min(86400, env_int("OVERPASS_CACHE_TTL", 900)))
 PLACES_API_KEY = env("PLACES_API_KEY") or env("GOOGLE_MAPS_API_KEY")
+
+# ── اسکراب کامل منطقه (کاشی‌به‌کاشی) ────────────────────────────────────────
+# «هر شهری یا خیابانی وارد شد فقط همان منطقه اسکراب بشه» + «هیچ داده‌ای جا نمونه»:
+# محدوده به کاشی‌های کوچک شکسته می‌شود تا سقف ۴۰تایی هر درخواست، داده را نصف نکند.
+SCAN_TILES = env("SCAN_TILES", "1") != "0"          # کاشی‌بندی روشن
+SCAN_MAX_TILES = max(1, min(36, env_int("SCAN_MAX_TILES", 16)))      # سقف کاشی یک شهر
+SCAN_MAX_BOXES = max(1, min(60, env_int("SCAN_MAX_BOXES", 40)))      # سقف شهرهای یک استان
+SCAN_MAX_CHUNKS = max(1, min(24, env_int("SCAN_MAX_CHUNKS", 8)))     # چند بخش خودکار ادامه یابد
+# جعبهٔ واقعی خیابان/محله از OSM (Nominatim) گرفته شود؟ خاموش = همان شعاع تخمینی
+OSM_AREA_LOOKUP = env("OSM_AREA_LOOKUP", "1") != "0"
 SELF_DRIVE = env("SELF_DRIVE", "1") != "0"
 
 # ── محافظ‌های تجاری (ضد سوءاستفاده) ───────────────────────────────────────────
@@ -334,6 +344,11 @@ def summary() -> dict:
         "enrich_budget": ENRICH_BUDGET,
         "max_leads_per_run": MAX_LEADS_PER_RUN,
         "province_sweep_cities": PROVINCE_SWEEP_CITIES,
+        "scan_tiles": SCAN_TILES,
+        "scan_max_tiles": SCAN_MAX_TILES,
+        "scan_max_boxes": SCAN_MAX_BOXES,
+        "scan_max_chunks": SCAN_MAX_CHUNKS,
+        "osm_area_lookup": OSM_AREA_LOOKUP,
         "lead_fields": LEAD_FIELDS,
         # لایهٔ عملیاتی
         "db_backend": DB_BACKEND,

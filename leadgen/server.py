@@ -42,7 +42,7 @@ from pathlib import Path
 
 from . import (analytics, campaign, config, delivery, engine as engine_mod, enrich,
                exports, geo, jobs, niches, osm_tags, pipeline, regions, scoring, smart,
-               storage)
+               storage, watchlist)
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
@@ -584,7 +584,22 @@ class Handler(BaseHTTPRequestHandler):
 
         # ── جست‌وجوی قوی در همهٔ داده‌های جمع‌شده (تمام اجراها) ──────────────
         if path == "/api/search":
-            return self._json(storage.search_leads(**self._search_params(query)))
+            params = self._search_params(query)
+            mode = (query.get("fresh") or query.get("only") or "").strip().lower()
+            fresh_only = mode in ("1", "true", "new", "fresh", "only_new", "new_only")
+            seen_only = mode in ("repeat", "seen", "old", "duplicate")
+            if not (fresh_only or seen_only):
+                return self._json(storage.search_leads(**params))
+            limit, offset = params["limit"], params["offset"]
+            params["limit"] = 2000
+            params["offset"] = 0
+            data = storage.search_leads(**params)
+            fresh_rows, seen_rows, stats = self._split_fresh(data.get("leads") or [])
+            picked = fresh_rows if fresh_only else seen_rows
+            data["leads"] = picked[offset:offset + limit]
+            data["total"] = len(picked)
+            data["fresh"] = stats
+            return self._json(data)
 
         if path == "/api/search/export":
             return self._search_export(query)
@@ -635,6 +650,21 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/worker/tick":
             # GET هم پشتیبانی می‌شود تا کرون/پینگر بیرونی (بدون JS) صف را جلو ببرد.
             return self._worker_tick(query)
+
+        # ── دیدبان: «هر هفته این شهر/صنف، فقط تازه‌ها» ────────────────────
+        if path == "/api/watchlist/tick":
+            return self._watchlist_tick(query)
+        if path == "/api/watchlist":
+            return self._json(watchlist.overview())
+        match = re.fullmatch(r"/api/watchlist/([\w\-]+)/new", path)
+        if match:
+            item = storage.get_watch(match.group(1))
+            if not item:
+                raise ApiError("دیدبان پیدا نشد.", 404)
+            rows = watchlist.only_new_leads(item.get("last_run_id") or "",
+                                            limit=_int(query.get("limit"), 100) or 100)
+            return self._json({"watch": item, "leads": rows, "count": len(rows),
+                               "run_id": item.get("last_run_id") or ""})
 
         if path == "/api/worker":
             stats = storage.queue_stats()
@@ -723,6 +753,53 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/worker/tick" and method == "POST":
             return self._worker_tick(query)
 
+        # ── دیدبان: ساخت/ویرایش/حذف/اجرای فوری ─────────────────────────────
+        if path == "/api/watchlist/tick" and method in ("GET", "POST"):
+            return self._watchlist_tick(query)
+        if path == "/api/watchlist" and method == "POST":
+            body = self._read_json()
+            try:
+                item = watchlist.create(body)
+            except ValueError as exc:
+                raise ApiError(str(exc)) from exc
+            return self._json({"ok": True, "watch": item,
+                               "label": watchlist.label_for(item),
+                               "items": watchlist.overview().get("items") or []}, 201)
+
+        match = re.fullmatch(r"/api/watchlist/([\w\-]+)/run", path)
+        if match and method == "POST":
+            item = storage.get_watch(match.group(1))
+            if not item:
+                raise ApiError("دیدبان پیدا نشد.", 404)
+            result = watchlist.run_now(item)
+            if jobs.queue_mode_active():
+                note = "در صف اجرا — ورکر/تپش بعدی تمامش می‌کند."
+            else:
+                # محلی: همان کار را در رشته‌ای پس‌زمینه اجرا می‌کنیم (پاسخ سریع بماند)
+                from . import worker as worker_mod
+                threading.Thread(target=worker_mod.run_worker,
+                                 kwargs={"once": True, "max_jobs": 1},
+                                 name=f"watch-{item['id']}", daemon=True).start()
+                note = "اجرا شروع شد؛ فقط تازه‌ها ذخیره می‌شوند."
+            record_progress(result["run_id"], {
+                "stage": "queued", "status": "queued", "percent": 1,
+                "message": f"دیدبان «{watchlist.label_for(item)}» — {note}",
+                "run_id": result["run_id"], "job_id": result["job_id"]})
+            return self._json({"ok": True, "note": note, **result}, 202)
+
+        match = re.fullmatch(r"/api/watchlist/([\w\-]+)", path)
+        if match and method in ("POST", "PATCH", "PUT"):
+            body = self._read_json()
+            item = watchlist.update(match.group(1), body)
+            if not item:
+                raise ApiError("دیدبان پیدا نشد.", 404)
+            return self._json({"ok": True, "watch": item,
+                               "label": watchlist.label_for(item)})
+
+        if match and method == "DELETE":
+            return self._json({"deleted": watchlist.delete(match.group(1)),
+                               "id": match.group(1)})
+
         match = re.fullmatch(r"/api/runs/([\w\-]+)/enrich", path)
         if match and method == "POST":
             body = self._read_json()
@@ -744,6 +821,10 @@ class Handler(BaseHTTPRequestHandler):
             except engine_mod.EngineError as exc:
                 raise ApiError(str(exc), 404)
             return self._json(result)
+
+        match = re.fullmatch(r"/api/runs/([\w\-]+)/continue", path)
+        if match and method == "POST":
+            return self._continue_scan(match.group(1))
 
         match = re.fullmatch(r"/api/runs/([\w\-]+)/rescore", path)
         if match and method == "POST":
@@ -906,8 +987,9 @@ class Handler(BaseHTTPRequestHandler):
             except (KeyError, ValueError):
                 return default
 
-        rows = storage.load_leads(
-            run_id,
+        limit = as_int("limit", 200) or 200
+        offset = as_int("offset", 0) or 0
+        filters = dict(
             segment=query.get("segment") or None,
             status=query.get("status") or None,
             channel=query.get("channel") or None,
@@ -916,21 +998,40 @@ class Handler(BaseHTTPRequestHandler):
             min_score=as_int("min_score"),
             sort=query.get("sort", "score"),
             order=query.get("order", "desc"),
-            limit=as_int("limit", 200) or 200,
-            offset=as_int("offset", 0) or 0,
         )
+        # «فقط تازه‌ها» سمت سرور: تکراری‌بودن بر اساس سابقهٔ همین place_id در
+        # اجراهای دیگر سنجیده می‌شود (نه برچسبِ لحظهٔ اجرا) — پس حتی برای اجرای
+        # قدیمی هم درست جواب می‌دهد. صفحه‌بندی دستی است تا offset روی مجموعهٔ
+        # فیلترشده اعمال شود، نه روی همهٔ لیدها.
+        mode = (query.get("fresh") or query.get("only") or "").strip().lower()
+        fresh_only = mode in ("1", "true", "new", "fresh", "only_new", "new_only")
+        seen_only = mode in ("repeat", "seen", "old", "duplicate")
+        fresh_stats = None
+        if fresh_only or seen_only:
+            rows = storage.load_leads(run_id, limit=5000, offset=0, **filters)
+            fresh_rows, seen_rows, fresh_stats = self._split_fresh(rows, exclude_run=run_id)
+            picked = fresh_rows if fresh_only else seen_rows
+            total_matched = len(picked)
+            rows = picked[offset:offset + limit]
+        else:
+            rows = storage.load_leads(run_id, limit=limit, offset=offset, **filters)
+            total_matched = storage.count_leads(run_id)
         # برچسب‌های فارسی شکاف‌ها و وضعیت در پایگاه‌داده ذخیره نشده‌اند → همین‌جا ساخته می‌شوند
         for row in rows:
             row["gaps_fa"] = [scoring.GAP_FA.get(g, g) for g in (row.get("gaps") or [])]
             row["channel_fa"] = campaign.CHANNEL_FA.get(row.get("channel"), row.get("channel"))
             if not row.get("maps_link"):
                 row["maps_link"] = enrich.maps_link(row)
-        return self._json({
+        payload = {
             "leads": rows,
             "count": len(rows),
-            "total": storage.count_leads(run_id),
+            "total": total_matched,
+            "run_total": storage.count_leads(run_id),
             "statuses": storage.LEAD_STATUS_FA,
-        })
+        }
+        if fresh_stats:
+            payload["fresh"] = fresh_stats
+        return self._json(payload)
 
     def _osm_diag(self, query: dict) -> dict:
         """یک درخواست واقعی به Overpass برای یک شهر/صنف و برگرداندن آمار و نمونه.
@@ -1034,6 +1135,38 @@ class Handler(BaseHTTPRequestHandler):
             "sample": sample,
             "error": error,
         }
+
+    @staticmethod
+    def _split_fresh(rows: list[dict], *, exclude_run: str = "") -> tuple[list, list, dict]:
+        """ردیف‌ها را به «تازه» و «قبلاً دیده‌شده» تقسیم می‌کند و برچسب signals می‌زند.
+
+        ملاک، وجود همان `place_id` در اجراهای دیگر است (نه برچسبِ لحظهٔ اجرا)؛ پس
+        فیلتر برای اجراهای قدیمی هم درست است.
+        """
+        ids = [str(r.get("place_id") or "") for r in rows if r.get("place_id")]
+        extra: dict = {}
+        try:
+            seen = storage.seen_places(ids, exclude_run=exclude_run) if ids else {}
+        except Exception as exc:  # noqa: BLE001 — فیلتر نباید صفحه را بشکند
+            seen = {}
+            extra["error"] = f"{type(exc).__name__}: {exc}"
+        fresh_rows, seen_rows = [], []
+        for row in rows:
+            pid = str(row.get("place_id") or "")
+            first_seen = seen.get(pid)
+            if not isinstance(row.get("signals"), dict):
+                row["signals"] = {}
+            if first_seen:
+                row["signals"]["repeat"] = True
+                row["signals"]["first_seen_run"] = first_seen
+                seen_rows.append(row)
+            else:
+                row["signals"].pop("repeat", None)
+                row["signals"].pop("first_seen_run", None)
+                fresh_rows.append(row)
+        stats = {**extra, "new": len(fresh_rows), "repeat": len(seen_rows),
+                 "total": len(rows)}
+        return fresh_rows, seen_rows, stats
 
     def _search_params(self, query: dict) -> dict:
         """پارامترهای جست‌وجوی قوی از کوئری‌استرینگ (یک تعریف، دو مصرف)."""
@@ -1196,6 +1329,34 @@ class Handler(BaseHTTPRequestHandler):
                                "«لغو دریافت» را در هر پیام نگه دارید (GDPR / CCPA / CAN-SPAM). "
                                "از ارسال انبوه بدون شخصی‌سازی خودداری کنید.")})
 
+    def _watchlist_tick(self, query: dict) -> None:
+        """دیدبان‌های رسیده را اجرا می‌کند (کرون روزانهٔ Supabase همین را صدا می‌زند).
+
+        در حالت صف (ابر) کار در صف گذاشته می‌شود تا ورکر/تپش بعدی تمامش کند؛
+        محلی و بدون صف، همان‌جا با پایپ‌لاین اجرا می‌شود (با سقف ۱ دیدبان تا در
+        بودجهٔ زمانی یک درخواست جا شود).
+        """
+        limit = max(1, min(10, _int(query.get("limit"), 5)))
+        if jobs.queue_mode_active():
+            result = watchlist.tick(limit=limit)
+        else:
+            def runner(request_dict: dict):
+                outcome = pipeline.run_scrape(
+                    pipeline.ScrapeRequest.from_dict(request_dict))
+                try:
+                    watchlist.maybe_deliver(outcome.run_id, request_dict,
+                                            outcome.analytics)
+                except Exception as exc:  # noqa: BLE001 — ایمیل نباید اجرا را بشکند
+                    outcome.warnings.append(
+                        f"ایمیل دیدبان ناموفق: {type(exc).__name__}: {exc}")
+                return outcome
+            result = watchlist.tick(limit=min(limit, 1), runner=runner)
+        result["mode"] = "queue" if jobs.queue_mode_active() else "inline"
+        overview = watchlist.overview()
+        result["overview"] = {k: overview.get(k) for k in
+                              ("total", "active", "due_now", "next_due_at")}
+        return self._json(result)
+
     def _worker_tick(self, query: dict) -> None:
         """یک کار از صف را همین‌جا (در تابع serverless) اجرا می‌کند.
 
@@ -1289,6 +1450,48 @@ class Handler(BaseHTTPRequestHandler):
             payload["wait_seconds"] = jobs.wait_time(stats["oldest_wait_s"])
         return payload
 
+    def _continue_scan(self, run_id: str) -> None:
+        """ادامهٔ اسکراب نیمه‌کاره — همان اجرا، بخش بعدی (بقیهٔ کاشی‌ها/شهرها)."""
+        run = storage.get_run(run_id)
+        if not run:
+            raise ApiError("اجرای موردنظر پیدا نشد.", 404)
+        pack = run.get("analytics") if isinstance(run.get("analytics"), dict) else {}
+        scan = (pack or {}).get("scan") or {}
+        if not scan.get("full"):
+            raise ApiError("این اجرا اسکراب کامل منطقه نبود؛ چیزی برای ادامه نمانده.", 400)
+        remaining = list(scan.get("remaining") or [])
+        if not remaining:
+            return self._json({"run_id": run_id, "done": True,
+                               "message": "همهٔ بخش‌های این منطقه قبلاً اسکراب شده است."})
+        base = dict(scan.get("request") or {})
+        if not base.get("niche_query") and not base.get("keywords"):
+            base["niche_query"] = run.get("niche_fa") or "همهٔ کسب‌وکارها"
+        base.update({"resume_of": run_id, "run_id": run_id, "area_applied": False,
+                     "resume_state": {"done": list(scan.get("labels_done") or []),
+                                      "chunk": int(scan.get("chunk") or 0) + 1}})
+        if jobs.queue_mode_active():
+            payload = dict(base)
+            payload["run_id"] = run_id
+            payload["resume_of"] = run_id
+            # شناسهٔ کار همان run_id است تا جدول صف یک اسکراب را یک ردیف نشان دهد
+            storage.enqueue_job(run_id, payload, priority=4)
+            record_progress(run_id, {
+                "stage": "queued", "status": "queued", "percent": 2,
+                "message": f"بخش بعدی اسکراب در صف — {len(remaining)} بخش باقی‌مانده",
+                "run_id": run_id, "job_id": run_id})
+            return self._json({"queued": True, "job_id": run_id, "run_id": run_id,
+                               "remaining": len(remaining),
+                               "message": f"{len(remaining)} بخش باقی‌مانده در صف گذاشته شد."},
+                              202)
+        result = pipeline.run_scrape(pipeline.ScrapeRequest.from_dict(base))
+        record_progress(result.run_id, {
+            "stage": "done", "status": "done", "percent": 100,
+            "message": f"بخش بعدی تمام شد — {result.stats.get('total', 0)} لید",
+            "run_id": result.run_id, "stats": result.stats})
+        return self._json({"run_id": result.run_id, "total": result.stats.get("total", 0),
+                           "scan": (result.analytics or {}).get("scan") or {},
+                           "queued": False})
+
     def _start_run(self, body: dict) -> None:
         """اجرا را در یک رشته پس‌زمینه شروع می‌کند و فوراً شناسه را برمی‌گرداند."""
         request = pipeline.ScrapeRequest.from_dict(body)
@@ -1305,7 +1508,12 @@ class Handler(BaseHTTPRequestHandler):
         request_dict = {k: getattr(request, k) for k in request.__dataclass_fields__}
         storage.create_run({
             "id": preview_id, "created_at": time.time(), "status": "pending",
-            "city": request.city_query, "niche_fa": request.niche_query,
+            "city": request.city_query, "city_key": request.city_key,
+            "province": request.province, "district": request.district,
+            "street": request.street, "area_label": request.area_label,
+            "area_level": request.area_level or ("city" if request.city_key else ""),
+            "country": getattr(request, "country", ""),
+            "lat": request.lat, "lon": request.lon, "niche_fa": request.niche_query,
             "keywords": request.keywords, "depth": request.depth,
             "grid": request.grid or 1, "profile": request.profile,
             "socials": request.socials, "emails": request.emails,

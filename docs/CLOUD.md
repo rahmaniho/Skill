@@ -225,6 +225,35 @@ python3 scripts/engine_proxy.py --port 8081 --api-key "<کلید>"
 
 ---
 
+## ۳٫۵) اسکراب کامل منطقه — «هیچ داده‌ای جا نماند»
+
+هر جست‌وجوی Nominatim حداکثر ۴۰ نتیجه می‌دهد؛ یعنی در یک شهر شلوغ «۴۰ کافه از ۳۰۰
+کافه». برای همین هر اجرای واقعی به‌طور پیش‌فرض **کاشی‌بندی** می‌شود:
+
+| سطح | برنامهٔ اسکراب |
+| --- | --- |
+| خیابان/منطقه | یک جعبهٔ دقیق از OSM (کل خیابان، نه یک نقطه) |
+| شهر | شبکهٔ ۲×۲ تا ۴×۴ بر اساس وسعت (تهران ۹، یزد ۴ کاشی) |
+| استان | **همهٔ** شهرهای استان (تا ۴۰)، نه فقط چند شهر پرجمعیت |
+
+اگر بودجهٔ زمانی یک اجرا تمام شود، بقیهٔ بخش‌ها در گزارش اجرا می‌مانند و:
+
+* ورکر خودکار بخش بعدی را با همان `run_id` در صف می‌گذارد (`SCAN_MAX_CHUNKS`)،
+* یا کاربر با `POST /api/runs/<id>/continue` (دکمهٔ «▶️ ادامهٔ اسکراب» در «نوا») ادامه می‌دهد.
+
+پاسخ `/api/runs/<id>` فیلد `analytics.scan` را دارد:
+
+```json
+{"full": true, "chunk": 0, "total": 9, "done": 4,
+ "labels_done": ["تهران · کاشی 1/9", "…"],
+ "remaining": ["تهران · کاشی 5/9", "…"],
+ "tiles": [{"label": "تهران · کاشی 1/9", "rows": 12, "via": "nominatim", "error": ""}]}
+```
+
+تنظیم‌ها: `SCAN_TILES=1` (کاشی‌بندی)، `SCAN_MAX_TILES=16` (سقف کاشی شهر)،
+`SCAN_MAX_BOXES=40` (سقف شهرهای استان)، `SCAN_MAX_CHUNKS=8` (چند بخش خودکار)،
+`OSM_AREA_LOOKUP=0` (خاموش‌کردن جست‌وجوی جعبهٔ خیابان در OSM).
+
 ## ۴) Gmail — تحویل خروجی
 
 دو نوع خروجی ساخته می‌شود:
@@ -257,6 +286,32 @@ GMAIL_SENDER=you@gmail.com
 GMAIL_APP_PASSWORD=xxxxxxxxxxxxxxxx
 DIGEST_TO=you@company.com
 ```
+
+### ۴٫۲٫۱ دیدبان شهر — «هر هفته، فقط تازه‌ها»
+
+یک دیدبان = یک منطقه + یک صنف + یک بازهٔ تکرار. سرور هر روز دیدبان‌های «رسیده» را
+می‌بیند و برایشان اجرای واقعی در صف می‌گذارد؛ در پایانِ اسکراب، فقط کسب‌وکارهایی که
+در **هیچ اجرای قبلی** نبوده‌اند ایمیل می‌شوند. تکراری‌ها هیچ‌وقت دوباره فرستاده نمی‌شوند.
+
+```bash
+# ساخت دیدبان (شهر یا استان + صنف یا all_niches)
+curl -s -X POST https://<app>.vercel.app/api/watchlist \
+  -H 'Content-Type: application/json' \
+  -d '{"city":"یزد","niche_query":"کافه","interval_days":7}' | python3 -m json.tool
+
+curl -s https://<app>.vercel.app/api/watchlist | python3 -m json.tool   # فهرست + نوبت بعدی
+curl -s "https://<app>.vercel.app/api/watchlist/tick?limit=5"           # اجرای رسیده‌ها
+curl -s -X POST https://<app>.vercel.app/api/watchlist/<id>/run         # همین حالا
+curl -s "https://<app>.vercel.app/api/watchlist/<id>/new?limit=50"      # فقط تازه‌های آخرین اجرا
+```
+
+نصب روی Supabase (یک‌بار):
+
+1. `supabase/watchlist.sql` را در SQL Editor اجرا کنید (جدول `public.watchlist`).
+2. `supabase/cron_watchlist.sql` را اجرا کنید تا هر روز ساعت ۶:۱۰ UTC تیک بخورد.
+
+> بدون کرون هم کار می‌کند: هر بار تب «کارها» را باز کنید، تیک از رابط هم زده می‌شود
+> (`▶️ اجرای دیدبان‌های رسیده`).
 
 ### ۴٫۳ بازبینی بدون ارسال
 ```bash

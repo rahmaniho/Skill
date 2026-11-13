@@ -102,6 +102,10 @@ def process_job(job: dict, *, engine_mode: str | None = None, quiet: bool = Fals
         storage.finish_job(job_id, "done")
         _log(f"✔ تمام شد — {summary['total']} لید ({summary['hot']} داغ) "
              f"در {summary['seconds']} ثانیه · موتور: {summary['engine']}", quiet=quiet)
+        continued = _queue_continuation(result, quiet=quiet)
+        if not continued:
+            # اجرای دیدبانی: فقط وقتی همهٔ بخش‌های منطقه تمام شد، ایمیل «تازه‌ها»
+            _deliver_watch(result, request_dict, quiet=quiet)
         if deliver:
             _deliver_after_run(summary, quiet=quiet)
         return summary
@@ -113,6 +117,63 @@ def process_job(job: dict, *, engine_mode: str | None = None, quiet: bool = Fals
             traceback.print_exc()
         return {"job_id": job_id, "run_id": run_id, "ok": False, "error": detail,
                 "seconds": round(time.time() - started, 1)}
+
+
+def _queue_continuation(result, *, quiet: bool = False) -> bool:
+    """بخش بعدی اسکراب کامل را خودکار در صف می‌گذارد (بدون دخالت کاربر).
+
+    چرا؟ یک اجرای استانی/شهری بزرگ در بودجهٔ زمانی یک تابع serverless جا
+    نمی‌شود. اجرا بخشی را انجام می‌دهد، می‌گوید بقیه کجاست و بلافاصله کار بعدی
+    با همان run_id در صف می‌نشیند؛ نتیجه: «هیچ داده‌ای جا نمی‌ماند».
+    """
+    continuation = (getattr(result, "stats", None) or {}).get("continuation")
+    if not continuation:
+        return False
+    try:
+        if not jobs.queue_mode_active():
+            return False
+        payload = dict(continuation.get("request") or {})
+        run_id = continuation.get("run_id") or payload.get("run_id")
+        payload["run_id"] = run_id
+        payload["resume_of"] = run_id
+        chunk = int(continuation.get("chunk") or 1)
+        # شناسهٔ کار همان run_id است (هر بخش، همان ردیف را دوباره زنده می‌کند) تا
+        # جدول صف یک اسکراب را یک ردیف نشان دهد، نه چند تکهٔ پراکنده.
+        storage.enqueue_job(run_id, payload, priority=3)
+        _log(f"↻ بخش {chunk} اسکراب در صف گذاشته شد "
+             f"({continuation.get('remaining')} بخش باقی‌مانده)", quiet=quiet)
+        storage.update_run(run_id, progress={
+            "stage": "queued", "status": "queued", "percent": 2,
+            "message": f"بخش {chunk} اسکراب در صف — "
+                       f"{continuation.get('remaining')} بخش باقی‌مانده",
+            "run_id": run_id})
+        return True
+    except Exception as exc:  # noqa: BLE001 — شکست صف نباید نتیجهٔ اجرا را خراب کند
+        _log(f"⚠ صف کردن بخش بعدی نشد: {type(exc).__name__}: {exc}", quiet=quiet)
+        return False
+
+
+def _deliver_watch(result, request_dict: dict, *, quiet: bool = False) -> None:
+    """اگر اجرا از «دیدبان» آمده، ایمیل «فقط تازه‌ها» را می‌فرستد (اگر تنظیم شده)."""
+    if not (request_dict or {}).get("watch_id"):
+        return
+    try:
+        from . import watchlist
+        outcome = watchlist.maybe_deliver(
+            getattr(result, "run_id", ""), request_dict, getattr(result, "analytics", None))
+    except Exception as exc:  # noqa: BLE001 — ایمیل نباید نتیجهٔ اجرا را خراب کند
+        _log(f"⚠ ایمیل دیدبان ناموفق: {type(exc).__name__}: {exc}", quiet=quiet)
+        return
+    if not outcome:
+        return
+    status = outcome.get("status")
+    if status == "deferred":
+        _log(f"👁 دیدبان: ایمیل تا تمام‌شدن بخش‌های اسکراب عقب افتاد "
+             f"({outcome.get('remaining')} بخش)", quiet=quiet)
+    elif status == "empty":
+        _log("👁 دیدبان: چیز تازه‌ای نبود؛ ایمیلی فرستاده نشد", quiet=quiet)
+    else:
+        _log(f"👁 دیدبان: {outcome.get('shown', 0)} تازه → ایمیل {status}", quiet=quiet)
 
 
 def _process_enrich_job(job: dict, request_dict: dict, *, quiet: bool = False) -> dict:

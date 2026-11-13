@@ -515,6 +515,9 @@ class OSMEngine:
         # (لایهٔ بالاتر با این گزارش صادقانه می‌گوید کدام شهر داده نداشت.)
         self.coverage: list[dict] = []
         self.attempts: list[dict] = []      # هر تلاش جست‌وجوی متنی: {term, rows, city}
+        # گزارش «اسکراب کامل»: هر کاشی/شهر چه تعداد ردیف داد (لایهٔ بالا با این
+        # گزارش می‌گوید کدام بخش‌ها انجام شده و کدام مانده — پایهٔ «ادامهٔ اسکراب»).
+        self.tile_coverage: list[dict] = []
 
     def health(self) -> dict:
         from .providers import osm
@@ -577,6 +580,7 @@ class OSMEngine:
 
         self.coverage = []
         self.attempts = []
+        self.tile_coverage = []
         # جعبه‌های جست‌وجو: یا یک جعبهٔ شهر، یا چند شهر برای جست‌وجوی سطح استان
         sweep_boxes: list[dict] = []
         for item in (body.get("sweep_boxes") or []):
@@ -881,6 +885,81 @@ class OSMEngine:
                             "message": f"[OSM] در شهر نبود؛ {len(broad)} مورد از کل "
                                        f"{prov_label} اضافه شد (خارج از محدودهٔ شهر)."})
                     continue
+
+        # ── اسکراب کامل: کاشی‌به‌کاشی پر کردن جاهای خالی ────────────────────
+        # جست‌وجوی شهر یک‌جا به سقف ۴۰ نتیجهٔ Nominatim می‌خورد؛ در محله‌های
+        # شلوغ یعنی «۴۰ کافه از ۳۰۰ کافه». این گذر هر کاشی را جدا می‌پرسد تا
+        # تعداد لیدها به تعداد واقعی کسب‌وکارهای همان منطقه وابسته باشد.
+        tiles: list[dict] = []
+        for item in (body.get("scan_tiles") or []):
+            if isinstance(item, dict) and isinstance(item.get("bbox"), (list, tuple)) \
+                    and len(item["bbox"]) == 4:
+                try:
+                    tiles.append({"label": str(item.get("label") or ""),
+                                  "bbox": [float(x) for x in item["bbox"]]})
+                except (TypeError, ValueError):
+                    continue
+        if tiles:
+            fill_terms = (category_terms[:2] or terms[:2])
+            if not fill_terms:
+                fill_terms = terms[:1]
+
+            def _same_box(first, second) -> bool:
+                """آیا کاشی همان جعبهٔ اصلی است؟ (آن‌وقت پرسش دوباره لازم نیست)"""
+                try:
+                    return all(abs(float(x) - float(y)) < 1e-4
+                               for x, y in zip(first, second))
+                except (TypeError, ValueError):
+                    return False
+
+            for tile_index, tile in enumerate(tiles, start=1):
+                if bbox and _same_box(tile["bbox"], bbox):
+                    # کل شهر/خیابان یک‌جا پرسیده شد و همان نتایج در دست است؛
+                    # این کاشی «پوشش کامل» دارد و دوباره شبکه را اذیت نمی‌کنیم.
+                    self.tile_coverage.append({"label": tile["label"], "rows": len(rows),
+                                               "via": "main", "error": ""})
+                    tried.append(f"tile:{tile['label']}")
+                    continue
+                left = budget - (time.time() - started)
+                if left < 5:
+                    self.tile_coverage.append({"label": tile["label"], "rows": 0, "via": "",
+                                               "error": "بودجهٔ زمانی تمام شد"})
+                    continue
+                if on_progress:
+                    on_progress({"stage": "working", "status": "working",
+                                 "percent": 40 + int(55 * (tile_index - 1) / max(1, len(tiles))),
+                                 "job_id": body.get("name") or "osm",
+                                 "message": f"[OSM] اسکراب کامل — {tile['label']} "
+                                            f"({tile_index}/{len(tiles)})"})
+                added = 0
+                seen = {r.get("place_id") for r in rows}
+                for term in fill_terms:
+                    left = budget - (time.time() - started)
+                    if left < 5:
+                        break
+                    try:
+                        got = osm.search(term, bbox=tile["bbox"], country=country,
+                                         limit=config.OSM_LIMIT, timeout=min(10.0, left),
+                                         lang=lang, input_id=term,
+                                         pages=2 if left >= 9 else 1)
+                    except OSMDownError as exc:
+                        errors.append(f"tile {tile['label']} «{term}»: {exc}")
+                        self.attempts.append({"term": term, "rows": 0, "city": tile["label"],
+                                              "error": type(exc).__name__})
+                        continue
+                    self.attempts.append({"term": term, "rows": len(got),
+                                          "city": tile["label"], "error": ""})
+                    fresh = [r for r in got if r.get("place_id") not in seen]
+                    if fresh:
+                        seen.update(r.get("place_id") for r in fresh)
+                        rows.extend(fresh)
+                        added += len(fresh)
+                    if added >= 25:            # به قدر کافی از این کاشی گرفتیم
+                        break
+                tried.append(f"tile:{tile['label']}")
+                self.tile_coverage.append({"label": tile["label"], "rows": added,
+                                           "via": "nominatim" if added else "",
+                                           "error": "" if added else "چیزی نیافت"})
 
         # ── سد نهایی: بیرون از محدوده = دور ریخته ────────────────────────────
         if strict_region and region_box:

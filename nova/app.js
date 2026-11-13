@@ -21,7 +21,7 @@
     niche: { label: "همهٔ کسب‌وکارها", query: "" },
     run: null,               // {run_id, title}
     pollTimer: null,
-    filters: { q: "", segment: "", status: "", run_id: "", has: {} },
+    filters: { q: "", segment: "", status: "", run_id: "", fresh: "", has: {} },
     sort: "score",
     view: "cards",
     offset: 0,
@@ -207,6 +207,30 @@
         email: { before: 0, after: 0 }, social: { before: 0, after: 0 } });
       return jsend("api/runs/" + encodeURIComponent(runId) + "/enrich", "POST",
                    opts || { queue: true, budget: 30 });
+    },
+    watchlist: function () {
+      if (S.mode === "demo") return Promise.resolve({ items: [], total: 0, active: 0, due_now: 0, interval_default: 7 });
+      return jget("api/watchlist");
+    },
+    addWatch: function (payload) {
+      if (S.mode === "demo") return Promise.resolve({ ok: true, demo: true, watch: payload });
+      return jsend("api/watchlist", "POST", payload || {});
+    },
+    delWatch: function (id) {
+      if (S.mode === "demo") return Promise.resolve({ deleted: true });
+      return jsend("api/watchlist/" + encodeURIComponent(id), "DELETE", {});
+    },
+    runWatch: function (id) {
+      if (S.mode === "demo") return Promise.resolve({ ok: true, demo: true });
+      return jsend("api/watchlist/" + encodeURIComponent(id) + "/run", "POST", {});
+    },
+    tickWatch: function () {
+      if (S.mode === "demo") return Promise.resolve({ due: 0, queued: [] });
+      return jget("api/watchlist/tick?limit=5");
+    },
+    continueScan: function (runId) {
+      if (S.mode === "demo") return Promise.resolve({ done: true, demo: true });
+      return jsend("api/runs/" + encodeURIComponent(runId) + "/continue", "POST", {});
     },
     runDetail: function (runId) {
       if (S.mode === "demo") return Promise.resolve({ run: {}, analytics: {} });
@@ -507,14 +531,16 @@
     var fc = $("filterChips");
     fc.innerHTML = Object.keys(HAS_FA).map(function (k) {
       return '<button class="chip" data-has="' + k + '" data-on="' + (S.filters.has[k] ? 1 : 0) + '">' + HAS_FA[k] + "</button>";
-    }).join("") + '<button class="chip" data-status="new" data-on="' + (S.filters.status === "new" ? 1 : 0) + '">🆕 فقط جدید</button>';
+    }).join("") + '<button class="chip" data-status="new" data-on="' + (S.filters.status === "new" ? 1 : 0) + '">🆕 فقط جدید</button>' +
+      '<button class="chip" data-fresh="new" data-on="' + (S.filters.fresh === "new" ? 1 : 0) + '" title="فقط چیزهایی که در هیچ اجرای قبلی نبوده‌اند">✨ فقط تازه‌ها</button>' +
+      '<button class="chip" data-fresh="repeat" data-on="' + (S.filters.fresh === "repeat" ? 1 : 0) + '" title="فقط چیزهایی که قبلاً هم دیده شده‌اند">🔁 قبلاً دیده‌شده</button>';
   }
   function loadLeads(append) {
     var list = $("leadList");
     if (!append) { S.offset = 0; list.innerHTML = N.skeletonCards(4); }
     var p = {
       q: S.filters.q, segment: S.filters.segment, status: S.filters.status, run_id: S.filters.run_id,
-      sort: S.sort, limit: PAGE, offset: S.offset
+      fresh: S.filters.fresh, sort: S.sort, limit: PAGE, offset: S.offset
     };
     Object.keys(S.filters.has).forEach(function (k) { if (S.filters.has[k]) p[k] = 1; });
     API.leads(p).then(function (j) {
@@ -662,15 +688,132 @@
     }, function (e) { $("runList").innerHTML = '<div class="empty"><span class="ico">⚠️</span><b>' + esc(e.message) + "</b></div>"; });
   }
   function openRun(id) {
-    API.progress(id).then(function (j) {
-      var p = j.progress || {};
+    Promise.all([API.progress(id), API.runDetail(id)]).then(function (both) {
+      var p = ((both[0] || {}).progress) || {};
+      var detail = both[1] || {};
+      var scan = ((detail.analytics || {}).scan) || {};
+      var scanHtml = "";
+      if (scan.full) {
+        var pct = scan.total ? Math.round(100 * (scan.done || 0) / scan.total) : 0;
+        var left = (scan.remaining || []).length;
+        scanHtml = '<div class="sheet-section"><b>پوشش اسکراب منطقه</b>' + N.barHtml(pct) +
+          '<p class="muted" style="margin:0">' + fa(scan.done || 0) + " از " + fa(scan.total || 0) +
+          " بخش («" + esc((scan.tiles || []).length ? "کاشی‌به‌کاشی" : "شهر‌به‌شهر") + "») اسکراب شد. " +
+          (left ? fa(left) + " بخش باقی مانده — با دکمهٔ زیر ادامه بده."
+                : "کل منطقه پوشش داده شد ✓") + "</p>" +
+          (left ? '<div class="chips"><button class="chip" data-act="run-continue" data-id="' +
+                  esc(id) + '">▶️ ادامهٔ اسکراب</button></div>' : "") + "</div>";
+      }
       var html = '<div class="sheet-section"><b>پیشرفت</b>' + N.barHtml(p.percent || 0) +
-        '<p class="muted" style="margin:0">' + esc(p.message || "—") + "</p></div>" +
+        '<p class="muted" style="margin:0">' + esc(p.message || "—") + "</p></div>" + scanHtml +
         '<div class="chips"><button class="chip" data-act="run-leads" data-id="' + esc(id) + '">📇 لیدهاش رو ببین</button>' +
         '<button class="chip" data-act="run-export" data-id="' + esc(id) + '" data-fmt="xlsx">⬇️ اکسل</button>' +
         '<button class="chip" data-act="run-export" data-id="' + esc(id) + '" data-fmt="csv">⬇️ CSV</button>' +
         '<button class="chip" data-act="run-del" data-id="' + esc(id) + '">🗑 حذف کار</button></div>';
       N.sheet("جزئیات کار", html);
+    }, function (e) { N.toast(e.message, "err"); });
+  }
+
+  function continueScan(runId) {
+    N.toast("بقیهٔ منطقه رو می‌فرستم برای اسکراب…", "ok");
+    API.continueScan(runId).then(function (r) {
+      if (r && r.done) { N.toast(r.message || "همه‌جا اسکراب شده بود", "ok"); return; }
+      if (r && r.queued) { N.toast("در صف گذاشته شد — خودش جلو می‌ره", "ok"); return; }
+      N.toast("بخش بعدی تمام شد: " + fa((r && r.total) || 0) + " لید", "ok");
+      if (!$("view-leads").hidden) loadLeads(false);
+    }, function (e) { N.toast(e.message, "err"); });
+  }
+
+  /* ────────────────────────── دیدبان شهر ────────────────────────── */
+  function watchItemHtml(w) {
+    var days = (w.days_left == null)
+      ? "" : (w.days_left <= 0 ? "همین حالا نوبتشه" : "اجرای بعدی " + fa(Math.ceil(w.days_left)) + " روز دیگه");
+    var last = w.last_run_at
+      ? "آخرین اجرا: " + esc(ago(new Date(w.last_run_at * 1000).toISOString()))
+      : "هنوز اجرا نشده";
+    return '<article class="watch-item' + (w.due ? " is-due" : "") + '">' +
+      "<b>" + esc(w.label || "") + "</b>" +
+      "<small>هر " + fa(w.interval_days || 7) + " روز · " +
+      (w.active ? (w.due ? "🔔 " : "✅ ") : "⏸ خاموش ") + esc(days) + "</small>" +
+      "<small>" + last + " · تازه‌هاش: " + fa(w.last_new || 0) + "</small>" +
+      '<div class="watch-acts">' +
+      '<button class="chip" data-act="watch-run" data-id="' + esc(w.id) + '">▶️ همین حالا بگرد</button>' +
+      '<button class="chip" data-act="watch-new" data-id="' + esc(w.id) + '">✨ تازه‌هاش</button>' +
+      '<button class="chip" data-act="watch-del" data-id="' + esc(w.id) + '">🗑 حذف</button>' +
+      "</div></article>";
+  }
+  function loadWatches() {
+    var box = $("watchList");
+    if (!box) return;
+    box.innerHTML = N.skeletonCards(2);
+    API.watchlist().then(function (j) {
+      var items = (j && j.items) || [];
+      if (!items.length) {
+        box.innerHTML = '<div class="empty"><span class="ico">👁</span><b>هنوز دیدبانی نساختی</b>' +
+          "<span>یک شهر و صنف انتخاب کن؛ هر هفته خودش می‌گرده و فقط تازه‌ها رو ایمیل می‌کنه.</span></div>";
+      } else {
+        box.innerHTML = items.map(watchItemHtml).join("");
+      }
+      var note = $("watchNote");
+      if (note) {
+        var bits = [fa(j.active || 0) + " دیدبان روشن"];
+        if (j.due_now) bits.push(fa(j.due_now) + " تا امروز نوبتشونه");
+        var lastMail = (j.last_delivery || {}).subject;
+        if (lastMail) bits.push("آخرین ایمیل: " + lastMail);
+        note.textContent = items.length ? bits.join(" · ") : "";
+      }
+    }, function (e) {
+      box.innerHTML = '<div class="empty"><span class="ico">⚠️</span><b>' + esc(e.message) + "</b></div>";
+    });
+  }
+  function openWatchSheet() {
+    var defaultNiche = (S.niche && S.niche.query) || "";
+    var defaultCity = (S.area && S.area.label) || "";
+    N.sheet("دیدبان تازه", '<div class="sheet-section">' +
+      '<p class="muted">هر هفته همین محدوده رو خودکار اسکراب می‌کنم و فقط کسب‌وکارهای تازه رو برات ایمیل می‌کنم. تکراری‌ها فرستاده نمی‌شن.</p>' +
+      '<label class="field"><span>شهر یا استان</span><input id="wCity" class="input" value="' + esc(defaultCity) + '" placeholder="مثلاً یزد"></label>' +
+      '<label class="field"><span>صنف</span><input id="wNiche" class="input" value="' + esc(defaultNiche) + '" placeholder="مثلاً کافه"></label>' +
+      '<label class="switch"><input id="wAll" type="checkbox"><i></i><span>همهٔ کسب‌وکارها (نه یک صنف خاص)</span></label>' +
+      '<label class="field"><span>هر چند وقت؟</span><select id="wEvery" class="input">' +
+      '<option value="7">هر ۷ روز (هفتگی)</option><option value="14">هر ۱۴ روز</option>' +
+      '<option value="30">هر ۳۰ روز</option></select></label>' +
+      '<label class="field"><span>ایمیل گیرنده (اختیاری — پیش‌فرض: ایمیل تنظیم‌شده)</span>' +
+      '<input id="wMail" class="input" type="email" placeholder="boss@company.com"></label>' +
+      '<button class="btn btn-primary" data-act="watch-save">ذخیرهٔ دیدبان</button></div>');
+  }
+  function saveWatch() {
+    var allNiches = !!($("wAll") && $("wAll").checked);
+    var body = {
+      city: ($("wCity") ? $("wCity").value.trim() : ""),
+      niche_query: allNiches ? "" : ($("wNiche") ? $("wNiche").value.trim() : ""),
+      all_niches: allNiches,
+      interval_days: parseInt(($("wEvery") && $("wEvery").value) || "7", 10) || 7,
+      note: ($("wMail") && $("wMail").value.trim()) || ""
+    };
+    if (!body.all_niches && !body.niche_query) { N.toast("صنف رو بنویس یا «همهٔ کسب‌وکارها» رو بزن", "err"); return; }
+    if (!body.city) { N.toast("شهر یا استان رو بنویس", "err"); return; }
+    API.addWatch(body).then(function () {
+      N.sheetHide();
+      N.toast("دیدبان ساخته شد — هر " + fa(body.interval_days) + " روز می‌گردمش 👁", "ok");
+      loadWatches();
+    }, function (e) { N.toast(e.message, "err"); });
+  }
+  function watchNew(id) {
+    N.toast("دارم تازه‌ها رو می‌آرم…");
+    jget("api/watchlist/" + encodeURIComponent(id) + "/new?limit=50").then(function (j) {
+      var rows = j.leads || [];
+      if (!rows.length) { N.toast("هنوز دیدبان اجرا نشده یا چیز تازه‌ای نداشته", "ok"); return; }
+      S.filters.run_id = j.run_id || "";
+      S.filters.fresh = "new";
+      N.setTab("leads");
+    }, function (e) { N.toast(e.message, "err"); });
+  }
+  function watchTick() {
+    N.toast("چک می‌کنم کدوم دیدبان امروز نوبتشه…");
+    API.tickWatch().then(function (j) {
+      var n = (j.queued || []).length;
+      N.toast(n ? fa(n) + " دیدبان رفت تو صف اجرا ▶️" : "امروز هیچ دیدبانی نوبتش نبود ✅", "ok");
+      loadWatches();
     }, function (e) { N.toast(e.message, "err"); });
   }
 
@@ -1074,7 +1217,7 @@
     });
     N.onTab(function (t) {
       if (t === "leads") loadLeads(false);
-      if (t === "runs") loadRuns();
+      if (t === "runs") { loadRuns(); loadWatches(); }
       if (t === "more") renderHealth();
     });
 
@@ -1175,7 +1318,12 @@
       var b = ev.target.closest("[data-has]");
       if (b) { S.filters.has[b.dataset.has] = !S.filters.has[b.dataset.has]; loadLeads(false); return; }
       var s = ev.target.closest("[data-status]");
-      if (s) { S.filters.status = S.filters.status === "new" ? "" : "new"; loadLeads(false); }
+      if (s) { S.filters.status = S.filters.status === "new" ? "" : "new"; loadLeads(false); return; }
+      var f = ev.target.closest("[data-fresh]");
+      if (f) {
+        S.filters.fresh = S.filters.fresh === f.dataset.fresh ? "" : f.dataset.fresh;
+        loadLeads(false);
+      }
     });
     $("sortSel").addEventListener("change", function () { S.sort = $("sortSel").value; loadLeads(false); });
     $("viewToggle").addEventListener("click", function (ev) {
@@ -1205,6 +1353,23 @@
       if (act === "run-open") { openRun(el.dataset.id); return; }
       if (act === "run-leads") { S.filters.run_id = el.dataset.id; N.sheetHide(); N.setTab("leads"); return; }
       if (act === "run-export") { doExport(el.dataset.id, el.dataset.fmt || "xlsx"); return; }
+      if (act === "run-continue") { continueScan(el.dataset.id); return; }
+      if (act === "watch-add") { openWatchSheet(); return; }
+      if (act === "watch-save") { saveWatch(); return; }
+      if (act === "watch-new") { watchNew(el.dataset.id); return; }
+      if (act === "watch-tick") { watchTick(); return; }
+      if (act === "watch-run") {
+        N.toast("دیدبان رو فرستادم برای اجرا…", "ok");
+        API.runWatch(el.dataset.id).then(function () { loadWatches(); },
+          function (e) { N.toast(e.message, "err"); });
+        return;
+      }
+      if (act === "watch-del") {
+        if (!confirm("این دیدبان حذف بشه؟ (اجراهای قبلی‌اش می‌مونن)")) return;
+        API.delWatch(el.dataset.id).then(function () { N.toast("حذف شد 🗑", "ok"); loadWatches(); },
+          function (e) { N.toast(e.message, "err"); });
+        return;
+      }
       if (act === "run-del") {
         if (!confirm("این کار و لیدهاش حذف شن؟")) return;
         API.delRun(el.dataset.id).then(function () { N.sheetHide(); N.toast("حذف شد 🗑", "ok"); loadRuns(); }, function (e) { N.toast(e.message, "err"); });

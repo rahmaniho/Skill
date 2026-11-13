@@ -15,12 +15,13 @@
 """
 from __future__ import annotations
 
+import math
 import time
 import traceback
 from dataclasses import dataclass, field
 from typing import Callable
 
-from . import regions
+from . import regions, tiling
 from . import analytics, campaign, config, enrich, exports, geo, niches, osm_terms, scoring, storage
 from .engine import EmptyResult, Engine, EngineError, make_engine
 
@@ -75,6 +76,11 @@ class ScrapeRequest:
     area_level: str = ""             # street|district|city|province
     city_key: str = ""               # کلید استاندارد شهر (tehran) — انتخاب قطعی رابط
     area_unresolved: list = field(default_factory=list)  # خیابان/منطقه‌ای که پیدا نشد
+    # ── اسکراب کامل منطقه — «هیچ داده‌ای جا نماند» ────────────────────────
+    scan_full: bool = True           # کاشی‌به‌کاشی/شهر‌به‌شهر پوشش کامل منطقه
+    resume_of: str = ""              # ادامهٔ اسکراب یک اجرای نیمه‌کاره (همان شناسه)
+    resume_state: dict = field(default_factory=dict)  # بخش‌های انجام‌شده + شمارهٔ بخش
+    watch_id: str = ""               # اگر اجرا از «دیدبان» آمده، شناسهٔ آن دیدبان
     area_applied: bool = False       # آیا نقطهٔ منطقه یک‌بار محاسبه شده؟
     zoom_set: bool = False           # zoom صریحاً داده شده؟ وگرنه از سطح منطقه می‌آید
 
@@ -104,7 +110,7 @@ class ScrapeRequest:
             except (TypeError, ValueError):
                 clean.pop("bbox")
         for bool_key in ("fast_mode", "emails", "deep_emails", "socials", "signals",
-                         "keep_full_columns", "all_niches", "area_applied"):
+                         "keep_full_columns", "all_niches", "area_applied", "scan_full"):
             if bool_key in clean and clean[bool_key] is not None:
                 clean[bool_key] = bool(clean[bool_key])
         return cls(**clean)
@@ -146,7 +152,10 @@ def apply_area(request: "ScrapeRequest") -> dict:
                 "level": request.area_level, "radius": request.radius,
                 "bbox": list(request.bbox or [])}
     if not (request.province or request.district or request.street):
+        # انتخاب سادهٔ شهر: نقطه/جعبه همان شهر از resolve_city می‌آید؛ فقط سطح را
+        # علامت می‌زنیم تا اسکراب کامل (کاشی‌بندی) برای شهر هم فعال شود.
         request.area_applied = True
+        request.area_level = request.area_level or "city"
         return {"lat": request.lat, "lon": request.lon, "label": request.area_label,
                 "level": request.area_level, "radius": request.radius,
                 "bbox": list(request.bbox or [])}
@@ -190,6 +199,58 @@ def apply_area(request: "ScrapeRequest") -> dict:
         request.bbox = [float(x) for x in area["bbox"]]
     return {"lat": request.lat, "lon": request.lon, "label": request.area_label,
             "level": request.area_level, "radius": request.radius, "bbox": request.bbox}
+
+
+def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: bool,
+                     warnings: list | None = None) -> list[float]:
+    """جعبهٔ واقعیِ خیابان/محله را از OSM می‌گیرد و روی درخواست می‌گذارد.
+
+    چرا لازم است؟ `regions` برای خیابان/محله فقط یک نقطهٔ تقریبی می‌دهد و
+    اسکراب با شعاع، «تکه‌ای از خیابان» را می‌گیرد. Nominatim برای خیابان‌ها
+    جعبهٔ واقعی می‌دهد؛ همان را می‌گیریم و به محدودهٔ شهر محدود می‌کنیم تا
+    «دادهٔ جای دیگر» اسکراب نشود.
+
+    اگر سرویس در دسترس نبود، بی‌صدا به همان شعاع قبلی برمی‌گردد (اجرا نمی‌شکند).
+    """
+    if not config.OSM_AREA_LOOKUP or not allow_network or config._looks_like_unittest():
+        return list(request.bbox or [])
+    query = " ".join(x for x in (request.street, request.district,
+                                 request.city_query) if x).strip()
+    if not query:
+        return list(request.bbox or [])
+    city_box = city.get("bbox") if isinstance(city.get("bbox"), (list, tuple)) else None
+    try:
+        from .providers import osm as osm_provider
+        found = osm_provider.lookup_area(query, bbox=list(city_box) if city_box else None,
+                                         country=city.get("country") or None)
+    except Exception as exc:  # noqa: BLE001 — شبکه نباید اجرا را بشکند
+        if warnings is not None:
+            warnings.append(f"محدودهٔ دقیق «{request.area_label or query}» از OSM گرفته نشد "
+                            f"({type(exc).__name__}); با شعاع تخمینی ادامه دادیم.")
+        return list(request.bbox or [])
+    box = list(found.get("bbox") or [])
+    if len(box) != 4:
+        return list(request.bbox or [])
+    if city_box and len(city_box) == 4:
+        # برش به محدودهٔ شهر — خیابان هم‌نام در شهر دیگر نباید وارد شود
+        box = [max(float(box[0]), float(city_box[0])), min(float(box[1]), float(city_box[1])),
+               max(float(box[2]), float(city_box[2])), min(float(box[3]), float(city_box[3]))]
+        if box[1] <= box[0] or box[3] <= box[2]:
+            box = list(found.get("bbox") or [])
+    request.bbox = [float(x) for x in box]
+    request.area_unresolved = []
+    # نقطهٔ مبنا = مرکز جعبه (برای موتورهایی که فقط نقطه می‌فهمند)
+    mid_lat = (box[0] + box[1]) / 2
+    request.lat = f"{mid_lat:.6f}"
+    request.lon = f"{(box[2] + box[3]) / 2:.6f}"
+    height_km = (box[1] - box[0]) * 111
+    width_km = (box[3] - box[2]) * 111 * max(0.2, abs(math.cos(math.radians(mid_lat))))
+    span_km = max(height_km, width_km)
+    if warnings is not None:
+        warnings.append(
+            f"محدودهٔ دقیق «{request.area_label or query}» از OSM گرفته شد "
+            f"(در حدود {span_km:.1f} کیلومتر) — کل این محدوده اسکراب می‌شود.")
+    return request.bbox
 
 
 def resolve_city(query: str, lat: str = "", lon: str = "", allow_network: bool = True) -> dict:
@@ -258,10 +319,74 @@ def large_job_warning(request: ScrapeRequest, keywords: list[str]) -> list[str]:
     return warnings
 
 
+def _scan_report(engine, plan_labels: list[str], done_boxes: set, resume_state: dict,
+                 request: "ScrapeRequest",
+                 run_id: str = "") -> tuple[dict, list[str], list[str], dict | None]:
+    """گزارش «چه بخشی از منطقه اسکراب شد» + درخواست ادامهٔ خودکار.
+
+    خروجی: (scan_info, بخش‌های انجام‌شده در این اجرا, بخش‌های باقی‌مانده, continuation)
+    """
+    tile_rows = []
+    for item in (getattr(engine, "tile_coverage", None) or []):
+        tile_rows.append({"label": item.get("label") or "",
+                          "rows": int(item.get("rows") or 0),
+                          "via": item.get("via") or "",
+                          "error": item.get("error") or ""})
+    coverage = list(getattr(engine, "coverage", None) or [])
+    scan_done = []
+    scan_remaining = list(plan_labels)
+    if plan_labels:
+        tile_map = {t["label"]: t for t in tile_rows}
+        cov_map = {str(c.get("city") or ""): c for c in coverage}
+        for label in plan_labels:
+            tile = tile_map.get(label)
+            cover = cov_map.get(label)
+            attempted = bool(tile and not str(tile.get("error") or "").startswith("بودجه"))
+            attempted = attempted or bool(cover and cover.get("via"))
+            if attempted:
+                scan_done.append(label)
+        scan_remaining = [label for label in plan_labels if label not in set(scan_done)]
+    chunk = int(resume_state.get("chunk") or 0)
+    max_chunks = int(config.SCAN_MAX_CHUNKS or 8)
+    # «انجام‌شده» باید مجموع بخش‌های قبلی و همین بخش باشد؛ وگرنه در ادامهٔ
+    # اسکراب، نوار پوشش از صفر شروع می‌شود و کاربر فکر می‌کند کاری نشده.
+    labels_done = list(dict.fromkeys(scan_done + list(done_boxes)))
+    all_labels = list(dict.fromkeys(list(done_boxes) + list(plan_labels)))
+    scan_info = {
+        "full": bool(all_labels),
+        "chunk": chunk,
+        "total": len(all_labels),
+        "done": len(labels_done),
+        "labels_done": labels_done,
+        "remaining": scan_remaining,
+        "tiles": tile_rows,
+        # درخواست فشرده تا بخش بعدی دقیقاً همین اسکراب را ادامه دهد
+        "request": {k: getattr(request, k) for k in (
+            "niche_query", "keywords", "city_query", "city_key", "province", "district",
+            "street", "area_level", "area_label", "lang", "depth", "limit", "max_time",
+            "radius", "socials", "emails", "profile", "engine_mode", "bbox", "scan_full",
+            "price_range", "country", "campaign_channel", "watch_id") if hasattr(request, k)},
+    }
+    if tile_rows and len(tile_rows) > 1:
+        scan_info["tiles_with_data"] = len([t for t in tile_rows if t["rows"]])
+    continuation = None
+    if all_labels and scan_remaining and chunk + 1 < max_chunks \
+            and not getattr(request, "no_auto_continue", False):
+        cont = {k: getattr(request, k) for k in request.__dataclass_fields__}
+        this_run = run_id or request.resume_of or request.run_id
+        cont.update({"resume_of": this_run, "run_id": this_run,
+                     "resume_state": {"done": labels_done, "chunk": chunk + 1},
+                     "area_applied": False})
+        continuation = {"request": cont, "remaining": len(scan_remaining),
+                        "chunk": chunk + 1, "run_id": this_run}
+    return scan_info, scan_done, scan_remaining, continuation
+
+
 def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) -> ScrapeResult:
     """اجرای کامل پایپ‌لاین. exceptions به‌صورت اجرای failed ثبت می‌شود."""
     storage.init_db()
-    run_id = request.run_id or storage.new_run_id()
+    resuming = bool(request.resume_of)
+    run_id = request.resume_of or request.run_id or storage.new_run_id()
     warnings: list[str] = []
 
     engine: Engine = make_engine(request.engine_mode)
@@ -280,7 +405,21 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
         "grid": request.grid or 1,
         "lang": request.lang,
     }
-    storage.create_run(run_meta)
+    if resuming:
+        # بخش بعدی همان اسکراب است، نه اجرای تازه: ردیف قبلی حفظ می‌شود و
+        # لیدهای بخش‌های قبل هم دست‌نخورده می‌مانند.
+        prev: dict = {}
+        try:
+            prev = storage.get_run(run_id) or {}
+        except Exception:  # pragma: no cover - پایگاه‌داده در دسترس نیست
+            prev = {}
+        if isinstance(prev.get("created_at"), (int, float)):
+            run_meta["created_at"] = prev["created_at"]      # زمان شروع اجرا جابه‌جا نشود
+        storage.update_run(run_id, status="running", progress={
+            "stage": "working", "status": "running", "percent": 3,
+            "message": "ادامهٔ اسکراب — بخش بعدی…", "run_id": run_id, "ts": time.time()})
+    else:
+        storage.create_run(run_meta)
 
     try:
         # ── ۱) صنف و شهر ─────────────────────────────────────────────────────
@@ -288,20 +427,6 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
         niche = resolve_niche(request.niche_query)
         _progress(on_progress, run_id, {"stage": "resolve", "status": "running", "percent": 4,
                                      "message": f"صنف: «{niche.fa}» — شهر: «{request.city_query}»"})
-        # خیابان/منطقهٔ ناشناخته: به‌جای چسبیدن به نزدیک‌ترین نام، صریح می‌گوییم
-        # که پیدا نشد — وگرنه کاربر فکر می‌کند «خیابان X» را اسکراب کرده، در حالی
-        # که دادهٔ جای دیگری آمده است.
-        if request.area_unresolved:
-            bad = [request.street if "street" in request.area_unresolved else "",
-                   request.district if "district" in request.area_unresolved else ""]
-            bad = [x for x in bad if x]
-            label_fa = "خیابان" if "street" in request.area_unresolved else "منطقه"
-            raise EngineError(
-                f"{label_fa} «{'، '.join(bad)}» در فهرست پیدا نشد؛ برای اینکه دادهٔ جای "
-                f"دیگری اسکراب نشود، اجرا متوقف شد. املای نام را درست کنید یا از "
-                f"جست‌وجوی منطقه (GET /api/regions/search) نام دقیق را بردارید."
-            )
-
         if request.area_level == "province" and not request.city_key:
             # انتخاب «کل استان»: مرکز استان نقطهٔ مبناست و جعبه، کل استان است.
             prov_meta = regions.province_info(request.province)
@@ -314,6 +439,22 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
             raise EngineError(
                 f"مکان «{request.city_query}» پیدا نشد. یک شهر شناخته‌شده بنویسید یا "
                 f"lat/lon را دستی بدهید (فهرست شهرها: GET /api/cities)."
+            )
+        # ── محدودهٔ واقعی خیابان/محله از خودِ OSM (کل خیابان، نه یک نقطه) ─────
+        if request.area_level in ("street", "district") or request.area_unresolved:
+            refine_area_bbox(request, city, allow_network=engine.live, warnings=warnings)
+        if request.area_unresolved:
+            # خیابان/منطقهٔ ناشناخته: به‌جای چسبیدن به نزدیک‌ترین نام، صریح می‌گوییم
+            # که پیدا نشد — وگرنه کاربر فکر می‌کند «خیابان X» را اسکراب کرده، در حالی
+            # که دادهٔ جای دیگری آمده است.
+            bad = [request.street if "street" in request.area_unresolved else "",
+                   request.district if "district" in request.area_unresolved else ""]
+            bad = [x for x in bad if x]
+            label_fa = "خیابان" if "street" in request.area_unresolved else "منطقه"
+            raise EngineError(
+                f"{label_fa} «{'، '.join(bad)}» پیدا نشد؛ برای اینکه دادهٔ جای دیگری "
+                f"اسکراب نشود، اجرا متوقف شد. املای نام را درست کنید یا از "
+                f"جست‌وجوی منطقه (GET /api/regions/search) نام دقیق را بردارید."
             )
         if request.bbox and len(request.bbox) == 4:
             city = dict(city)
@@ -403,31 +544,49 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
 
         province_meta = regions.province_info(request.province) if request.province else {}
 
-        # ── جست‌وجوی سطح «استان»: مرکز استان به‌تنهایی کافی نیست ─────────────
-        # پیش‌تر انتخاب استان فقط شعاع ۳۰ کیلومتری مرکز را می‌گشت؛ حالا موتور واقعی
-        # چند شهر پرجمعیت استان را جدا می‌گردد (قابل تنظیم با PROVINCE_SWEEP_CITIES).
+        # ── برنامهٔ اسکراب کامل ────────────────────────────────────────────────
+        # برای شهر: کاشی‌های کوچک تا سقف ۴۰تایی Nominatim داده را نصف نکند.
+        # برای استان: همهٔ شهرهای استان (نه فقط چند شهر پرجمعیت).
+        resume_state = dict(request.resume_state or {})
+        done_boxes = {str(x) for x in (resume_state.get("done") or [])}
+        scan_tiles: list[dict] = []
         sweep_boxes: list[dict] = []
-        if (engine.name == "osm" and request.province and request.area_level == "province"
-                and not (request.district or request.street)
-                and int(getattr(config, "PROVINCE_SWEEP_CITIES", 0) or 0) > 0):
-            wanted = int(config.PROVINCE_SWEEP_CITIES)
-            # تعداد شهر باید با بودجهٔ زمانی بخواند: هر شهر تقریباً ۸–۱۰ ثانیه.
-            # (روی تابع serverless بودجه ~۳۰ ثانیه است؛ روی CLI/داکر بیشتر.)
-            try:
-                time_budget = float(request.max_time or 60)
-            except (TypeError, ValueError):
-                time_budget = 60.0
-            if time_budget < 55:
-                wanted = max(2, min(wanted, int(time_budget // 10)))
-            sweep_boxes = regions.province_boxes(request.province, limit=wanted)
-            if len(sweep_boxes) > 1:
-                province_fa = province_meta.get("fa") or request.province
-                warnings.append(
-                    f"جست‌وجوی استانی: {len(sweep_boxes)} شهر پرجمعیت «{province_fa}» پوشش "
-                    f"داده می‌شود (قابل تنظیم با PROVINCE_SWEEP_CITIES؛ با بودجهٔ زمانی "
-                    f"{int(time_budget)} ثانیه).")
+        if engine.name == "osm" and request.scan_full and config.SCAN_TILES:
+            if request.area_level == "province" and not (request.district or request.street):
+                planned = tiling.plan("province", province=request.province,
+                                      max_tiles=int(config.SCAN_MAX_BOXES or 40))
+            elif request.area_level in ("street", "district"):
+                # خیابان/منطقه: جعبهٔ دقیق خودش کافی است؛ یک «کاشی» تنها برای
+                # اینکه پوشش ۱/۱ در گزارش بیاید و بی‌دلیل دوباره پرسیده نشود.
+                area_box = request.bbox or city.get("bbox")
+                planned = (tiling.plan(request.area_level, bbox=list(area_box),
+                                       city_fa=request.area_label or request.city_query)
+                           if isinstance(area_box, (list, tuple)) and len(area_box) == 4
+                           else [])
             else:
-                sweep_boxes = []
+                planned = tiling.plan("city", bbox=city.get("bbox"),
+                                      city_fa=request.city_query or request.area_label,
+                                      max_tiles=int(config.SCAN_MAX_TILES or 16))
+            planned = [box for box in planned if box["label"] not in done_boxes]
+            if request.area_level == "province":
+                # هم‌مسیر با جاروی استانی: هر شهر یک جعبه
+                sweep_boxes = [{"label": box["label"], "bbox": box["bbox"],
+                                "pop": int(box.get("pop") or 0)} for box in planned]
+            else:
+                scan_tiles = planned
+        scan_plan_labels = ([box["label"] for box in scan_tiles]
+                            if scan_tiles else [box["label"] for box in sweep_boxes])
+
+        if sweep_boxes and len(sweep_boxes) > 1:
+            province_fa = province_meta.get("fa") or request.province
+            warnings.append(
+                f"اسکراب استانی: {len(sweep_boxes)} شهر «{province_fa}» در برنامه است؛ "
+                f"کار تا آخر بودجهٔ زمانی پیش می‌رود و بقیه در اجرای بعدی خودکار ادامه "
+                f"می‌یابد.")
+        if scan_tiles and len(scan_tiles) > 1:
+            warnings.append(
+                f"اسکراب کامل: {len(scan_tiles)} کاشی برای «{place_fa}» — هر کاشی جدا "
+                f"پرسیده می‌شود تا سقف ۴۰ نتیجهٔ هر درخواست، داده را نصف نکند.")
 
         def make_body(term_list: list[str], name: str, cell: dict | None = None) -> dict:
             body = {
@@ -461,6 +620,8 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                 "all_business": bool(request.all_niches) and engine.name == "osm",
                 # چند جعبهٔ شهری برای جست‌وجوی سطح استان (خالی = همان جعبهٔ شهر)
                 "sweep_boxes": sweep_boxes,
+                # کاشی‌های اسکراب کامل (پر کردن جاهایی که سقف ۴۰تایی جا گذاشته)
+                "scan_tiles": scan_tiles,
                 # «فقط همان منطقه»: موتور حق ندارد نتیجهٔ بیرون از محدوده بدهد
                 "strict_region": True,
                 # پرش به کل استان فقط وقتی کاربر خودش «کل استان» را خواسته باشد
@@ -568,7 +729,13 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                 empty_run = dict(run_meta)
                 empty_run.update({"id": run_id, "total": 0, "hot": 0, "warm": 0, "cold": 0,
                                   "avg_score": 0.0, "job_ids": job_ids, "status": "done"})
+                # بخش خالی هم بخشی از اسکراب کامل است: باید بگوید کجای منطقه
+                # انجام شده و بقیه کجاست — وگرنه «صفر لید» یعنی دادهٔ گم‌شده.
+                empty_scan, _done, _left, empty_cont = _scan_report(
+                    engine, scan_plan_labels, done_boxes, resume_state, request, run_id)
                 empty_run["analytics"] = analytics.build([], empty_run, niche)
+                if empty_scan.get("full"):
+                    empty_run["analytics"]["scan"] = empty_scan
                 empty_run["analytics"]["warnings"] = list(warnings)
                 if sweep_boxes and coverage:
                     empty_run["analytics"]["cities"] = [
@@ -587,6 +754,8 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                            "engine": engine.name, "live": engine.live,
                            "city": city["label_local"], "niche": niche.fa,
                            "keywords": keywords, "sweep_niches": [], "jobs": len(job_ids),
+                           "continuation": empty_cont,
+                           "scan": empty_scan if empty_scan.get("full") else {},
                            "empty": True})
             raise EngineError(
                 "همه jobها خالی/ناموفق بودند. احتمالاً IP موقتاً محدود شده — چند دقیقه صبر کنید، "
@@ -708,6 +877,38 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                 f"{fresh} نتیجه از {len(rows)} تازه بود؛ {repeat} مورد در اجراهای قبلی هم "
                 f"دیده شده بود (در فهرست با نشان «قبلاً دیده شده» مشخص‌اند).")
 
+        # ── ۶٫۷) ادغام با بخش‌های قبلی همین اسکراب ──────────────────────────
+        # ادامهٔ اسکراب همان run_id است؛ لیدهای بخش قبل باید بمانند و فقط
+        # وضعیت پیگیری (status/note) و شناسهٔ پایگاه‌داده‌شان حفظ شود.
+        if resuming:
+            prior: dict = {}
+            try:
+                for old_row in storage.load_leads(run_id, limit=5000):
+                    key = str(old_row.get("place_id") or old_row.get("id") or "")
+                    if key:
+                        prior[key] = old_row
+            except Exception as exc:  # noqa: BLE001 — ادغام نباید اجرا را بشکند
+                warnings.append(f"بازیابی لیدهای بخش قبلی انجام نشد ({exc}).")
+            if prior:
+                prior_total = len(prior)
+                merged: dict = {}
+                for row in rows:
+                    key = str(row.get("place_id") or "")
+                    old_row = prior.pop(key, None) if key else None
+                    if old_row:
+                        row["id"] = old_row.get("id") or row.get("id")
+                        if old_row.get("status"):
+                            row["status"] = old_row["status"]
+                        if old_row.get("note"):
+                            row["note"] = old_row["note"]
+                    merged[key or str(row.get("id") or "")] = row
+                for key, old_row in prior.items():          # لیدهای بخش قبل که این‌بار نیامدند
+                    merged[key] = old_row
+                rows = list(merged.values())
+                warnings.append(
+                    f"ادامهٔ اسکراب: {prior_total} لید از بخش‌های قبلی حفظ شد؛ "
+                    f"مجموع این اجرا {len(rows)} است.")
+
         # ── ۷) ذخیره ────────────────────────────────────────────────────────
         storage.save_leads(run_id, rows)
         saved_rows = storage.all_leads_for_export(run_id)   # با idهای پایگاه‌داده
@@ -726,6 +927,22 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
         stats_pack["fresh"] = {"new": fresh, "repeat": repeat}
         # هشدارهای اجرا را هم نگه می‌داریم؛ وگرنه بعد از بسته شدن مرورگر هیچ‌جا نمی‌ماند.
         stats_pack["warnings"] = list(warnings)
+
+        # ── ۸٫۵) گزارش اسکراب کامل: چه بخشی از منطقه پوشش داده شد؟ ────────────
+        scan_info, scan_done, scan_remaining, continuation = _scan_report(
+            engine, scan_plan_labels, done_boxes, resume_state, request, run_id)
+        all_labels = list(dict.fromkeys(list(done_boxes) + list(scan_plan_labels)))
+        if all_labels:
+            stats_pack["scan"] = scan_info
+            if scan_remaining:
+                warnings.append(
+                    f"اسکراب کامل: {len(scan_done)} بخش از {len(scan_plan_labels)} در این "
+                    f"بخش زمانی انجام شد؛ {len(scan_remaining)} بخش باقی مانده و خودکار "
+                    f"ادامه داده می‌شود.")
+            else:
+                warnings.append(
+                    f"اسکراب کامل: همهٔ {len(all_labels)} بخش منطقه پوشش داده شد.")
+        stats_pack["warnings"] = list(warnings)
         if sweep_boxes and coverage:
             # پوشش شهری فقط برای جست‌وجوی استانی معنا دارد (یک شهر یعنی یک ردیف خالی).
             stats_pack["cities"] = [
@@ -735,7 +952,17 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
             ]
         # analytics فقط نسخه سبک meta را نگه می‌دارد، پس ارجاع دایره‌ای ساخته نمی‌شود
         run_full["analytics"] = stats_pack
+        # منطقهٔ واقعاً اسکراب‌شده را هم روی ردیف اجرا بنویس (خیابان/شهر/استان)؛
+        # وگرنه فهرست اجراها فقط نام شهرِ تایپ‌شده در لحظهٔ ثبت را نشان می‌دهد.
+        run_full.update({
+            "city": place_fa, "city_key": city.get("key") or request.city_key or "",
+            "province": request.province, "district": request.district,
+            "street": request.street, "area_label": request.area_label,
+            "area_level": request.area_level, "country": country,
+            "lat": request.lat, "lon": request.lon,
+        })
         storage.update_run(run_id, **run_full)
+
 
         # ── ۹) خروجی فایل + کمپین ───────────────────────────────────────────
         _progress(on_progress, run_id, {"stage": "export", "status": "working", "percent": 96,
@@ -807,6 +1034,9 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                 "keywords": keywords,
                 "sweep_niches": [n.fa for n in sweep_niches],
                 "jobs": len(job_ids),
+                # بخش بعدی (اگر مانده) — ورکر با همین، اجرا را خودکار ادامه می‌دهد
+                "continuation": continuation,
+                "scan": scan_info if all_labels else {},
             },
         )
 
