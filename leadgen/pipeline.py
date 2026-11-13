@@ -91,6 +91,9 @@ class ScrapeRequest:
     # چند خیابان هم‌زمان: «ولیعصر + انقلاب + آزادی» — هر خیابان محدودهٔ خودش را دارد
     streets: list = field(default_factory=list)
     street_areas: list = field(default_factory=list)  # [{name, bbox, boxes}] پس از حل‌شدن
+    # کارنامهٔ حافظهٔ خیابان‌ها: هر خیابان از کجا آمد (cache/overpass/none) —
+    # برای گزارش عملیاتی و اطمینان از اینکه اجرای تکراری واقعاً از حافظه می‌آید.
+    street_memory: list = field(default_factory=list)
     zoom_set: bool = False           # zoom صریحاً داده شده؟ وگرنه از سطح منطقه می‌آید
 
     @classmethod
@@ -355,11 +358,13 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
     # فراخوانی‌های مستقیم/آزمون‌ها؛ وگرنه یک اجرا نوار اجرای دیگری را می‌دید.
     cache_ok = (bool(use_cache) and float(getattr(config, "STREET_CACHE_DAYS", 14) or 0) > 0)
     cached: dict = {}
+    cache_error = ""
     if street_name and cache_ok:
         try:                              # حافظهٔ خیابان‌ها (Overpass قبلی همین خیابان)
             cached = storage.get_street_cache(cache_city, street_name) or {}
-        except Exception:                 # noqa: BLE001 — کش نباید اجرا را بشکند
+        except Exception as exc:          # noqa: BLE001 — کش نباید اجرا را بشکند
             cached = {}
+            cache_error = f"{type(exc).__name__}: {exc}"[:160]
     cache_used = ""
     if found and city_box and len(city_box) == 4:
         seed_box = list(found.get("bbox") or [])
@@ -474,6 +479,24 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
     span_km = max(height_km, width_km)
     # شعاع موتورهای نقطه‌ای هم به اندازهٔ همان خیابان/محله شود، نه شعاع ۱۰ کیلومتری شهر.
     request.radius = int(max(250, min(20000, span_km * 500)))
+    if isinstance(getattr(request, "street_memory", None), list):
+        if cache_used.startswith("fresh"):
+            source = "cache"
+        elif cache_used.startswith("stale"):
+            source = "cache-stale"
+        elif wide:
+            source = "overpass"
+        else:
+            source = "none"
+        memory_row = {
+            "street": street_name or label, "source": source,
+            "ways": int((wide or {}).get("ways") or 0),
+            "age_days": round(float(cached.get("age_days") or 0.0), 2) if cache_used else None,
+            "span_km": round(span_km, 2),
+        }
+        if cache_error:
+            memory_row["error"] = cache_error
+        request.street_memory.append(memory_row)
     if warnings is not None:
         extra = (f" — {found.get('streets')} قطعهٔ خیابان با همین نام جمع شد"
                  if found.get("streets") else "")
@@ -814,6 +837,8 @@ def resolve_street_areas(request: "ScrapeRequest", city: dict, *, allow_network:
         probes = [_probe_one(name) for name in names]
 
     for name, probe, box in probes:
+        if probe.street_memory:
+            request.street_memory.extend(probe.street_memory)
         if len(box) != 4:
             missing.append(name)
             continue
@@ -1456,6 +1481,8 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
         stats_pack["fresh"] = {"new": fresh, "repeat": repeat}
         # هشدارهای اجرا را هم نگه می‌داریم؛ وگرنه بعد از بسته شدن مرورگر هیچ‌جا نمی‌ماند.
         stats_pack["warnings"] = list(warnings)
+        if request.street_memory:
+            stats_pack["street_memory"] = list(request.street_memory)
 
         # ── ۸٫۵) گزارش اسکراب کامل: چه بخشی از منطقه پوشش داده شد؟ ────────────
         scan_info, scan_done, scan_remaining, continuation = _scan_report(
