@@ -298,15 +298,18 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
     # Nominatim برای خیابان‌های بلند فقط یک «تکه» می‌دهد (ولیعصر: ۱ کیلومتر از ۱۷).
     # اگر Overpass در دسترس باشد، همهٔ wayهای هم‌نام را می‌گیریم و اگر بزرگ‌تر بود
     # همان را ترجیح می‌دهیم — «کل خیابان»، نه یک تکه از آن.
+    street_partial = False
     if found and city_box and len(city_box) == 4:
         try:
             wide = osm_provider.overpass_street_bbox(
                 [_strip_street_prefix(request.street or request.district or ""),
                  request.street or request.district or ""],
-                bbox=list(city_box), timeout=min(20.0, float(getattr(request, "max_time", 60) or 60)),
-                budget_s=12.0)
+                bbox=list(city_box),
+                timeout=min(20.0, float(getattr(request, "max_time", 60) or 60)),
+                budget_s=20.0, near=list(found.get("bbox") or []))
         except Exception:  # noqa: BLE001 — Overpass پایین باشد، همان Nominatim کافی است
             wide = {}
+        street_partial = not wide
         wide_box = list(wide.get("bbox") or [])
         if len(wide_box) == 4 and not too_big(wide_box):
             try:
@@ -370,6 +373,9 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
     if warnings is not None:
         extra = (f" — {found.get('streets')} قطعهٔ خیابان با همین نام جمع شد"
                  if found.get("streets") else "")
+        if street_partial:
+            extra += (" — جست‌وجوی کامل خیابان در Overpass نتیجه نداد؛ "
+                      "اگر خیابان بلند است، ممکن است بخشی از آن جا بماند")
         warnings.append(
             f"محدودهٔ دقیق «{label}» از OSM گرفته شد "
             f"(در حدود {span_km:.1f} کیلومتر){extra} — کل این محدوده اسکراب می‌شود.")

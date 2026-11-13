@@ -102,13 +102,60 @@ def probe(city: str, niche: str = "", all_business: bool = False, limit: int = 4
     return result
 
 
+def probe_street(city: str, street: str) -> dict:
+    """سنجش «کل خیابان»: Nominatim یک تکه می‌دهد، Overpass باید همهٔ تکه‌ها را بدهد."""
+    area = regions.resolve(city=city)
+    if not area.get("lat"):
+        print(f"✗ شهر «{city}» پیدا نشد")
+        return {"ok": False, "city": city}
+    bbox = None
+    if area.get("city_key") and area["city_key"] in geo.CITIES:
+        bbox = [float(x) for x in geo.CITIES[area["city_key"]][3]]
+    bbox = bbox or geo.default_bbox(area["lat"], area["lon"], 0.12)
+    seed: list[float] = []
+    try:
+        found = osm.lookup_area(f"{street}، {city}", bbox=bbox, country="IR",
+                                limit=10, merge=True)
+        seed = list(found.get("bbox") or [])
+    except Exception as exc:                             # noqa: BLE001
+        print(f"  • Nominatim: {type(exc).__name__}: {exc}")
+    print(f"• خیابان «{street}» در {area['label']} — تکهٔ Nominatim: "
+          f"{[round(x, 4) for x in seed] or '—'}")
+    t0 = time.time()
+    try:
+        wide = osm.overpass_street_bbox(
+            [street, osm._strip_street_prefix(street)], bbox=bbox,
+            timeout=25.0, budget_s=30.0, near=seed or None)
+    except Exception as exc:                             # noqa: BLE001
+        wide = {}
+        print(f"  ✗ Overpass: {type(exc).__name__}: {exc}")
+    elapsed = round(time.time() - t0, 1)
+    if wide:
+        span = max(wide["bbox"][1] - wide["bbox"][0],
+                   (wide["bbox"][3] - wide["bbox"][2]) * 0.9) * 111.0
+        print(f"  ✓ Overpass: {wide['ways']} تکه ({wide.get('via')}) → "
+              f"{[round(x, 4) for x in wide['bbox']]} ≈ {span:.1f} کیلومتر در {elapsed}s")
+    else:
+        print(f"  ✗ Overpass تکه‌ای برنگرداند ({elapsed}s)")
+    return {"ok": bool(wide), "city": area["label"], "street": street,
+            "seed_bbox": seed, "street_bbox": wide.get("bbox"),
+            "ways": wide.get("ways", 0), "via": wide.get("via"), "seconds": elapsed}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="آزمون دودی موتور دادهٔ OSM")
     parser.add_argument("--city", default="")
     parser.add_argument("--niche", default="")
     parser.add_argument("--all", action="store_true", help="جاروی همهٔ اصناف (تگ‌محور)")
+    parser.add_argument("--street", default="", help="سنجش پوشش کامل یک خیابان")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+
+    if args.street:
+        result = probe_street(args.city or "تهران", args.street)
+        if args.json:
+            print(json.dumps([result], ensure_ascii=False, indent=2))
+        return 0 if result.get("ok") else 1
 
     if args.city:
         targets = [(args.city, args.niche, args.all)]

@@ -151,6 +151,11 @@ def build_overpass_query(filters: list[str], bbox: list[float], *,
     return f"[out:json][timeout:{seconds}];({parts};);out center {cap};"
 
 
+# جعبهٔ کلِ خیابان (همهٔ wayهای هم‌نام) کش می‌شود: اجرای دوباره همان خیابان
+# نباید دوباره Overpass را درگیر کند.
+_STREET_CACHE: dict = {}
+_STREET_CACHE_LOCK = threading.Lock()
+
 # آینه‌هایی که اخیراً «شلوغ/محدود» جواب داده‌اند، موقتاً کنار می‌روند.
 _OVERPASS_COOLDOWN: dict[str, float] = {}
 _OVERPASS_COOLDOWN_SECONDS = 120.0
@@ -388,15 +393,53 @@ def overpass_search(filters: list[str], *, bbox: list[float], limit: int | None 
     return out
 
 
+def _boxes_touch(a: list[float], b: list[float], gap: float) -> bool:
+    """آیا دو جعبه به هم می‌رسند (با فاصلهٔ تحمل `gap`)؟"""
+    return not (a[1] < b[0] - gap or b[1] < a[0] - gap or
+                a[3] < b[2] - gap or b[3] < a[2] - gap)
+
+
+def _grow_street_cluster(boxes: list[list[float]], seed: list[float],
+                         gap: float = 0.0015) -> list[list[float]]:
+    """همهٔ تکه‌های هم‌نامِ متصل به تکهٔ Nominatim را جمع می‌کند.
+
+    چرا؟ در تهران چند «کوچهٔ ولیعصر» هم وجود دارد؛ اگر همهٔ آن‌ها را با هم جمع
+    کنیم، جعبه تا انتهای شهر کش می‌آید. رشد پله‌پله فقط تکه‌های پیوسته را
+    نگه می‌دارد. `gap` ≈ ۱۶۰ متر برای پر کردن فاصلهٔ گره‌های میانی است.
+    """
+    if not boxes:
+        return []
+    used = [False] * len(boxes)
+    cluster: list[list[float]] = []
+    union = [float(x) for x in seed]
+    grew = True
+    while grew:
+        grew = False
+        for i, box in enumerate(boxes):
+            if used[i] or not _boxes_touch(box, union, gap):
+                continue
+            used[i] = True
+            cluster.append(box)
+            union = [min(union[0], box[0]), max(union[1], box[1]),
+                     min(union[2], box[2]), max(union[3], box[3])]
+            grew = True
+    return cluster
+
+
 def overpass_street_bbox(names: list[str], *, bbox: list[float], timeout: float = 25.0,
-                         budget_s: float | None = None) -> dict:
+                         budget_s: float | None = None,
+                         near: list[float] | None = None) -> dict:
     """جعبهٔ **کل** یک خیابان از Overpass (همهٔ wayهای هم‌نام، نه یک تکه).
 
     چرا؟ Nominatim برای «خیابان ولیعصر» فقط یک way می‌دهد (≈۱ کیلومتر از ۱۷
-    کیلومتر). Overpass می‌تواند همهٔ wayهای همان نام داخل جعبهٔ شهر را بدهد؛
-    جمعِ bounds آن‌ها = کل خیابان. خروجی `{"bbox": [...], "ways": n}` یا `{}`.
+    کیلومتر). Overpass همهٔ wayهای همان نام داخل جعبهٔ شهر را می‌دهد؛ با `near`
+    فقط تکه‌های **پیوسته به همان تکه** جمع می‌شوند (وگرنه کوچه‌های هم‌نام در
+    محله‌های دیگر جعبه را تا انتهای شهر می‌کشند).
+
+    ابتدا نام دقیق (سریع، از ایندکس Overpass) و اگر چیزی نبود الگوی لنگرشده.
+    خروجی `{"bbox": [...], "ways": n, "via": "exact|regex"}` یا `{}`.
     """
-    pats = []
+    pats: list[str] = []
     for name in names or []:
         clean = _strip_street_prefix(str(name or "").strip())
         clean = clean.split("،")[0].split(",")[0].strip()
@@ -404,14 +447,49 @@ def overpass_street_bbox(names: list[str], *, bbox: list[float], timeout: float 
             pats.append(clean)
     if not pats or not bbox or len(bbox) != 4:
         return {}
-    if not overpass_available():
-        return {}
-    pattern = "|".join(re.escape(p) for p in pats)
+    ttl = float(getattr(config, "OVERPASS_CACHE_TTL", 0) or 0)
+    cache_key = (tuple(pats), tuple(round(float(x), 3) for x in bbox),
+                 tuple(round(float(x), 4) for x in near) if near else None)
+    if ttl > 0:
+        with _OVERPASS_CACHE_LOCK:
+            hit = _STREET_CACHE.get(cache_key)
+            if hit and time.time() - hit[0] < ttl:
+                return dict(hit[1])
+
     s_, n_, w_, e_ = (float(x) for x in bbox)
-    query = (f'[out:json][timeout:{int(max(8, min(40, timeout)))}];'
-             f'way["name"~"{pattern}",i]({s_},{w_},{n_},{e_});out bb;')
-    data = _overpass_request(query, timeout=timeout, deadline_s=budget_s,
-                             trip_breaker=False)
+    seconds = int(max(8, min(40, timeout)))
+    box = f"({s_},{w_},{n_},{e_})"
+    exact = "".join(f'way["name"="{p}"]{box};' for p in pats)
+    pattern = "|".join(re.escape(p) for p in pats)
+    regex = f'way["name"~"^({pattern})$",i]{box};'
+    found: dict = {}
+    for via, body in (("exact", exact), ("regex", regex)):
+        query = f"[out:json][timeout:{seconds}];({body});out bb;"
+        try:
+            data = _overpass_request(query, timeout=timeout, retries=0,
+                                     deadline_s=budget_s, trip_breaker=False)
+        except OSMDownError:
+            break                       # سرویس پایین/شلوغ است؛ تلاش دوم بی‌فایده
+        boxes = _bounds_from_elements(data)
+        if not boxes:
+            continue
+        chosen = _grow_street_cluster(boxes, near) if (near and len(near) == 4) else boxes
+        if not chosen:
+            continue
+        merged = [min(b[0] for b in chosen), max(b[1] for b in chosen),
+                  min(b[2] for b in chosen), max(b[3] for b in chosen)]
+        found = {"bbox": [round(x, 6) for x in merged], "ways": len(chosen), "via": via}
+        break
+    if found and ttl > 0:
+        with _OVERPASS_CACHE_LOCK:
+            if len(_STREET_CACHE) >= 256:
+                _STREET_CACHE.pop(next(iter(_STREET_CACHE)), None)
+            _STREET_CACHE[cache_key] = (time.time(), dict(found))
+    return found
+
+
+def _bounds_from_elements(data: dict) -> list[list[float]]:
+    """bounds المان‌های Overpass → جعبه‌های معتبر."""
     elements = data.get("elements") if isinstance(data, dict) else None
     boxes: list[list[float]] = []
     for element in elements or []:
@@ -425,11 +503,7 @@ def overpass_street_bbox(names: list[str], *, bbox: list[float], timeout: float 
             continue
         if hi_lat > lo_lat and hi_lon > lo_lon:
             boxes.append([lo_lat, hi_lat, lo_lon, hi_lon])
-    if not boxes:
-        return {}
-    merged = [min(b[0] for b in boxes), max(b[1] for b in boxes),
-              min(b[2] for b in boxes), max(b[3] for b in boxes)]
-    return {"bbox": [round(x, 6) for x in merged], "ways": len(boxes)}
+    return boxes
 
 
 def split_bbox(bbox: list[float], rows: int = 2, cols: int = 2) -> list[list[float]]:

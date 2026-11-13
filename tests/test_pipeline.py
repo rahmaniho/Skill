@@ -1309,3 +1309,36 @@ class StreetWholeOverpassTests(unittest.TestCase):
                                "leadgen.providers.osm", fromlist=["OSMDownError"]).OSMDownError("down")):
             box = pipeline.refine_area_bbox(request, city, allow_network=True)
         self.assertEqual(len(box), 4, "قطعی Overpass نباید محدودهٔ پیدا‌شده را از بین ببرد")
+
+    def test_overpass_query_is_anchored_near_the_nominatim_segment(self):
+        request = self._request()
+        city = {"bbox": [35.60, 35.80, 51.20, 51.60], "country": "IR", "label_local": "تهران"}
+        nominatim = {"bbox": [35.705, 35.715, 51.414, 51.416], "label": "خیابان ولیعصر، تهران"}
+        seen: list[dict] = []
+
+        def fake_wide(names, **kwargs):
+            seen.append({"names": names, **kwargs})
+            return {}
+
+        with mock.patch.object(pipeline.config, "OSM_AREA_LOOKUP", True), \
+                mock.patch.object(pipeline.config, "_looks_like_unittest", return_value=False), \
+                mock.patch("leadgen.providers.osm.lookup_area", return_value=dict(nominatim)), \
+                mock.patch("leadgen.providers.osm.overpass_street_bbox", side_effect=fake_wide):
+            pipeline.refine_area_bbox(request, city, allow_network=True)
+        self.assertEqual(seen[0]["names"], ["ولیعصر", "خیابان ولیعصر"])
+        self.assertEqual(seen[0]["near"], [35.705, 35.715, 51.414, 51.416],
+                         "تکه‌های هم‌نامِ دورافتاده باید با همین لنگر فیلتر شوند")
+        self.assertGreaterEqual(seen[0]["budget_s"], 15, "کوئری سنگین‌تر از ۱۲ ثانیه هم فرصت داشته باشد")
+
+    def test_warning_is_honest_when_overpass_cannot_widen_the_street(self):
+        request = self._request()
+        city = {"bbox": [35.60, 35.80, 51.20, 51.60], "country": "IR", "label_local": "تهران"}
+        nominatim = {"bbox": [35.705, 35.715, 51.414, 51.416], "label": "خیابان ولیعصر، تهران"}
+        warnings: list[str] = []
+
+        with mock.patch.object(pipeline.config, "OSM_AREA_LOOKUP", True), \
+                mock.patch.object(pipeline.config, "_looks_like_unittest", return_value=False), \
+                mock.patch("leadgen.providers.osm.lookup_area", return_value=dict(nominatim)), \
+                mock.patch("leadgen.providers.osm.overpass_street_bbox", return_value={}):
+            pipeline.refine_area_bbox(request, city, allow_network=True, warnings=warnings)
+        self.assertTrue(any("بخشی از آن جا بماند" in w for w in warnings), warnings)
