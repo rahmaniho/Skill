@@ -553,6 +553,11 @@ def overpass_street_bbox(names: list[str], *, bbox: list[float], timeout: float 
         if not chosen:
             if diag is not None:
                 diag.append(f"{via}: {len(boxes)} تکه، هیچ‌کدام به تکهٔ Nominatim نچسبید")
+                if near and len(near) == 4:
+                    gap = min(max(0.0, max(b[0] - near[1], near[0] - b[1]),
+                                  max(b[2] - near[3], near[2] - b[3])) for b in boxes)
+                    diag.append(f"{via}: نزدیک‌ترین تکه {gap:.4f}° فاصله دارد؛ "
+                                f"نمونه {boxes[0]} در برابر seed {near}")
             continue
         merged = [min(b[0] for b in chosen), max(b[1] for b in chosen),
                   min(b[2] for b in chosen), max(b[3] for b in chosen)]
