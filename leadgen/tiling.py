@@ -55,6 +55,59 @@ def tiles_of(bbox: list[float], *, label: str, kind: str = "tile",
     return out
 
 
+def _center(box: list[float]) -> tuple[float, float]:
+    return ((float(box[0]) + float(box[1])) / 2.0, (float(box[2]) + float(box[3])) / 2.0)
+
+
+def cluster_boxes(cities: list[dict], k: int) -> list[dict]:
+    """شهرهای یک استان را در k خوشهٔ جغرافیایی می‌ریزد تا «همهٔ» شهرها پوشش بیابند.
+
+    چرا؟ بعضی استان‌ها بیش از سقف کاشی شهر دارند (اصفهان ۱۱۱ شهر، فارس ۱۰۸) و
+    «۴۰ شهر پرجمعیت» یعنی بقیه بی‌صدا جا می‌مانند. این‌جا شهرهای همسایه در یک
+    جعبه جمع می‌شوند؛ هم تعداد جعبه‌ها زیر سقف می‌ماند، هم هیچ شهری حذف نمی‌شود.
+
+    الگوریتم: k-means ساده و **قطعی** (بذرها بزرگ‌ترین شهرها، ۵ تکرار)، پس
+    اجرای دوباره/ادامهٔ اسکراب همان برچسب‌ها را می‌دهد.
+    """
+    k = max(1, int(k))
+    if len(cities) <= k:
+        return [{"label": c["fa"], "bbox": [float(x) for x in c["bbox"]],
+                 "kind": "city", "pop": int(c.get("pop") or 0)} for c in cities]
+    ordered = sorted(cities, key=lambda c: (-int(c.get("pop") or 0), str(c.get("fa") or "")))
+    seeds = ordered[:k]
+    centers = [_center(c["bbox"]) for c in seeds]
+    groups: list[list[dict]] = [[] for _ in range(k)]
+    for _ in range(5):
+        groups = [[] for _ in range(k)]
+        for city in cities:
+            lat, lon = _center(city["bbox"])
+            best = min(range(k), key=lambda i: (lat - centers[i][0]) ** 2
+                       + (lon - centers[i][1]) ** 2)
+            groups[best].append(city)
+        for i, group in enumerate(groups):
+            if group:
+                centers[i] = (sum(_center(c["bbox"])[0] for c in group) / len(group),
+                              sum(_center(c["bbox"])[1] for c in group) / len(group))
+    out: list[dict] = []
+    for group in groups:
+        if not group:
+            continue
+        group.sort(key=lambda c: (-int(c.get("pop") or 0), str(c.get("fa") or "")))
+        boxes = [[float(x) for x in c["bbox"]] for c in group]
+        s, n = min(b[0] for b in boxes), max(b[1] for b in boxes)
+        w, e = min(b[2] for b in boxes), max(b[3] for b in boxes)
+        pad_lat, pad_lon = (n - s) * 0.02 + 0.002, (e - w) * 0.02 + 0.002
+        main = group[0]["fa"]
+        label = main if len(group) == 1 else f"{main} و {len(group) - 1} شهر"
+        out.append({"label": label,
+                    "bbox": [round(s - pad_lat, 5), round(n + pad_lat, 5),
+                             round(w - pad_lon, 5), round(e + pad_lon, 5)],
+                    "kind": "cluster", "pop": sum(int(c.get("pop") or 0) for c in group),
+                    "cities": [c["fa"] for c in group]})
+    out.sort(key=lambda item: -item["pop"])
+    return out
+
+
 def plan(level: str, *, bbox: list[float] | None = None, city_fa: str = "",
          province: str = "", max_tiles: int = MAX_TILES) -> list[dict]:
     """برنامهٔ کاشی‌های یک اجرا برای سطح خواسته‌شده."""
@@ -62,10 +115,14 @@ def plan(level: str, *, bbox: list[float] | None = None, city_fa: str = "",
         cities = regions.province_boxes(province, limit=0)          # همهٔ شهرها
         if not cities:
             return []
+        limit = max(1, int(max_tiles))
+        if len(cities) > limit:
+            # همهٔ شهرها می‌مانند؛ فقط در جعبه‌های خوشه‌ای جمع می‌شوند.
+            return cluster_boxes(cities, limit)
         out = [{"label": c["fa"], "bbox": [float(x) for x in c["bbox"]],
                 "kind": "city", "pop": int(c.get("pop") or 0)} for c in cities]
         out.sort(key=lambda item: -item["pop"])
-        return out[:max(1, int(max_tiles))]
+        return out[:limit]
     if not bbox or len(bbox) != 4:
         return []
     if level in ("street", "district"):

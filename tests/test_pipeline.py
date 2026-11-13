@@ -657,6 +657,22 @@ class ProvinceSweepPipelineTest(unittest.TestCase):
         self.assertTrue(scan.get("full"))
         self.assertGreaterEqual(scan.get("total") or 0, len(boxes))
 
+    def test_province_with_more_cities_than_boxes_still_covers_every_city(self):
+        """اصفهان ۱۱۱ شهر دارد؛ سقف ۴۰ جعبه نباید هیچ شهری را حذف کند."""
+        from leadgen import regions, tiling
+
+        province = next(p for p in regions.provinces() if p["fa"] == "اصفهان")
+        boxes = tiling.plan("province", province=province["id"], max_tiles=40)
+        self.assertLessEqual(len(boxes), 40)
+        self.assertGreater(len(boxes), 20)
+        missed = [c["fa"] for c in province["cities"]
+                  if not any(b["bbox"][0] <= c["lat"] <= b["bbox"][1]
+                             and b["bbox"][2] <= c["lon"] <= b["bbox"][3] for b in boxes)]
+        self.assertEqual(missed, [], f"شهرهای جاافتاده: {missed[:5]}")
+        # برچسب‌ها یکتا و پایدارند (ادامهٔ اسکراب به همان‌ها تکیه می‌کند)
+        labels = [b["label"] for b in boxes]
+        self.assertEqual(len(labels), len(set(labels)))
+
     def test_province_plans_all_cities_and_reports_continuation(self):
         """استان = همهٔ شهرها؛ کار در بخش‌های زمانی ادامه می‌یابد تا داده جا نماند."""
         captured: list[dict] = []

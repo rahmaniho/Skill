@@ -353,9 +353,9 @@ def _scan_report(engine, plan_labels: list[str], done_boxes: set, resume_state: 
     all_labels = list(dict.fromkeys(list(done_boxes) + list(plan_labels)))
     # سقف زنجیرهٔ «ادامهٔ خودکار»: حداقل به اندازهٔ تعداد بخش‌های خودِ برنامه
     # (یک کاشی شهرِ بزرگ نباید فقط چون سقف ۸ بخش پر شده، بی‌ادامه بماند).
-    # سقف سخت ۲۴ بخش است؛ بیشتر از آن با دکمهٔ «ادامهٔ اسکراب» اجرا می‌شود.
+    # سقف سخت ۴۸ بخش است؛ بیشتر از آن با دکمهٔ «ادامهٔ اسکراب» اجرا می‌شود.
     max_chunks = max(int(config.SCAN_MAX_CHUNKS or 8),
-                     min(24, len(all_labels) + 1))
+                     min(48, len(all_labels) + 1))
     scan_info = {
         "full": bool(all_labels),
         "chunk": chunk,

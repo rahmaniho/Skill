@@ -146,7 +146,7 @@ PLACES_API_KEY = env("PLACES_API_KEY") or env("GOOGLE_MAPS_API_KEY")
 SCAN_TILES = env("SCAN_TILES", "1") != "0"          # کاشی‌بندی روشن
 SCAN_MAX_TILES = max(1, min(36, env_int("SCAN_MAX_TILES", 16)))      # سقف کاشی یک شهر
 SCAN_MAX_BOXES = max(1, min(60, env_int("SCAN_MAX_BOXES", 40)))      # سقف شهرهای یک استان
-SCAN_MAX_CHUNKS = max(1, min(24, env_int("SCAN_MAX_CHUNKS", 8)))     # چند بخش خودکار ادامه یابد
+SCAN_MAX_CHUNKS = max(1, min(48, env_int("SCAN_MAX_CHUNKS", 8)))     # چند بخش خودکار ادامه یابد
 # جعبهٔ واقعی خیابان/محله از OSM (Nominatim) گرفته شود؟ خاموش = همان شعاع تخمینی
 OSM_AREA_LOOKUP = env("OSM_AREA_LOOKUP", "1") != "0"
 SELF_DRIVE = env("SELF_DRIVE", "1") != "0"
