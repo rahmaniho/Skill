@@ -523,59 +523,87 @@ def _box_overlaps(a: list[float], b: list[float], pad: float = 0.0) -> bool:
                 a[3] < b[2] - pad or b[3] < a[2] - pad)
 
 
+def _bbox_gap(a: list[float], b: list[float]) -> float:
+    """فاصلهٔ دو جعبه بر حسب درجه (۰ = هم‌پوشان یا چسبیده)."""
+    return max(max(b[0] - a[1], a[0] - b[1], 0.0),
+               max(b[2] - a[3], a[2] - b[3], 0.0))
+
+
+def _street_components(ways: list[dict]) -> list[dict]:
+    """تکه‌های خیابان → مؤلفه‌های به‌هم‌پیوسته (اتصال از راه گره‌های مشترک).
+
+    چرا گره و نه «جعبه‌های چسبیده»؟ «ولیعصر» در تهران ده‌ها کوچهٔ هم‌نام هم دارد؛
+    چسباندن جعبه‌به‌جعبه زنجیره‌ای تا محله‌های دور (منطقه ۱۴) می‌رفت. تکه‌های یک
+    خیابان واقعی گرهٔ مشترک دارند؛ فقط قطعه‌های کوچکِ جداافتاده (تونل/تقاطع) با
+    چسبیدن به یک قطعهٔ بلند به همان خیابان وصل می‌شوند.
+    """
+    parent = list(range(len(ways)))
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    def union(first: int, second: int) -> None:
+        root_a, root_b = find(first), find(second)
+        if root_a != root_b:
+            parent[root_b] = root_a
+
+    owner: dict = {}
+    for index, way in enumerate(ways):
+        for node in way["nodes"]:
+            owner.setdefault(node, []).append(index)
+    for group in owner.values():
+        for other in group[1:]:
+            union(group[0], other)
+
+    # پل فقط برای قطعهٔ کوتاه که به یک قطعهٔ بلند می‌چسبد (نه کوتاه-به-کوتاه)
+    long_indexes = [i for i, w in enumerate(ways) if w["length_km"] >= 0.6]
+    for index, way in enumerate(ways):
+        if way["length_km"] > 0.6:
+            continue
+        for other in long_indexes:
+            if _boxes_touch(way["box"], ways[other]["box"], 0.0018):
+                union(index, other)
+
+    grouped: dict = {}
+    for index in range(len(ways)):
+        grouped.setdefault(find(index), []).append(ways[index])
+    components = []
+    for members in grouped.values():
+        box = [min(w["box"][0] for w in members), max(w["box"][1] for w in members),
+               min(w["box"][2] for w in members), max(w["box"][3] for w in members)]
+        components.append({
+            "ways": members, "box": box,
+            "length_km": sum(w["length_km"] for w in members),
+        })
+    return sorted(components, key=lambda c: -c["length_km"])
+
+
 def _connected_street(ways: list[dict], seed: list[float] | None) -> dict:
-    """تکه‌های **به‌هم‌پیوستهٔ** خیابان را از یک تکهٔ مرجع پیدا می‌کند.
+    """مؤلفهٔ درستِ خیابان را از میان تکه‌های هم‌نام انتخاب می‌کند.
 
-    چرا گره (node) و نه «جعبه‌های چسبیده»؟ «ولیعصر» در تهران ده‌ها کوچهٔ هم‌نام هم
-    دارد؛ چسبیدن جعبه‌به‌جعبه باعث می‌شد زنجیره‌ای تا محله‌های دور (منطقه ۱۴) برود.
-    تکه‌های یک خیابان واقعی گرهٔ مشترک دارند؛ پس اتصالِ توپولوژیک درست است.
+    قاعده: مؤلفه‌ای که جعبه‌اش با جعبهٔ Nominatim هم‌پوشانی دارد و **بلندترین** است
+    (خیابان واقعی، نه کوچهٔ هم‌نامِ ۲۰۰ متری). اگر هیچ مؤلفه‌ای روی جعبه نبود،
+    نزدیک‌ترین مؤلفه فقط وقتی پذیرفته می‌شود که ≤ ~۱ کیلومتر فاصله داشته باشد.
 
-    تکیه‌گاه (anchor) اگر `seed` بدهیم: تکه‌ای که **با خودِ تکهٔ Nominatim هم‌پوشانی**
-    دارد (نه فقط نزدیک‌ترین مرکز) — وگرنه یک کوچهٔ هم‌نام در محلهٔ دیگر می‌تواند
-    تکیه‌گاه شود. خروجی: `{"ways": [...], "anchored": bool}`.
+    خروجی: `{"ways": [...], "anchored": bool}`.
     """
     if not ways:
         return {"ways": [], "anchored": False}
-    anchored = False
-    anchor = None
-    if seed and len(seed) == 4:
-        overlapping = [w for w in ways if _box_overlaps(w["box"], seed)]
-        if overlapping:
-            anchor = max(overlapping, key=lambda w: w["length_km"])
-            anchored = True
-        else:                       # هیچ تکه‌ای روی جعبهٔ Nominatim نیست
-            def center_distance(way: dict) -> float:
-                box = way["box"]
-                return (abs((box[0] + box[1]) - (seed[0] + seed[1])) +
-                        abs((box[2] + box[3]) - (seed[2] + seed[3])))
-            anchor = min(ways, key=center_distance)
-    if anchor is None:              # بدون مرجع: بزرگ‌ترین شبکهٔ به‌هم‌پیوسته
-        anchor = max(ways, key=lambda w: w["length_km"])
-
-    node_owner: dict = {}
-    for index, way in enumerate(ways):
-        for node in way["nodes"]:
-            node_owner.setdefault(node, []).append(index)
-
-    picked = {ways.index(anchor)}
-    queue = [ways.index(anchor)]
-    while queue:
-        current = queue.pop()
-        for node in ways[current]["nodes"]:
-            for other in node_owner.get(node, ()):
-                if other not in picked:
-                    picked.add(other)
-                    queue.append(other)
-
-    # پلِ یک‌مرحله‌ای برای قطعه‌های کوچکِ جداافتاده (تونل/تقاطع بدون گرهٔ مشترک):
-    # فقط قطعه‌های کوتاه که مستقیماً به یکی از قطعه‌های همین خیابان می‌چسبند.
-    cluster_boxes = [ways[i]["box"] for i in picked]
-    for index, way in enumerate(ways):
-        if index in picked or way["length_km"] > 0.6:
-            continue
-        if any(_boxes_touch(way["box"], box, 0.0018) for box in cluster_boxes):
-            picked.add(index)
-    return {"ways": [ways[i] for i in sorted(picked)], "anchored": anchored}
+    components = _street_components(ways)
+    if not (seed and len(seed) == 4):
+        best = components[0]                     # بدون مرجع: بلندترین خیابان
+        return {"ways": best["ways"], "anchored": False}
+    overlapping = [c for c in components if _bbox_gap(c["box"], seed) <= 0.0]
+    if overlapping:
+        best = max(overlapping, key=lambda c: c["length_km"])
+        return {"ways": best["ways"], "anchored": True}
+    nearest = min(components, key=lambda c: _bbox_gap(c["box"], seed))
+    if _bbox_gap(nearest["box"], seed) <= 0.01:      # ≤ ~۱ کیلومتر
+        return {"ways": nearest["ways"], "anchored": False}
+    return {"ways": [], "anchored": False}
 
 
 # Overpass از POSIX ERE استفاده می‌کند: [[:space:]] مجاز است، \s و (?:...) نه.
@@ -676,9 +704,14 @@ def overpass_street_bbox(names: list[str], *, bbox: list[float], timeout: float 
         # نام دقیق در تهران کوچه‌های کوچکِ هم‌نام زیادی دارد؛ فقط خوشه‌ای که واقعاً روی
         # تکهٔ Nominatim بنشیند معتبر است. بین معتبرها، بلندترین (کامل‌ترین) را بردار.
         if near and len(near) == 4 and not cluster["anchored"]:
+            # مؤلفهٔ نزدیک (≤۱km) هنوز ممکن است همان خیابان باشد؛ ولی فقط وقتی
+            # می‌پذیریم که کوئری «همهٔ تکه‌های هم‌نام» را داده باشد (regex).
+            if via != "regex":
+                if diag is not None:
+                    diag.append(f"{via}: {len(ways)} تکه، ولی هیچ‌کدام روی تکهٔ Nominatim نبود")
+                continue
             if diag is not None:
-                diag.append(f"{via}: {len(ways)} تکه، ولی هیچ‌کدام روی تکهٔ Nominatim نبود")
-            continue
+                diag.append(f"{via}: نزدیک‌ترین مؤلفه {len(chosen)} تکه، نه روی جعبهٔ Nominatim")
         if not found or length > float(found.get("length_km") or 0):
             found = candidate
         if cluster["anchored"] and length >= 3.0:
