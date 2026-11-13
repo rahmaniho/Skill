@@ -143,6 +143,17 @@ def _city_index() -> list[tuple[str, dict]]:
     return _CITY_INDEX
 
 
+_WORD_LETTERS = "آابپتثجچحخدذرزژسشصضطظعغفقکگلمنوهیءأإؤئۀةيكى"
+
+
+def _word_at(flat: str, index: int, name: str) -> bool:
+    """آیا این تطبیق یک «واژهٔ کامل» است؟ («کاشان» داخل «کاشانی» نه، «یزد» داخل «یزدی» نه)"""
+    before = flat[index - 1] if index > 0 else " "
+    after_index = index + len(name)
+    after = flat[after_index] if after_index < len(flat) else " "
+    return before not in _WORD_LETTERS and after not in _WORD_LETTERS
+
+
 def _find_city_name(text: str) -> tuple[str, dict] | None:
     """اولین (بلندترین) نام شهری که واقعاً در متن هست — نه کل جمله."""
     flat = _norm(text).lower()
@@ -150,9 +161,12 @@ def _find_city_name(text: str) -> tuple[str, dict] | None:
         return None
     for name, info in _city_index():
         index = flat.find(name)
-        if index >= 0:
-            original = _norm(text)
-            return original[index:index + len(name)] if index + len(name) <= len(original) else name, info
+        while index >= 0:
+            if _word_at(flat, index, name):
+                original = _norm(text)
+                return (original[index:index + len(name)]
+                        if index + len(name) <= len(original) else name), info
+            index = flat.find(name, index + 1)
     return None
 
 
@@ -316,7 +330,7 @@ def parse(text: str = "", goal: str = "site", size: str = "standard", city: str 
           socials: bool = True, emails: bool = True, engine_mode: str = "auto",
           cols: str = "contact", export_fmt: str = "xlsx", allow_network: bool = False,
           lat: str = "", lon: str = "", province: str = "", district: str = "",
-          street: str = "", radius: int = 0, niche_id: str = "",
+          street: str = "", streets: str = "", radius: int = 0, niche_id: str = "",
           all_trades: bool | None = None, limit: int = 0,
           area_from_text: bool = True) -> dict:
     """جملهٔ کاربر + انتخاب‌های منطقه‌ای → درخواست آمادهٔ اجرا + خلاصهٔ انسانی.
@@ -335,6 +349,7 @@ def parse(text: str = "", goal: str = "site", size: str = "standard", city: str 
     groups = detect_groups(raw)
 
     # ── ۱) منطقه/خیابان از داخل جمله (فقط اگر کاربر صریح انتخاب نکرده باشد) ──
+    explicit_street = bool(_norm(street))
     areas_in_text = regions.detect_area(raw) if area_from_text else []
     for hit in areas_in_text:
         if hit["kind"] == "district" and not district:
@@ -355,6 +370,32 @@ def parse(text: str = "", goal: str = "site", size: str = "standard", city: str 
         city_query = "تهران" if is_fa else "Tehran"
     if not city_key:
         city_key = regions.city_key(city_query)      # برای آبشار منطقه/خیابان در رابط
+
+    # ── ۲٫۵) چند خیابان: فهرست صریح یا چند نام داخل یک جمله ─────────────────
+    # «کافه در ولیعصر و انقلاب تهران» → دو خیابان؛ هر کدام محدودهٔ خودش را دارد.
+    street_list = pipeline._split_streets(streets) if str(streets or "").strip() else []
+    if not street_list and not explicit_street and area_from_text:
+        if city_key:
+            # فقط خیابان‌های همان شهر (وگرنه «ولیعصر» به محلهٔ تبریز چسبیده می‌شد)
+            city_hits = [h for h in regions.detect_area(raw, city_key=city_key)
+                         if h.get("kind") == "street"]
+        else:
+            city_hits = [h for h in areas_in_text if h.get("kind") == "street"]
+        known = {(h.get("kind"), h.get("name")) for h in areas_in_text}
+        for hit in city_hits:
+            if (hit.get("kind"), hit.get("name")) not in known:
+                areas_in_text.append(hit)
+                known.add((hit.get("kind"), hit.get("name")))
+        areas_in_text.sort(key=lambda h: h.get("at") or 0)
+        names = []
+        for hit in city_hits:
+            if hit["name"] not in names:
+                names.append(hit["name"])
+        if len(names) >= 2:
+            street_list = names[:8]
+    multi_streets = len(street_list) >= 2
+    if multi_streets:
+        street = ""                                  # حل تک‌خیابانی لازم نیست
     lang = "fa" if is_fa else "en"
 
     # ── ۳) استان: انتخاب صریح یا استنباط از شهر ────────────────────────────
@@ -376,6 +417,13 @@ def parse(text: str = "", goal: str = "site", size: str = "standard", city: str 
     area_keyword = area.get("keyword_label") or city_query  # جزئی → کلی (کلیدواژه)
     resolved_radius = int(radius or area.get("radius") or 0)
     resolved_zoom = int(area.get("zoom") or 15)
+    if multi_streets:
+        # پایپ‌لاین خودش هر خیابان را با Overpass حل می‌کند و شعاع را می‌گذارد
+        area_level = "street"
+        names_fa = " + ".join(street_list)
+        area_label = area_keyword = f"{names_fa}، {city_fa or city_query}".strip(" ،")
+        resolved_radius = 0
+        resolved_zoom = 15
     half = max(0.004, resolved_radius * 1.3 / 111000.0) if resolved_radius else 0.0
     area_bbox: list = []
     if half and area.get("lat") and area_level in ("street", "district"):
@@ -427,6 +475,7 @@ def parse(text: str = "", goal: str = "site", size: str = "standard", city: str 
         "max_time": size_cfg["max_time"], "fast_mode": size_cfg["id"] == "quick",
         # سطح منطقه‌ای — پایپ‌لاین از همین عدد‌ها نقطه و شعاع را برمی‌دارد
         "province": province, "district": district, "street": street,
+        "streets": street_list if multi_streets else [],
         "area_label": area_keyword, "area_level": area_level, "bbox": area_bbox,
         "area_applied": True,
     }
@@ -496,7 +545,11 @@ def parse(text: str = "", goal: str = "site", size: str = "standard", city: str 
                         "می‌توانید نام شهر را بنویسید یا از فهرست انتخاب کنید.")
     if niche and niche.custom and not all_trades:
         warnings.append(f"«{niche.fa}» در کاتالوگ ۹۱ صنفی نبود؛ به‌عنوان صنف سفارشی جست‌وجو می‌شود.")
-    if area_level == "street":
+    if multi_streets:
+        warnings.append(
+            f"{len(street_list)} خیابان هم‌زمان («{'، '.join(street_list)}»): محدودهٔ هر خیابان "
+            "جدا حل می‌شود و فقط مغازه‌های روی نوار همین خیابان‌ها نگه داشته می‌شوند.")
+    elif area_level == "street":
         warnings.append(f"جست‌وجو در سطح خیابان است ({resolved_radius} متر). اگر نتیجه کم بود، "
                         "خیابان را خالی بگذارید تا کل منطقه جست‌وجو شود.")
     elif area_level == "province":
@@ -529,6 +582,7 @@ def parse(text: str = "", goal: str = "site", size: str = "standard", city: str 
                 "province_fa": regions.PROVINCES[province]["fa"] if province in regions.PROVINCES else "",
                 "city": city_query, "city_key": city_key, "city_fa": city_fa,
                 "district": district, "street": street,
+                "street_names": street_list if multi_streets else [],
                 "label": area_label, "keyword_label": area_keyword,
                 "level": area_level, "level_fa": regions.LEVEL_FA.get(area_level, ""),
                 "lat": area.get("lat"), "lon": area.get("lon"),

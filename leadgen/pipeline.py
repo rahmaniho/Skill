@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import math
+import re
 import time
 import traceback
 from dataclasses import dataclass, field
@@ -30,6 +31,10 @@ ProgressFn = Callable[[dict], None]
 # هشدار اسکیل: آستانه‌هایی که job را «بزرگ» می‌کنند
 LARGE_DEPTH = 15
 LARGE_KEYWORDS = 10
+
+
+# جداکنندهٔ چند خیابان: «ولیعصر + انقلاب»، «ولیعصر؛ انقلاب»، «ولیعصر | انقلاب»
+_STREET_SPLIT_RE = re.compile(r"\s*(?:\+|؛|\||\n|،)\s*")
 
 
 @dataclass
@@ -83,6 +88,9 @@ class ScrapeRequest:
     watch_id: str = ""               # اگر اجرا از «دیدبان» آمده، شناسهٔ آن دیدبان
     area_applied: bool = False       # آیا نقطهٔ منطقه یک‌بار محاسبه شده؟
     street_boxes: list = field(default_factory=list)  # تکه‌های واقعی خیابان (فیلتر «روی خیابان»)
+    # چند خیابان هم‌زمان: «ولیعصر + انقلاب + آزادی» — هر خیابان محدودهٔ خودش را دارد
+    streets: list = field(default_factory=list)
+    street_areas: list = field(default_factory=list)  # [{name, bbox, boxes}] پس از حل‌شدن
     zoom_set: bool = False           # zoom صریحاً داده شده؟ وگرنه از سطح منطقه می‌آید
 
     @classmethod
@@ -110,6 +118,16 @@ class ScrapeRequest:
                     clean.pop("bbox")
             except (TypeError, ValueError):
                 clean.pop("bbox")
+        if clean.get("streets") is not None:
+            raw_streets = clean.get("streets")
+            if isinstance(raw_streets, str):
+                raw_streets = _split_streets(raw_streets)
+            names: list = []
+            for item in raw_streets if isinstance(raw_streets, (list, tuple)) else []:
+                name = str(item or "").strip()
+                if name and name not in names:
+                    names.append(name)
+            clean["streets"] = names[:8]
         if clean.get("street_boxes"):
             boxes: list = []
             for item in clean["street_boxes"]:
@@ -125,6 +143,16 @@ class ScrapeRequest:
             if bool_key in clean and clean[bool_key] is not None:
                 clean[bool_key] = bool(clean[bool_key])
         return cls(**clean)
+
+
+def _split_streets(text: str) -> list[str]:
+    """رشتهٔ چند خیابانی → فهرست نام‌ها (بدون تکرار، حداکثر ۸ تا)."""
+    parts = [part.strip(" .،,") for part in _STREET_SPLIT_RE.split(str(text or ""))]
+    out: list[str] = []
+    for part in parts:
+        if len(part) >= 2 and part not in out:
+            out.append(part)
+    return out[:8]
 
 
 @dataclass
@@ -551,6 +579,199 @@ def _near_street(row: dict, boxes: list, pad: float = STREET_CORRIDOR_PAD) -> bo
     return False
 
 
+PLACES_FILL_BELOW = 5     # کمتر از این تعداد در خیابان/محله = دادهٔ نازک
+
+
+def _places_fill(request: "ScrapeRequest", specs: list[dict],
+                 warnings: list) -> list[dict]:
+    """پُر کردن جاهای خالی با Google Places — فقط همان محدودهٔ انتخاب‌شده.
+
+    چرا؟ OSM در شهرهای کوچک (مثلاً یزد) چند مغازه بیشتر ندارد؛ کلید تجاری گوگل
+    همان خیابان/محله را کامل می‌کند. بدون کلید، بی‌صدا هیچ کاری نمی‌کند.
+    محدوده سخت‌گیرانه است: برای خیابان، مستطیل باریک خودِ خیابان و در پایان فیلتر
+    نوار خیابان؛ پس نتیجهٔ خیابان همسایه وارد خروجی نمی‌شود.
+    """
+    from .providers import places
+
+    if not places.available():
+        return []
+    try:
+        if request.area_level == "province":
+            return []
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        want = max(10, min(60, int(request.limit or 20)))
+    except (TypeError, ValueError):
+        want = 20
+
+    boxes: list[list[float]] = []
+    for box in list(getattr(request, "street_boxes", None) or []):
+        try:
+            if len(box) == 4 and float(box[1]) > float(box[0]) and float(box[3]) > float(box[2]):
+                boxes.append([float(x) for x in box])
+        except (TypeError, ValueError):
+            continue
+
+    def _rect(raw_boxes: list, raw_bbox) -> list | None:
+        if raw_boxes:
+            pad = 0.0006
+            return [min(b[0] for b in raw_boxes) - pad, max(b[1] for b in raw_boxes) + pad,
+                    min(b[2] for b in raw_boxes) - pad, max(b[3] for b in raw_boxes) + pad]
+        try:
+            if raw_bbox and len(raw_bbox) == 4 and float(raw_bbox[1]) > float(raw_bbox[0]):
+                return [float(x) for x in raw_bbox]
+        except (TypeError, ValueError):
+            pass
+        return None
+
+    terms: list[str] = []
+    for spec in specs or []:
+        for keyword in spec.get("keywords") or []:
+            keyword = str(keyword).strip()
+            if keyword and keyword not in terms:
+                terms.append(keyword)
+    if not terms:
+        return []
+
+    areas = [a for a in (getattr(request, "street_areas", None) or []) if a.get("name")][:8]
+    label = str(getattr(request, "area_label", "") or "")
+    targets: list[dict | None] = areas or [None]
+    rows: list[dict] = []
+    seen: set[str] = set()
+    errors: list[str] = []
+    per = 2 if areas else 3
+    for area in targets:
+        area_boxes: list = []
+        area_bbox = None
+        if area:
+            area_bbox = area.get("bbox")
+            for box in area.get("boxes") or []:
+                try:
+                    if len(box) == 4:
+                        area_boxes.append([float(x) for x in box])
+                except (TypeError, ValueError):
+                    continue
+        rect = _rect(area_boxes, area_bbox) or _rect(boxes, getattr(request, "bbox", None))
+        area_terms: list[str] = []
+        for keyword in terms[:per]:
+            term = keyword
+            if area and label and label in keyword:
+                term = keyword.replace(label, str(area["name"]))
+            elif area:
+                term = f"{keyword} {area['name']}".strip()
+            if term not in area_terms:
+                area_terms.append(term)
+        for term in area_terms:
+            try:
+                found = places.search(term, bbox=rect, limit=20,
+                                      pages=2, timeout=12.0, input_id=term)
+            except Exception as exc:                     # noqa: BLE001
+                errors.append(f"{term}: {type(exc).__name__}")
+                continue
+            for row in found:
+                pid = row.get("place_id") or row.get("title")
+                if pid in seen:
+                    continue
+                seen.add(pid)
+                rows.append(row)
+            if len(rows) >= want:
+                break
+        if len(rows) >= want:
+            break
+
+    if rows and request.area_level == "street" and boxes:
+        near = [r for r in rows if _near_street(r, boxes)]
+        rejected = len(rows) - len(near)
+        rows = near
+        if rejected:
+            warnings.append(
+                f"{rejected} نتیجهٔ گوگل بیرون از نوار خیابان بود و حذف شد "
+                f"(فقط مغازه‌های روی همان خیابان).")
+    if rows:
+        where = "، ".join(a["name"] for a in areas) if areas else (request.area_label or request.street or "")
+        warnings.append(
+            f"Google Places جاهای خالی را پر کرد: {len(rows)} کسب‌وکار در "
+            f"«{where or request.city_query}» (همان محدوده، بدون سرریز به جاهای دیگر).")
+    elif errors:
+        warnings.append("Google Places هم نتیجه نداد: " + "؛ ".join(errors[:2]))
+    return rows
+
+
+def resolve_street_areas(request: "ScrapeRequest", city: dict, *, allow_network: bool,
+                         warnings: list | None = None) -> list[dict]:
+    """چند خیابان هم‌زمان → محدودهٔ واقعی هر خیابان + یک درخواست آمادهٔ اسکراب.
+
+    چرا؟ «کافه در ولیعصر و انقلاب» دو خیابان است، نه یک نقطه. هر خیابان با همان
+    مسیر تک‌خیابانی حل می‌شود (Nominatim + Overpass + نوار خیابان) و بعد جعبه‌ها
+    یکی می‌شوند؛ فیلتر نهایی هم روی نوار خودِ خیابان‌ها اعمال می‌شود.
+    """
+    names = [str(x).strip() for x in (request.streets or []) if str(x).strip()][:8]
+    if len(names) < 2:
+        return []
+    # نام شهر از خودِ resolve_city (در چندخیابانی، city_query برچسب ترکیبی است)
+    city_fa = city.get("label_local") or city.get("label") or ""
+    areas: list[dict] = []
+    missing: list[str] = []
+    import copy as _copy
+
+    for name in names:
+        probe = _copy.copy(request)
+        probe.street = name
+        probe.streets = []
+        probe.street_areas = []
+        probe.street_boxes = []
+        probe.district = ""
+        probe.bbox = []
+        probe.area_level = "street"
+        probe.area_unresolved = []
+        if city_fa:
+            probe.city_query = city_fa          # وگرنه نام مرکب چندخیابانی به Nominatim می‌رفت
+        probe.area_label = f"{name}، {city_fa}".strip(" ،") if city_fa else name
+        probe_warnings: list[str] = []
+        try:
+            refined = refine_area_bbox(probe, city, allow_network=allow_network,
+                                       warnings=probe_warnings)
+        except Exception:  # noqa: BLE001 — یک خیابان نباید بقیه را متوقف کند
+            refined = []
+        box = list(refined or probe.bbox or [])
+        if len(box) != 4:
+            missing.append(name)
+            continue
+        areas.append({"name": name, "bbox": [round(float(x), 5) for x in box],
+                      "boxes": list(probe.street_boxes or [])})
+    if not areas:
+        raise EngineError(
+            f"هیچ‌کدام از خیابان‌ها پیدا نشد ({'، '.join(missing[:4])})؛ برای اینکه دادهٔ "
+            f"جای دیگری اسکراب نشود، اجرا متوقف شد. نام دقیق‌تری بدهید.")
+
+    boxes: list[list[float]] = []
+    for area in areas:
+        for box in area["boxes"]:
+            if box not in boxes:
+                boxes.append(box)
+    union = [min(a["bbox"][0] for a in areas), max(a["bbox"][1] for a in areas),
+             min(a["bbox"][2] for a in areas), max(a["bbox"][3] for a in areas)]
+    request.bbox = union
+    request.street_boxes = boxes[:600]
+    request.street_areas = areas
+    request.area_level = "street"
+    request.area_unresolved = []
+    request.street = "، ".join(a["name"] for a in areas)
+    names_fa = " + ".join(a["name"] for a in areas)
+    request.area_label = f"{names_fa}، {city_fa}".strip(" ،") if city_fa else names_fa
+    span_km = max(union[1] - union[0], (union[3] - union[2]) * 0.9) * 111.0
+    request.radius = int(max(250, min(20000, span_km * 500)))
+    request.area_applied = True
+    if warnings is not None:
+        if missing:
+            warnings.append(f"این خیابان‌ها پیدا نشد و اسکراب نشدند: {'، '.join(missing)}")
+        warnings.append(
+            f"چند خیابان هم‌زمان: {len(areas)} خیابان ({'، '.join(a['name'] for a in areas)}) — "
+            f"فقط مغازه‌های روی همین خیابان‌ها نگه داشته می‌شود.")
+    return areas
+
+
 def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) -> ScrapeResult:
     """اجرای کامل پایپ‌لاین. exceptions به‌صورت اجرای failed ثبت می‌شود."""
     storage.init_db()
@@ -609,8 +830,11 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                 f"مکان «{request.city_query}» پیدا نشد. یک شهر شناخته‌شده بنویسید یا "
                 f"lat/lon را دستی بدهید (فهرست شهرها: GET /api/cities)."
             )
+        # ── چند خیابان هم‌زمان: محدودهٔ هر خیابان جدا حل می‌شود ────────────────
+        multi = resolve_street_areas(request, city, allow_network=engine.live,
+                                     warnings=warnings) if len(request.streets or []) >= 2 else []
         # ── محدودهٔ واقعی خیابان/محله از خودِ OSM (کل خیابان، نه یک نقطه) ─────
-        if request.area_level in ("street", "district") or request.area_unresolved:
+        if not multi and (request.area_level in ("street", "district") or request.area_unresolved):
             refine_area_bbox(request, city, allow_network=engine.live, warnings=warnings)
         if request.area_unresolved:
             # خیابان/منطقهٔ ناشناخته: به‌جای چسبیدن به نزدیک‌ترین نام، صریح می‌گوییم
@@ -793,6 +1017,10 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                 "scan_tiles": scan_tiles,
                 # تکه‌های واقعی خیابان: جست‌وجوی Overpass روی نوار خیابان، نه مستطیل شهر
                 "street_boxes": list(getattr(request, "street_boxes", None) or []),
+                # چند خیابان هم‌زمان: هر خیابان مستطیل خودش (موتور Places جدا می‌پرسد)
+                "street_areas": list(getattr(request, "street_areas", None) or []),
+                "area_label": request.area_label,
+                "niche_fa": primary_niche.fa,
                 # «فقط همان منطقه»: موتور حق ندارد نتیجهٔ بیرون از محدوده بدهد
                 "strict_region": True,
                 # پرش به کل استان فقط وقتی کاربر خودش «کل استان» را خواسته باشد
@@ -877,6 +1105,18 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                             + ("…" if len(spec["keywords"]) > 2 else "")),
             })
 
+        # ── ۲٫۵) دادهٔ نازک؟ Google Places همان محدوده را پر می‌کند ──────────
+        if getattr(engine, "live", False) and engine.name != "places" \
+                and request.area_level in ("street", "district") \
+                and len(rows) < PLACES_FILL_BELOW:
+            extra = _places_fill(request, specs, warnings)
+            if extra:
+                rows = geo.dedupe(rows + extra)
+                _progress(on_progress, run_id, {
+                    "stage": "working", "status": "working", "percent": 78,
+                    "message": f"Google Places جاهای خالی را پر کرد: +{len(extra)} ردیف "
+                               f"(یکتا: {len(rows)})"})
+
         if not rows:
             if empty_hit is not None or engine.name in ("osm", "places"):
                 # «خالی» با «خطا» فرق دارد: اجرا با صفر لید تمام می‌شود تا کاربر
@@ -958,9 +1198,16 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                     f"و حذف شد (فقط مغازه‌های روی همان خیابان).")
                 rows = kept
             elif dropped and not kept:
-                warnings.append(
-                    f"هیچ کسب‌وکاری دقیقاً روی «{request.area_label or request.street}» پیدا نشد؛ "
-                    "نزدیک‌ترین‌ها نگه داشته شدند.")
+                if getattr(request, "street_areas", None):
+                    # چند خیابان: نتیجهٔ خیابان همسایه به‌جای خیابان خواسته‌شده رد نمی‌شود
+                    warnings.append(
+                        f"هیچ کسب‌وکاری دقیقاً روی «{request.area_label or request.street}» "
+                        f"پیدا نشد؛ {dropped} نتیجهٔ بیرون از نوار خیابان دور ریخته شد.")
+                    rows = []
+                else:
+                    warnings.append(
+                        f"هیچ کسب‌وکاری دقیقاً روی «{request.area_label or request.street}» پیدا نشد؛ "
+                        "نزدیک‌ترین‌ها نگه داشته شدند.")
         if region_box:
             kept = [r for r in rows if geo.in_bbox(r, region_box, margin=0.02)]
             dropped = len(rows) - len(kept)

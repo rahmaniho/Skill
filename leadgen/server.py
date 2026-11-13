@@ -942,6 +942,7 @@ class Handler(BaseHTTPRequestHandler):
                 province=str(body.get("province", "") or ""),
                 district=str(body.get("district", "") or ""),
                 street=str(body.get("street", "") or ""),
+                streets=str(body.get("streets", "") or ""),
                 radius=_int(body.get("radius")), niche_id=str(body.get("niche_id", "") or ""),
                 all_trades=(None if body.get("all_trades") is None
                             else bool(body.get("all_trades"))),
