@@ -275,7 +275,10 @@ def _overpass_request(query: str, *, timeout: float, retries: int = 1,
                         body = exc.read().decode("utf-8", "replace")
                         # پاسخ خطا XML چندخطی است؛ برای لاگ یک‌خطی و بدون تگ می‌کنیم.
                         body = re.sub(r"<[^>]+>", " ", body)
-                        detail = re.sub(r"\s+", " ", body).strip()[:200]
+                        body = re.sub(r"\s+", " ", body).strip()
+                        # متن مفید بعد از «error» می‌آید؛ سرصفحهٔ OSM3S بی‌فایده است.
+                        start = body.lower().find("error")
+                        detail = body[start:start + 220] if start >= 0 else body[:220]
                     except Exception:                     # noqa: BLE001
                         detail = ""
                 errors.append(f"{host} HTTP {exc.code}" + (f" ({detail})" if detail else ""))
