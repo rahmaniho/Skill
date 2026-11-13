@@ -871,6 +871,53 @@ class StreetFamilyTests(unittest.TestCase):
         self.assertGreater(found["bbox"][1], 32.669)
         self.assertEqual(3, found["siblings"])
 
+    def test_short_anchor_jumps_to_the_main_axis(self):
+        """«چهارباغ» اصفهان: تکهٔ Nominatim ۰٫۸ کیلومتر و ۱۰ کیلومتر دور از محور است."""
+        from leadgen.providers import osm
+        stub = {"elements": [self._way(1, "چهارباغ", (32.7000, 51.7790),
+                                       (32.7010, 51.7800), [1, 2])]}
+        family = {"elements": [
+            self._way(2, "چهارباغ عباسی", (32.6467, 51.6675), (32.6574, 51.6694), [2, 3]),
+            self._way(3, "چهارباغ بالا", (32.6574, 51.6694), (32.6700, 51.6700), [3, 4]),
+            self._way(4, "چهارباغ پایین", (32.6400, 51.6660), (32.6467, 51.6675), [9, 2]),
+        ]}
+        def responder(query, **kwargs):
+            if 'name"~"^' in query:
+                return stub                       # الگوی نام کوتاه: همان تکهٔ شرقی
+            if 'name"~"' in query:
+                return family                     # خانوادهٔ «چهارباغ…»
+            return stub                           # پرسش دقیق: فقط تکهٔ شرقی
+
+        with mock.patch.object(osm, "_overpass_request", side_effect=responder) as call:
+            found = osm.overpass_street_bbox(["چهارباغ"], bbox=[32.60, 32.75, 51.60, 51.82],
+                                             near=[32.7000, 32.7010, 51.7790, 51.7800])
+        self.assertEqual(3, call.call_count)
+        self.assertTrue(found.get("detached"), "تکهٔ کوتاه باید با محور اصلی عوض شود")
+        self.assertGreater(found["length_km"], 2.5)
+        self.assertLess(found["bbox"][2], 51.68)          # غرب شهر = محور واقعی
+        self.assertEqual(3, found["siblings"])
+
+    def test_generic_root_does_not_jump_away_from_the_anchor(self):
+        """«شهید بهشتی» و «شهید مطهری» دو خیابان‌اند؛ ریشهٔ عمومی نباید جابه‌جا شود."""
+        from leadgen.providers import osm
+        stub = {"elements": [self._way(1, "شهید بهشتی", (32.7000, 51.7790),
+                                       (32.7010, 51.7800), [1, 2])]}
+        family = {"elements": [
+            self._way(2, "شهید مطهری", (32.6400, 51.6675), (32.6600, 51.6700), [7, 8])]}
+        def responder(query, **kwargs):
+            if 'name"~"^' in query:
+                return stub
+            if 'name"~"' in query:
+                return family
+            return stub
+
+        with mock.patch.object(osm, "_overpass_request", side_effect=responder):
+            found = osm.overpass_street_bbox(["شهید بهشتی"], bbox=[32.60, 32.75, 51.60, 51.82],
+                                             near=[32.7000, 32.7010, 51.7790, 51.7800])
+        self.assertFalse(found.get("detached"))
+        self.assertEqual(1, found["ways"])
+        self.assertLess(found["length_km"], 0.5)
+
     def test_distant_siblings_are_ignored(self):
         from leadgen.providers import osm
         base = {"elements": [self._way(1, "چهارباغ عباسی", (32.6467, 51.6675),

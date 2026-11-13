@@ -1764,6 +1764,37 @@ class StreetGeometryMemoryTests(unittest.TestCase):
         self.assertGreater(request.street_memory[0]["span_km"], 2.0)
         self.assertNotEqual([short["boxes"][0]], request.street_boxes)
 
+    def test_detached_main_axis_replaces_the_short_stub(self):
+        """«چهارباغ» اصفهان: تکهٔ ۰٫۸ کیلومتری شرق باید با محور اصلیِ غرب عوض شود."""
+        request = self._request("خیابان چهارباغ")
+        request.city_key = "isfahan"
+        stub = {"bbox": [32.7000, 32.7010, 51.7790, 51.7800],
+                "label": "خیابان چهارباغ، اصفهان، ایران"}
+        axis_boxes = [[32.6467, 32.6574, 51.6675, 51.6694],
+                      [32.6574, 32.6740, 51.6694, 51.6710],
+                      [32.6300, 32.6467, 51.6650, 51.6675]]
+        wide = {"bbox": [32.6300, 32.6740, 51.6650, 51.6710], "ways": 12,
+                "boxes": axis_boxes, "siblings": 4, "via": "overpass",
+                "length_km": 5.4, "detached": True}
+        warnings: list = []
+        city = {"bbox": [32.55, 32.80, 51.55, 51.85], "country": "IR",
+                "label_local": "اصفهان", "key": "isfahan"}
+        box = self._run(request, wide=wide, lookup=stub, city=city, warnings=warnings)
+        self.assertEqual(axis_boxes, request.street_boxes,
+                         "فیلتر «روی خیابان» باید روی محور اصلی بنشیند")
+        self.assertLess(box[2], 51.68, "جعبه نباید روی تکهٔ شرقی بماند")
+        self.assertEqual("main", request.street_memory[0].get("axis"))
+        self.assertTrue(any("محور اصلی" in w for w in warnings), warnings)
+
+    def test_short_stub_without_detached_flag_is_not_replaced(self):
+        """نوار معمولی Overpass که تکهٔ Nominatim را در خود ندارد نباید پذیرفته شود."""
+        request = self._request()
+        wide = {"bbox": [35.8000, 35.8300, 51.5000, 51.5500], "ways": 9,
+                "boxes": [[35.8000, 35.8300, 51.5000, 51.5500]], "length_km": 3.3}
+        self._run(request, wide=wide)
+        self.assertNotIn("axis", request.street_memory[0])
+        self.assertEqual([], request.street_boxes)
+
     def test_stale_memory_rescues_the_run_when_overpass_is_down(self):
         request = self._request()
         boxes = [[35.6600, 35.7600, 51.4000, 51.4300]]

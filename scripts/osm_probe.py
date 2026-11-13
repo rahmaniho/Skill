@@ -137,6 +137,8 @@ def probe_street(city: str, street: str) -> dict:
         span = max(wide["bbox"][1] - wide["bbox"][0],
                    (wide["bbox"][3] - wide["bbox"][2]) * 0.9) * 111.0
         extra = (f" + {wide['siblings']} نام هم‌خانواده" if wide.get("siblings") else "")
+        if wide.get("detached"):
+            extra += " + محور اصلی (جای تکهٔ کوتاه)"
         print(f"  ✓ Overpass: {wide['ways']} تکه ({wide.get('via')}{extra}) → "
               f"{[round(x, 4) for x in wide['bbox']]} ≈ {span:.1f} کیلومتر در {elapsed}s")
     else:
@@ -161,6 +163,7 @@ def probe_street(city: str, street: str) -> dict:
               "seed_bbox": seed, "street_bbox": wide.get("bbox"),
               "ways": wide.get("ways", 0), "via": wide.get("via"),
               "siblings": wide.get("siblings", 0),
+              "detached": bool(wide.get("detached")),
               "seconds": elapsed, "diag": diag}
     # یک خط جمع‌بندی برای اینکه در گزارش Actions هم دیده شود (لاگ کامل در دسترس نیست)
     print("SUMMARY " + json.dumps(result, ensure_ascii=False))
