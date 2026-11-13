@@ -24,6 +24,7 @@ ENV_KEYS = (
     "OSM_LIMIT",             # حداکثر نتیجه در هر کوئری OSM
     "OSM_COUNTRY",           # پیش‌فرض کشور (ir) برای محدود کردن نتایج
     "PLACES_API_KEY",        # کلید Google Places API (مسیر تجاری)
+    "LEADGEN_STREET_CACHE_DAYS",  # عمر حافظهٔ نوار خیابان‌ها (روز؛ ۰ = خاموش)
     "SELF_DRIVE",            # اجرای خودکار صف از سمت رابط (بدون ورکر)
     # ── محافظ‌های تجاری ──────────────────────────────────────────────────────
     "LEADGEN_ACCESS_CODE",   # اگر بگذارید، اپ با کد دسترسی قفل می‌شود
@@ -142,6 +143,10 @@ OVERPASS_LIMIT = max(50, min(5000, env_int("OVERPASS_LIMIT", 800)))
 OVERPASS_TIMEOUT = max(8, min(90, env_int("OVERPASS_TIMEOUT", 30)))
 # کش نتیجهٔ Overpass: جست‌وجوی تکراری (همان شهر/صنف) بدون فشار دوباره به سرویس
 OVERPASS_CACHE_TTL = max(0, min(86400, env_int("OVERPASS_CACHE_TTL", 900)))
+# «حافظهٔ خیابان‌ها»: نوار واقعی هر خیابان (از Overpass) چند روز معتبر بماند؟
+# ۰ = خاموش (هر بار از Overpass پرسیده شود). عمرِ داده در OSM هفته‌ای/ماهی‌ای
+# تغییر می‌کند، پس ۱۴ روز هم تازه است و هم اجرای تکراری را فوری می‌کند.
+STREET_CACHE_DAYS = max(0, min(180, env_int("LEADGEN_STREET_CACHE_DAYS", 14)))
 PLACES_API_KEY = env("PLACES_API_KEY") or env("GOOGLE_MAPS_API_KEY")
 
 # ── اسکراب کامل منطقه (کاشی‌به‌کاشی) ────────────────────────────────────────
@@ -370,6 +375,7 @@ def summary() -> dict:
         "overpass_endpoints": OVERPASS_ENDPOINTS,
         "overpass_limit": OVERPASS_LIMIT,
         "overpass_cache_ttl": OVERPASS_CACHE_TTL,
+        "street_cache_days": STREET_CACHE_DAYS,
         "places_key_set": bool(PLACES_API_KEY),
         "self_drive": SELF_DRIVE,
         "access_code_set": bool(ACCESS_CODE),

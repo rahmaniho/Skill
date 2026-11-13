@@ -148,11 +148,29 @@ create table if not exists public.deliveries (
 );
 create index if not exists deliveries_kind_idx on public.deliveries (kind, created_at desc);
 
+-- ── حافظهٔ خیابان‌ها: هندسهٔ واقعی هر خیابان یک‌بار حل و نگه داشته می‌شود ────
+-- چرا؟ Overpass یک سرویس عمومی است (۴۲۹/۵۰۴ طبیعی است). با این جدول، اجرای
+-- بعدی همان خیابان نه به سرویس عمومی وابسته است و نه به تکهٔ کوچک Nominatim
+-- سقوط می‌کند؛ نوار کامل خیابان (مثل ولیعصر تهران: ۷۷ تکه) فوری برمی‌گردد.
+create table if not exists public.street_cache (
+    key        text primary key,               -- «شهر|نام نرمال‌شدهٔ خیابان»
+    city_key   text,
+    street     text,
+    bbox       jsonb not null default '[]'::jsonb,   -- [s, n, w, e]
+    boxes      jsonb not null default '[]'::jsonb,   -- نوار هر تکهٔ خیابان
+    ways       integer not null default 0,
+    length_km  double precision not null default 0,
+    source     text not null default 'overpass',     -- overpass | nominatim
+    updated_at double precision not null default extract(epoch from now())
+);
+create index if not exists street_cache_updated_idx on public.street_cache (updated_at desc);
+
 -- ── امنیت: فقط service_role ─────────────────────────────────────────────────
-alter table public.runs       enable row level security;
-alter table public.leads      enable row level security;
-alter table public.jobs       enable row level security;
-alter table public.deliveries enable row level security;
+alter table public.runs         enable row level security;
+alter table public.leads        enable row level security;
+alter table public.jobs         enable row level security;
+alter table public.deliveries   enable row level security;
+alter table public.street_cache enable row level security;
 -- عمدتا هیچ policy ساخته نمی‌شود: کلید service_role از RLS عبور می‌کند و
 -- کلید anon/عمومی هیچ ردیفی نمی‌بیند. اگر خواستید کاربرِ لاگین‌کرده (Supabase Auth)
 -- فقط لیدهای خودش را ببیند، policy مخصوص آن را جدا اضافه کنید.

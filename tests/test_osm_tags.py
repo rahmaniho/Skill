@@ -760,6 +760,19 @@ class OverpassStreetBBoxTests(unittest.TestCase):
         with mock.patch.object(osm, "_overpass_request", side_effect=osm.OSMDownError("down")):
             self.assertEqual(osm.overpass_street_bbox(["ولیعصر"], bbox=[1, 2, 3, 4]), {})
 
+    def test_transient_failure_of_the_exact_query_still_tries_the_regex(self):
+        """۴۲۹/۵۰۴ گذرا در پرسش «دقیق» نباید مسیر «الگو» را هم بکشد (باگ ولیعصر)."""
+        from leadgen.providers import osm
+        data = {"elements": [self._way(1, [1, 2], (35.700, 51.410), (35.710, 51.412))]}
+        with mock.patch.object(osm, "_overpass_request",
+                               side_effect=[osm.OSMDownError("429"), data]) as call:
+            found = osm.overpass_street_bbox(["ولیعصر"], bbox=[35.6, 35.9, 51.2, 51.6],
+                                             budget_s=30.0)
+        self.assertEqual(found["via"], "regex")
+        self.assertEqual(2, call.call_count, "پرسش دوم باید انجام شده باشد")
+        # پرسش «دقیق» نباید بیش از ۱۰ ثانیه از بودجه را بخورد
+        self.assertLessEqual(call.call_args_list[0].kwargs["deadline_s"], 10.0)
+
     def test_result_is_cached_between_calls(self):
         from leadgen.providers import osm
         data = {"elements": [self._way(1, [1, 2], (35.700, 51.410), (35.710, 51.412))]}

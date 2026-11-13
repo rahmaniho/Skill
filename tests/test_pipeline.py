@@ -1622,3 +1622,116 @@ class PlacesFillTests(unittest.TestCase):
         self.assertAlmostEqual(35.6994, calls[0][1][0], places=4)
         self.assertAlmostEqual(51.4294, calls[1][1][2], places=4)
         self.assertEqual(2, len(got))
+
+
+class StreetGeometryMemoryTests(unittest.TestCase):
+    """«حافظهٔ خیابان‌ها»: نوار کامل ولیعصر یک‌بار حل، بعد فوری و مقاوم در دسترس."""
+
+    def _request(self, street="خیابان ولیعصر"):
+        request = pipeline.ScrapeRequest.from_dict({
+            "niche_query": "کافه", "city_query": "تهران", "city_key": "tehran",
+            "street": street, "area_level": "street", "engine_mode": "osm"})
+        request.area_label = f"{street}، تهران"
+        return request
+
+    def _city(self):
+        return {"bbox": [35.60, 35.85, 51.20, 51.60], "country": "IR",
+                "label_local": "تهران", "key": "tehran"}
+
+    def _nominatim(self):
+        return {"bbox": [35.705, 35.715, 51.414, 51.416], "label": "خیابان ولیعصر، تهران"}
+
+    def _patches(self, *, cached=None, wide=None, put=None, lookup=None):
+        return [
+            mock.patch.object(pipeline.config, "OSM_AREA_LOOKUP", True),
+            mock.patch.object(pipeline.config, "_looks_like_unittest", return_value=False),
+            mock.patch.object(pipeline.config, "STREET_CACHE_DAYS", 14),
+            mock.patch("leadgen.providers.osm.lookup_area",
+                       return_value=dict(lookup or self._nominatim())),
+            mock.patch("leadgen.providers.osm.overpass_street_bbox",
+                       return_value=dict(wide or {})),
+            mock.patch.object(pipeline.storage, "get_street_cache",
+                              return_value=dict(cached) if cached else None),
+            mock.patch.object(pipeline.storage, "put_street_cache",
+                              side_effect=put if put is not None else (lambda *a, **k: True)),
+        ]
+
+    def _run(self, request, **kwargs):
+        warnings = kwargs.pop("warnings", None)
+        patches = self._patches(**kwargs)
+        for patch in patches:
+            patch.start()
+        try:
+            return pipeline.refine_area_bbox(request, self._city(), allow_network=True,
+                                             warnings=warnings, use_cache=True)
+        finally:
+            for patch in reversed(patches):
+                patch.stop()
+
+    def test_fresh_memory_skips_overpass_and_keeps_the_whole_corridor(self):
+        request = self._request()
+        boxes = [[35.6600, 35.7000, 51.4000, 51.4200], [35.7000, 35.7600, 51.4000, 51.4300]]
+        cached = {"bbox": [35.6600, 35.7600, 51.4000, 51.4300], "boxes": boxes,
+                  "ways": 77, "length_km": 12.4, "age_days": 1.5}
+        with mock.patch("leadgen.providers.osm.overpass_street_bbox") as overpass:
+            box = self._run(request, cached=cached)
+        overpass.assert_not_called()
+        self.assertEqual(boxes, request.street_boxes, "نوار کامل باید از حافظه بیاید")
+        self.assertLess(box[0], 35.66)
+        self.assertGreater(box[1], 35.76)
+        self.assertEqual(request.street_areas, [])
+
+    def test_stale_memory_rescues_the_run_when_overpass_is_down(self):
+        request = self._request()
+        boxes = [[35.6600, 35.7600, 51.4000, 51.4300]]
+        cached = {"bbox": [35.6600, 35.7600, 51.4000, 51.4300], "boxes": boxes,
+                  "ways": 77, "length_km": 12.4, "age_days": 40}
+        warnings: list = []
+        box = self._run(request, cached=cached, wide={}, warnings=warnings)
+        self.assertEqual(boxes, request.street_boxes)
+        self.assertGreater(box[1], 35.75, "نباید به تکهٔ ۱ کیلومتری Nominatim سقوط کند")
+        self.assertTrue(any("حافظه" in w for w in warnings), warnings)
+
+    def test_overpass_result_is_saved_for_the_next_run(self):
+        request = self._request()
+        wide = {"bbox": [35.6600, 35.7600, 51.4000, 51.4120], "ways": 77,
+                "boxes": [[35.6600, 35.7600, 51.4000, 51.4120]], "length_km": 12.4,
+                "via": "regex"}
+        saved: list = []
+        self._run(request, wide=wide, put=lambda *a, **k: saved.append((a, k)) or True)
+        self.assertEqual(1, len(saved), "نوار حل‌شده باید ذخیره شود")
+        args, kwargs = saved[0]
+        self.assertEqual("ولیعصر", args[1], "نام بدون پیشوند ذخیره می‌شود")
+        self.assertEqual(77, kwargs["ways"])
+        self.assertEqual("regex", kwargs["source"])
+
+    def test_memory_of_another_area_is_not_used(self):
+        request = self._request()
+        far_away = {"bbox": [35.80, 35.83, 51.50, 51.55],
+                    "boxes": [[35.80, 35.83, 51.50, 51.55]], "ways": 9, "age_days": 2}
+        box = self._run(request, cached=far_away, wide={})
+        self.assertLess(box[1], 35.72, "حافظهٔ جای دیگر نباید محدوده را عوض کند")
+        self.assertEqual([], request.street_boxes)
+
+
+class StreetCacheStorageTests(unittest.TestCase):
+    """ذخیره/خواندن نوار خیابان روی پایگاه‌دادهٔ محلی."""
+
+    def setUp(self):
+        storage.init_db()
+
+    def test_roundtrip_and_age(self):
+        # شهر ساختگی تا این آزمون با بقیه (که تهران را می‌سنجند) قاطی نشود
+        storage.put_street_cache("cachetest", "خیابان نمونهٔ تست",
+                                 bbox=[35.66, 35.76, 51.40, 51.412],
+                                 boxes=[[35.66, 35.76, 51.40, 51.412]],
+                                 ways=77, length_km=12.4)
+        got = storage.get_street_cache("cachetest", "نمونهٔ تست")   # کلید نرمال‌شدهٔ یکسان
+        self.assertIsNotNone(got)
+        self.assertEqual(77, int(got["ways"]))
+        self.assertEqual([[35.66, 35.76, 51.40, 51.412]], got["boxes"])
+        self.assertLess(got["age_days"], 1)
+
+    def test_empty_boxes_are_not_cached(self):
+        self.assertFalse(storage.put_street_cache("cachetest", "خیابان انقلاب",
+                                                  bbox=[35.7, 35.71, 51.4, 51.41], boxes=[]))

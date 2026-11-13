@@ -173,6 +173,21 @@ CREATE TABLE IF NOT EXISTS deliveries (
     detail        TEXT NOT NULL DEFAULT '{}',
     created_at    REAL NOT NULL
 );
+-- «حافظهٔ خیابان‌ها»: هندسهٔ واقعی خیابان (از Overpass) یک‌بار حل و نگه داشته
+-- می‌شود تا اجرای بعدی همان خیابان بدون اتکا به سرویس عمومی و در یک چشم‌به‌هم‌زدن
+-- زدن شروع شود؛ اگر Overpass روزی در دسترس نباشد، همان نوار کامل استفاده می‌شود.
+CREATE TABLE IF NOT EXISTS street_cache (
+    key           TEXT PRIMARY KEY,
+    city_key      TEXT,
+    street        TEXT,
+    bbox          TEXT NOT NULL,
+    boxes         TEXT NOT NULL,
+    ways          INTEGER DEFAULT 0,
+    length_km     REAL DEFAULT 0,
+    source        TEXT DEFAULT 'overpass',
+    updated_at    REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_street_cache_updated ON street_cache(updated_at);
 CREATE TABLE IF NOT EXISTS watchlist (
     id            TEXT PRIMARY KEY,
     created_at    REAL NOT NULL,
@@ -971,6 +986,86 @@ def last_delivery(kind: str = "digest") -> dict | None:
     data = dict(row)
     data["detail"] = _json_or(data.get("detail"), {})
     return data
+
+
+# ── حافظهٔ خیابان‌ها (هندسهٔ واقعی از Overpass) ────────────────────────────────
+# چرا؟ Overpass یک سرویس عمومی است و گاهی ۴۲۹/۵۰۴ می‌دهد. وقتی نوار کامل یک
+# خیابان (مثل ولیعصر تهران با ۷۷ تکه) یک‌بار حل شد، نگهش می‌داریم: اجرای بعدی
+# همان خیابان هم سریع‌تر است و هم اگر Overpass پایین باشد، اسکراب به تکهٔ کوچک
+# Nominatim سقوط نمی‌کند. کلید = «شهر|نامِ نرمال‌شدهٔ خیابان».
+_STREET_PREFIXES_CACHE = ("خیابانِ ", "خیابان ", "بلوار ", "بزرگ‌راه ", "بزرگراه ",
+                          "اتوبان ", "کوچه ", "میدان ", "بن‌بست ", "بن بست ", "بازار ")
+
+
+def normalize_street_name(text: str) -> str:
+    """نام خیابان را برای کلید حافظه یکدست می‌کند (پیشوند، فاصله، نیم‌فاصله)."""
+    value = "".join((text or "").split())                 # حذف فاصله و نیم‌فاصله
+    value = value.replace("\u200c", "").replace("ي", "ی").replace("ك", "ک")
+    for prefix in _STREET_PREFIXES_CACHE:
+        short = "".join(prefix.split()).replace("\u200c", "")
+        if value.startswith(short) and len(value) > len(short) + 2:
+            value = value[len(short):]
+            break
+    return value.strip("،,.").lower()
+
+
+def street_cache_key(city_key: str, street: str) -> str:
+    return f"{(city_key or '').strip().lower()}|{normalize_street_name(street)}"
+
+
+def get_street_cache(city_key: str, street: str) -> dict | None:
+    """نوار ذخیره‌شدهٔ یک خیابان + سن آن (روز) یا None."""
+    if not normalize_street_name(street):
+        return None
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.get_street_cache(city_key, street)
+    key = street_cache_key(city_key, street)
+    with _LOCK, _connect() as conn:
+        row = conn.execute("SELECT * FROM street_cache WHERE key=?", (key,)).fetchone()
+    if not row:
+        return None
+    data = dict(row)
+    data["bbox"] = _json_or(data.get("bbox"), [])
+    data["boxes"] = _json_or(data.get("boxes"), [])
+    updated = float(data.get("updated_at") or 0)
+    data["age_days"] = round(max(0.0, (time.time() - updated) / 86400.0), 1)
+    return data
+
+
+def put_street_cache(city_key: str, street: str, *, bbox: list, boxes: list,
+                     ways: int = 0, length_km: float = 0.0,
+                     source: str = "overpass") -> bool:
+    """نوار یک خیابان را ذخیره/به‌روز می‌کند (بی‌صدا در صورت خطا)."""
+    if not (normalize_street_name(street) and bbox and len(bbox) == 4 and boxes):
+        return False
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.put_street_cache(city_key, street, bbox=bbox, boxes=boxes, ways=ways,
+                                      length_km=length_km, source=source)
+    key = street_cache_key(city_key, street)
+    try:
+        with _LOCK, _connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO street_cache (key, city_key, street, bbox, boxes,"
+                " ways, length_km, source, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                (key, (city_key or "").strip().lower(), street, _dumps(list(bbox)),
+                 _dumps(list(boxes)), int(ways or 0), float(length_km or 0.0),
+                 source or "overpass", time.time()))
+    except Exception:                                   # noqa: BLE001 — کش نباید اجرا را بشکند
+        return False
+    return True
+
+
+def prune_street_cache(days: int = 120) -> int:
+    """حافظهٔ خیابان‌های خیلی قدیمی را پاک می‌کند (پیش‌فرض ۱۲۰ روز)."""
+    cutoff = time.time() - max(1, int(days)) * 86400
+    cloud = _cloud_backend()
+    if cloud is not None:
+        return cloud.prune_street_cache(days)
+    with _LOCK, _connect() as conn:
+        cur = conn.execute("DELETE FROM street_cache WHERE updated_at < ?", (cutoff,))
+    return int(cur.rowcount or 0)
 
 
 # ── دیدبان (watchlist) ────────────────────────────────────────────────────────

@@ -697,19 +697,35 @@ def overpass_street_bbox(names: list[str], *, bbox: list[float], timeout: float 
     regex = (f'way["name"~"{pattern}",i]{box};'
              if (pattern := "|".join(patterns)) else "")
     found: dict = {}
+    # بودجهٔ زمانی مشترک: پرسش «دقیق» (ایندکس، معمولاً سریع) نباید کل بودجه را
+    # بخورد و پرسش «الگو» — که تنها راه رسیدن به خیابان‌های بلند است — را حذف کند.
+    started = time.monotonic()
+    total_budget = max(10.0, float(budget_s or 20.0))
+
+    def _left() -> float:
+        return total_budget - (time.monotonic() - started)
+
     for via, body in (("exact", exact), ("regex", regex)):
         if not body:
             continue
+        remaining = _left()
+        if remaining <= 5:
+            if diag is not None:
+                diag.append(f"{via}: بودجهٔ زمانی تمام شد")
+            break
         # `out geom` هم مختصات گره‌ها را می‌دهد (برای اتصال توپولوژیک) هم bounds را
         query = f"[out:json][timeout:{seconds}];({body});out geom;"
+        phase_budget = min(remaining, 10.0) if via == "exact" else remaining
         try:
             data = _overpass_request(query, timeout=timeout, retries=0,
-                                     deadline_s=budget_s, trip_breaker=False,
+                                     deadline_s=phase_budget, trip_breaker=False,
                                      per_endpoint_s=9.0)
         except OSMDownError as exc:
             if diag is not None:
                 diag.append(f"{via}: {exc}")
-            break                       # سرویس پایین/شلوغ است؛ تلاش دوم بی‌فایده
+            # شکست گذرا در پرسش «دقیق» نباید مسیر «الگو» را هم بکشد؛ همین‌جا
+            # بود که ولیعصر با ۷۷ تکهٔ آماده، به تکهٔ ۱ کیلومتری Nominatim سقوط می‌کرد.
+            continue
         ways = _ways_from_elements(data)
         if not ways:
             if diag is not None:

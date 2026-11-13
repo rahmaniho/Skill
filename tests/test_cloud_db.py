@@ -13,6 +13,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 import urllib.error
 from pathlib import Path
@@ -356,6 +357,52 @@ class PgStoreTests(unittest.TestCase):
         stats = pgstore.pipeline_stats()
         self.assertEqual(stats["leads"], 30)
         self.assertEqual(stats["with_email"], 12)
+
+
+class StreetCacheCloudTests(unittest.TestCase):
+    """حافظهٔ خیابان‌ها روی Supabase: همان قرارداد SQLite، بدون شبکهٔ واقعی."""
+
+    def setUp(self):
+        self.client, self.transport = make_client()
+        cloud._CLIENT = self.client
+
+    def tearDown(self):
+        cloud._CLIENT = None
+
+    def test_put_sends_native_json_and_normalized_key(self):
+        self.transport.responder = lambda r, rec: FakeResponse(None, status=201)
+        ok = pgstore.put_street_cache("tehran", "خیابان ولیعصر",
+                                      bbox=[35.66, 35.76, 51.40, 51.43],
+                                      boxes=[[35.66, 35.76, 51.40, 51.43]],
+                                      ways=77, length_km=12.4, source="regex")
+        self.assertTrue(ok)
+        body = self.transport.last["body"][0]
+        self.assertEqual(body["key"], "tehran|ولیعصر")
+        self.assertEqual(body["bbox"], [35.66, 35.76, 51.40, 51.43])
+        self.assertEqual(body["boxes"], [[35.66, 35.76, 51.40, 51.43]])
+        self.assertEqual(body["ways"], 77)
+        self.assertEqual(body["source"], "regex")
+        self.assertIn("resolution=merge-duplicates", self.transport.last["headers"]["prefer"])
+
+    def test_get_returns_age_and_boxes(self):
+        self.transport.responder = lambda r, rec: FakeResponse([
+            {"key": "tehran|ولیعصر", "city_key": "tehran", "street": "خیابان ولیعصر",
+             "bbox": [35.66, 35.76, 51.40, 51.43],
+             "boxes": [[35.66, 35.76, 51.40, 51.43]],
+             "ways": 77, "length_km": 12.4, "source": "regex",
+             "updated_at": time.time() - 2 * 86400}])
+        got = pgstore.get_street_cache("tehran", "ولی عصر")
+        self.assertEqual(got["ways"], 77)
+        self.assertEqual(got["bbox"], [35.66, 35.76, 51.40, 51.43])
+        self.assertGreater(got["age_days"], 1.5)
+        self.assertIn("key=eq.tehran%7C", self.transport.last["url"])
+
+    def test_missing_table_degrades_quietly(self):
+        self.transport.responder = lambda r, rec: http_error(404)
+        self.assertIsNone(pgstore.get_street_cache("tehran", "ولیعصر"))
+        self.assertFalse(pgstore.put_street_cache("tehran", "ولیعصر",
+                                                  bbox=[1, 2, 3, 4], boxes=[[1, 2, 3, 4]]))
+
 
 
 class StorageDispatchTests(unittest.TestCase):
