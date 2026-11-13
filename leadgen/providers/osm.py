@@ -1001,6 +1001,7 @@ def _family_axis(family: list[dict], found: dict, *, root: str,
             "ways": len(cluster["ways"]),
             "length_km": round(cluster["length_km"], 2),
             "anchored": False,
+            "via": "family",
             "detached": True,
             "siblings": len(names),
         }

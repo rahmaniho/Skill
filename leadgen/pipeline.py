@@ -487,9 +487,11 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
                     # تکهٔ Nominatim خودش یک تکهٔ کوتاه و دور از محور اصلی بود
                     # (مثل «چهارباغ» اصفهان)؛ نوار بلندترِ Overpass همان محور
                     # واقعی است، حتی اگر آن تکهٔ کوچک را در خود نداشته باشد.
+                    # مقایسه با جعبهٔ Nominatim این‌جا بی‌معنی است: آن جعبه گاهی
+                    # اتحاد چند نتیجهٔ Nominatim و ۱۱ کیلومتر است، در حالی که
+                    # محور واقعی خیابان ۲٫۸ کیلومتر است. معیار: نوارِ معنادار.
                     wide_span = _span_km(list(wide.get("boxes") or []) or [wide_box])
-                    seed_span = _span_km([nb])
-                    wider = wide_span >= 1.5 and wide_span > max(1.0, seed_span) * 1.5
+                    wider = 1.5 <= wide_span <= 25.0 and int(wide.get("ways") or 0) >= 2
             except (KeyError, TypeError, ValueError):
                 wider = False
             if wider:

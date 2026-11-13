@@ -1768,14 +1768,15 @@ class StreetGeometryMemoryTests(unittest.TestCase):
         """«چهارباغ» اصفهان: تکهٔ ۰٫۸ کیلومتری شرق باید با محور اصلیِ غرب عوض شود."""
         request = self._request("خیابان چهارباغ")
         request.city_key = "isfahan"
-        stub = {"bbox": [32.7000, 32.7010, 51.7790, 51.7800],
+        # جعبهٔ Nominatim واقعیِ «چهارباغ» اتحاد چند نتیجه است: ۱۱ کیلومتر عرض دارد
+        # (۵۱٫۶۶۷۷ تا ۵۱٫۷۸۷۲) و محور واقعی فقط ۲٫۸ کیلومتر است.
+        stub = {"bbox": [32.6368, 32.6717, 51.6677, 51.7872],
                 "label": "خیابان چهارباغ، اصفهان، ایران"}
         axis_boxes = [[32.6467, 32.6574, 51.6675, 51.6694],
-                      [32.6574, 32.6740, 51.6694, 51.6710],
-                      [32.6300, 32.6467, 51.6650, 51.6675]]
-        wide = {"bbox": [32.6300, 32.6740, 51.6650, 51.6710], "ways": 12,
-                "boxes": axis_boxes, "siblings": 4, "via": "overpass",
-                "length_km": 5.4, "detached": True}
+                      [32.6574, 32.6717, 51.6694, 51.6714]]
+        wide = {"bbox": [32.6467, 32.6717, 51.6675, 51.6714], "ways": 14,
+                "boxes": axis_boxes, "siblings": 2, "via": "family",
+                "length_km": 6.5, "detached": True}
         warnings: list = []
         city = {"bbox": [32.55, 32.80, 51.55, 51.85], "country": "IR",
                 "label_local": "اصفهان", "key": "isfahan"}
