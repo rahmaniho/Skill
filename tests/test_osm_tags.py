@@ -897,6 +897,35 @@ class StreetFamilyTests(unittest.TestCase):
         self.assertLess(found["bbox"][2], 51.68)          # غرب شهر = محور واقعی
         self.assertEqual(3, found["siblings"])
 
+    def test_short_joined_corridor_still_yields_to_the_main_axis(self):
+        """«چهارباغ» شرق: یک تکهٔ چسبیده هم اضافه شد، ولی محور ۶٫۵ کیلومتری غرب است."""
+        from leadgen.providers import osm
+        base = {"elements": [
+            self._way(1, "چهارباغ عباسی", (32.6467, 51.6795), (32.6500, 51.6810), [1, 2]),
+        ]}
+        family = {"elements": [
+            # این دو به تکهٔ شرقی می‌چسبند: ادغام پیوسته موفق می‌شود (نوار ~۱٫۵km)
+            self._way(2, "چهارباغ بالا", (32.6500, 51.6810), (32.6510, 51.6820), [2, 3]),
+            self._way(3, "چهارباغ پایین", (32.6450, 51.6785), (32.6467, 51.6795), [8, 1]),
+            # محور اصلی شهر، ۱٫۵ کیلومتر دورتر و ۶٫۵ کیلومتر طول
+            self._way(4, "چهارباغ عباسی", (32.6467, 51.6675), (32.6574, 51.6694), [20, 21]),
+            self._way(5, "چهارباغ بالا", (32.6574, 51.6694), (32.6700, 51.6700), [21, 22]),
+            self._way(6, "چهارباغ خواجو", (32.6400, 51.6660), (32.6467, 51.6675), [23, 20]),
+        ]}
+        def responder(query, **kwargs):
+            if 'name"~"^' in query:
+                return base
+            if 'name"~"' in query:
+                return family
+            return base
+
+        with mock.patch.object(osm, "_overpass_request", side_effect=responder):
+            found = osm.overpass_street_bbox(["چهارباغ"], bbox=[32.60, 32.75, 51.60, 51.82],
+                                             near=[32.6450, 32.6510, 51.6785, 51.6820])
+        self.assertTrue(found.get("detached"), "نوار کوتاه باید با محور اصلی عوض شود")
+        self.assertLess(found["bbox"][2], 51.68)
+        self.assertGreater(found["length_km"], 2.5)
+
     def test_generic_root_does_not_jump_away_from_the_anchor(self):
         """«شهید بهشتی» و «شهید مطهری» دو خیابان‌اند؛ ریشهٔ عمومی نباید جابه‌جا شود."""
         from leadgen.providers import osm

@@ -801,13 +801,13 @@ def overpass_street_bbox(names: list[str], *, bbox: list[float], timeout: float 
                 if diag is not None:
                     diag.append(f"family: {joined['ways'] - base_ways} تکه از خیابان‌های "
                                 f"هم‌خانوادهٔ «{pats[0]}» به نوار اضافه شد")
-            else:
-                # چیزی نچسبید: یا کوچهٔ هم‌نام است یا تکهٔ Nominatim خودش یک تکهٔ
-                # دورافتاده از محور اصلی است. در حالت دوم محور اصلی را برمی‌داریم.
-                axis = _family_axis(family, found, root=_family_root(pats[0]),
-                                    diag=diag)
-                if axis:
-                    found = axis
+            # حتی اگر چند تکهٔ چسبیده اضافه شد، ممکن است همان‌ها یک خیابانِ کوچکِ
+            # هم‌نام باشند و محور واقعی جای دیگری باشد (Nominatim «چهارباغ» را روی
+            # تکهٔ ۱٫۵ کیلومتری شرق می‌بندد). پس اگر نوار هنوز کوتاه است، بلندترین
+            # خوشهٔ هم‌خانواده را جای آن می‌گذاریم.
+            axis = _family_axis(family, found, root=_family_root(pats[0]), diag=diag)
+            if axis:
+                found = axis
     if found and ttl > 0:
         with _OVERPASS_CACHE_LOCK:
             if len(_STREET_CACHE) >= 256:
