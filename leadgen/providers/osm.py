@@ -272,7 +272,10 @@ def _overpass_request(query: str, *, timeout: float, retries: int = 1,
                 if exc.code == 400:
                     # پیام سرور دقیقاً می‌گوید کجای کوئری غلط است (خطای نگارشی ERE).
                     try:
-                        detail = exc.read().decode("utf-8", "replace").strip()[:160]
+                        body = exc.read().decode("utf-8", "replace")
+                        # پاسخ خطا XML چندخطی است؛ برای لاگ یک‌خطی و بدون تگ می‌کنیم.
+                        body = re.sub(r"<[^>]+>", " ", body)
+                        detail = re.sub(r"\s+", " ", body).strip()[:200]
                     except Exception:                     # noqa: BLE001
                         detail = ""
                 errors.append(f"{host} HTTP {exc.code}" + (f" ({detail})" if detail else ""))
