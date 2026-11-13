@@ -861,6 +861,10 @@ class StreetFamilyTests(unittest.TestCase):
             found = osm.overpass_street_bbox(["چهارباغ عباسی"], bbox=[32.60, 32.70, 51.60, 51.72],
                                              near=[32.6480, 32.6520, 51.6690, 51.6740])
         self.assertEqual(3, call.call_count, "پرسش سوم: خانوادهٔ همان نام")
+        family_query = call.call_args_list[2][0][0]
+        self.assertIn(";);", family_query,
+                      "داخل union هر بیانیه باید با «؛» تمام شود (وگرنه HTTP 400)")
+        self.assertIn('name"~"', family_query)
         self.assertEqual(3, found["ways"], "پایینِ دورافتاده نباید بیاید")
         self.assertGreater(found["length_km"], 2.5)
         self.assertLess(found["bbox"][0], 32.6467)

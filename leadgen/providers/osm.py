@@ -268,7 +268,20 @@ def _overpass_request(query: str, *, timeout: float, retries: int = 1,
                 with urllib.request.urlopen(req, timeout=min(remaining, budget)) as resp:
                     raw = resp.read()
             except urllib.error.HTTPError as exc:
-                errors.append(f"{host} HTTP {exc.code}")
+                detail = ""
+                if exc.code == 400:
+                    # پیام سرور دقیقاً می‌گوید کجای کوئری غلط است (خطای نگارشی ERE).
+                    try:
+                        body = exc.read().decode("utf-8", "replace")
+                        # پاسخ خطا XML چندخطی است؛ برای لاگ یک‌خطی و بدون تگ می‌کنیم.
+                        body = re.sub(r"<[^>]+>", " ", body)
+                        body = re.sub(r"\s+", " ", body).strip()
+                        # متن مفید بعد از «error» می‌آید؛ سرصفحهٔ OSM3S بی‌فایده است.
+                        start = body.lower().find("error")
+                        detail = body[start:start + 220] if start >= 0 else body[:220]
+                    except Exception:                     # noqa: BLE001
+                        detail = ""
+                errors.append(f"{host} HTTP {exc.code}" + (f" ({detail})" if detail else ""))
                 if exc.code in _RETRYABLE:
                     _OVERPASS_COOLDOWN[endpoint] = time.monotonic() + _OVERPASS_COOLDOWN_SECONDS
                     if attempt < retries and deadline - time.monotonic() > 3:
@@ -841,8 +854,10 @@ def _street_family(base: str, *, bbox: list[float], near: list[float] | None,
         return []
     body = _NAME_GAP.join(re.escape(ch) for ch in "".join(root.split()))
     s_, n_, w_, e_ = (float(x) for x in bbox)
+    # نکتهٔ Overpass QL: داخل پرانتزِ union هر بیانیه باید با «؛» تمام شود
+    # (`(...;);`)؛ وگرنه سرور «parse error: ';' expected» می‌دهد (باگ HTTP 400).
     query = (f'[out:json][timeout:20];'
-             f'(way["name"~"{body}",i]({s_},{w_},{n_},{e_}));out geom;')
+             f'(way["name"~"{body}",i]({s_},{w_},{n_},{e_}););out geom;')
     try:
         data = _overpass_request(query, timeout=20, retries=0, deadline_s=budget_s,
                                  trip_breaker=False, per_endpoint_s=8.0)
