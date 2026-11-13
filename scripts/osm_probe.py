@@ -170,6 +170,42 @@ def probe_street(city: str, street: str) -> dict:
     return result
 
 
+def probe_pipeline(city: str, street: str, niche: str = "کافه") -> dict:
+    """مسیر کاملِ محدودهٔ خیابان: Nominatim → Overpass → پذیرش نوار در پایپ‌لاین.
+
+    چرا جدا از `--street`؟ آن یکی فقط خروجی Overpass را می‌سنجد؛ این یکی همان
+    چیزی را می‌سنجد که اجرای واقعی می‌بیند: `refine_area_bbox`، فیلتر «روی
+    خیابان» (`street_boxes`)، شعاع موتور و کارنامهٔ `street_memory`.
+    """
+    area = regions.resolve(city=city)
+    if not area.get("lat"):
+        print(f"✗ شهر «{city}» پیدا نشد")
+        return {"ok": False, "city": city, "street": street}
+    request = pipeline.ScrapeRequest.from_dict({
+        "niche_query": niche or "کافه", "city_query": city,
+        "city_key": str(area.get("city_key") or ""), "street": street,
+        "area_level": "street", "engine_mode": "osm"})
+    request.area_label = f"{street}، {city}"
+    warnings: list = []
+    box = pipeline.refine_area_bbox(request, area, allow_network=True,
+                                    warnings=warnings, use_cache=False)
+    boxes = list(request.street_boxes or [])
+    span = pipeline._span_km(boxes or [box])
+    print(f"  ✓ محدودهٔ نهایی: {[round(float(x), 4) for x in (box or [])]} ≈ "
+          f"{span:.1f} کیلومتر، {len(boxes)} تکهٔ نوار، شعاع {request.radius}")
+    for line in warnings or []:
+        print(f"  · {line}")
+    for row in request.street_memory or []:
+        print(f"  · کارنامه: {json.dumps(row, ensure_ascii=False)}")
+    result = {"ok": bool(box) and span >= 1.0, "city": area.get("label"),
+              "street": street, "bbox": box, "span_km": round(span, 2),
+              "boxes": len(boxes), "radius": request.radius,
+              "warnings": list(warnings or []),
+              "memory": list(request.street_memory or [])}
+    print("SUMMARY " + json.dumps(result, ensure_ascii=False))
+    return result
+
+
 def probe_nominatim(query: str) -> dict:
     """چند تکه از یک خیابان را Nominatim می‌دهد؟ (dedupe=0 — برای پوشش کامل)"""
     import urllib.parse
@@ -233,6 +269,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--niche", default="")
     parser.add_argument("--all", action="store_true", help="جاروی همهٔ اصناف (تگ‌محور)")
     parser.add_argument("--street", default="", help="سنجش پوشش کامل یک خیابان")
+    parser.add_argument("--pipeline", action="store_true",
+                        help="مسیر کامل محدودهٔ خیابان در پایپ‌لاین (با --city/--street)")
     parser.add_argument("--endpoints", action="store_true", help="سنجش آینه‌های Overpass")
     parser.add_argument("--nominatim", default="", help="شمارش تکه‌های یک خیابان در Nominatim")
     parser.add_argument("--parts", default="",
@@ -306,6 +344,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.json:
             print(json.dumps(rows, ensure_ascii=False, indent=2))
         return 0 if any(r["ok"] for r in rows) else 1
+
+    if args.pipeline:
+        result = probe_pipeline(args.city or "تهران", args.street or "ولیعصر",
+                                args.niche or "کافه")
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result.get("ok") else 1
 
     if args.street:
         result = probe_street(args.city or "تهران", args.street)

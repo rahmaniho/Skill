@@ -16,6 +16,8 @@ on:
         default: ""
       street:
         description: "خیابان برای سنجش پوشش کامل (مثلاً ولیعصر) — خالی = سنجش شهر"
+      pipeline:
+        description: "مسیر کامل محدودهٔ خیابان در پایپ‌لاین (1 = بله؛ با city/street)"
         required: false
         default: ""
       endpoints:
@@ -66,6 +68,7 @@ jobs:
           CITY: ${{ github.event.inputs.city }}
           NICHE: ${{ github.event.inputs.niche }}
           STREET: ${{ github.event.inputs.street }}
+          PIPELINE: ${{ github.event.inputs.pipeline }}
           ENDPOINTS: ${{ github.event.inputs.endpoints }}
           NOMINATIM: ${{ github.event.inputs.nominatim }}
           COVERAGE: ${{ github.event.inputs.coverage }}
@@ -84,6 +87,8 @@ jobs:
             python3 scripts/osm_probe.py --nominatim "$NOMINATIM" --json 2>&1 | tee probe.log
           elif [ "$ENDPOINTS" = "1" ]; then
             python3 scripts/osm_probe.py --endpoints --json 2>&1 | tee probe.log
+          elif [ "$PIPELINE" = "1" ]; then
+            python3 scripts/osm_probe.py --city "${CITY:-تهران}" --street "${STREET:-ولیعصر}" --pipeline --json 2>&1 | tee probe.log
           elif [ -n "$STREET" ]; then
             python3 scripts/osm_probe.py --city "${CITY:-تهران}" --street "$STREET" --json 2>&1 | tee probe.log
           elif [ -n "$CITY" ]; then
