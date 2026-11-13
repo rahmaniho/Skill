@@ -1,6 +1,7 @@
 """آزمون نقشهٔ صنف → تگ OSM و مسیر Overpass (بدون شبکه)."""
 from __future__ import annotations
 
+import inspect
 import unittest
 from unittest import mock
 
@@ -686,3 +687,42 @@ class FullScanTileTests(unittest.TestCase):
         self.assertEqual(len(calls), plain_calls,
                          "کاشیِ هم‌اندازهٔ جعبهٔ اصلی نباید پرسش تازه بسازد")
         self.assertEqual(eng.tile_coverage[0]["via"], "main")
+
+
+class OverpassStreetBBoxTests(unittest.TestCase):
+    """همهٔ wayهای هم‌نام یک خیابان → یک جعبهٔ واحد (نه یک تکه)."""
+
+    def test_merges_bounds_of_every_matching_way(self):
+        from leadgen.providers import osm
+        data = {"elements": [
+            {"bounds": {"minlat": 35.700, "maxlat": 35.710, "minlon": 51.410, "maxlon": 51.416}},
+            {"bounds": {"minlat": 35.750, "maxlat": 35.770, "minlon": 51.400, "maxlon": 51.405}},
+            {"note": "بدون bounds"},
+        ]}
+        with mock.patch.object(osm, "overpass_available", return_value=True), \
+                mock.patch.object(osm, "_overpass_request", return_value=data) as call:
+            found = osm.overpass_street_bbox(["خیابان ولیعصر", "ولیعصر"],
+                                             bbox=[35.6, 35.8, 51.2, 51.6])
+        self.assertEqual(found["bbox"], [35.7, 35.77, 51.4, 51.416])
+        self.assertEqual(found["ways"], 2)
+        query = call.call_args[0][0]
+        self.assertIn('way["name"~', query)
+        self.assertIn("out bb;", query)
+        self.assertIn("ولیعصر", query)
+
+    def test_empty_bbox_when_no_way_matches(self):
+        from leadgen.providers import osm
+        with mock.patch.object(osm, "overpass_available", return_value=True), \
+                mock.patch.object(osm, "_overpass_request", return_value={"elements": []}):
+            self.assertEqual(osm.overpass_street_bbox(["خیابان ناموجود"], bbox=[1, 2, 3, 4]), {})
+
+    def test_skips_network_when_overpass_is_down(self):
+        from leadgen.providers import osm
+        with mock.patch.object(osm, "overpass_available", return_value=False), \
+                mock.patch.object(osm, "_overpass_request") as call:
+            self.assertEqual(osm.overpass_street_bbox(["ولیعصر"], bbox=[1, 2, 3, 4]), {})
+        call.assert_not_called()
+
+    def test_side_query_does_not_trip_the_global_breaker(self):
+        from leadgen.providers import osm
+        self.assertIn("trip_breaker", inspect.signature(osm._overpass_request).parameters)
