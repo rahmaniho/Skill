@@ -174,15 +174,21 @@ def _endpoints_in_order() -> list[str]:
 # می‌دهند؛ آینهٔ سالم با سنجش واقعی انتخاب می‌شود، نه با حدس.
 OVERPASS_MIRRORS = [
     "https://overpass-api.de/api/interpreter",
+    "https://z.overpass-api.de/api/interpreter",
+    "https://lz4.overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
     "https://overpass.private.coffee/api/interpreter",
-    "https://overpass.osm.ch/api/interpreter",
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+    "https://overpass.osm.rambler.ru/cgi/interpreter",
+    "https://overpass.osm.ch/api/interpreter",
     "https://overpass.osm.jp/api/interpreter",
 ]
 
 
-DEFAULT_PROBE_QUERY = "[out:json][timeout:8];node(35.7000,51.4100,35.7002,51.4102);out 1;"
+# کوئری سنجش: کوچک است ولی دادهٔ واقعی تهران را می‌خواهد؛ آینهٔ منطقه‌ای (سوئیس)
+# صفر برمی‌گرداند و همین، «جهانی بودن» را از «سالم بودن» جدا می‌کند.
+DEFAULT_PROBE_QUERY = ('[out:json][timeout:10];'
+                       'nwr["amenity"="cafe"](35.700,51.410,35.712,51.420);out 3;')
 
 
 def probe_overpass_endpoints(candidates: list[str] | None = None, *,
