@@ -444,7 +444,8 @@ class DemoEngine:
         # وگرنه با هر تغییر کوچک در پایپ‌لاین، دادهٔ شبیه‌سازی‌شده عوض می‌شود.
         seed_body = {k: v for k, v in body.items()
                      if k not in ("osm_terms", "province_label", "province_bbox",
-                                  "all_business", "tag_filters", "sweep_boxes")}
+                                  "all_business", "tag_filters", "sweep_boxes",
+                                  "street_boxes")}
         seed = self._seed(json.dumps(seed_body, sort_keys=True, ensure_ascii=False, default=str))
         rnd = random.Random(seed)
         job_id = hashlib.sha1(str(seed).encode()).hexdigest()[:8]
@@ -690,7 +691,8 @@ class OSMEngine:
                                             max(6.0, share - 2)),
                                 input_id=(niche_id or (terms[0] if terms else "")),
                                 lang=lang, tiles=box_tiles,
-                                max_rows=per_box_cap, budget_s=share)
+                                max_rows=per_box_cap, budget_s=share,
+                                segments=(body.get("street_boxes") or None))
                         except OSMDownError as exc:
                             errors.append(f"overpass{' ' + box_label if box_label else ''}: {exc}")
                             _cover(box_label, box, rows=0, via="", error=str(exc)[:160])

@@ -791,6 +791,8 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                 "sweep_boxes": sweep_boxes,
                 # کاشی‌های اسکراب کامل (پر کردن جاهایی که سقف ۴۰تایی جا گذاشته)
                 "scan_tiles": scan_tiles,
+                # تکه‌های واقعی خیابان: جست‌وجوی Overpass روی نوار خیابان، نه مستطیل شهر
+                "street_boxes": list(getattr(request, "street_boxes", None) or []),
                 # «فقط همان منطقه»: موتور حق ندارد نتیجهٔ بیرون از محدوده بدهد
                 "strict_region": True,
                 # پرش به کل استان فقط وقتی کاربر خودش «کل استان» را خواسته باشد
