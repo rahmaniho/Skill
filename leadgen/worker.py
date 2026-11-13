@@ -139,7 +139,11 @@ def _queue_continuation(result, *, quiet: bool = False) -> bool:
         chunk = int(continuation.get("chunk") or 1)
         # شناسهٔ کار همان run_id است (هر بخش، همان ردیف را دوباره زنده می‌کند) تا
         # جدول صف یک اسکراب را یک ردیف نشان دهد، نه چند تکهٔ پراکنده.
-        storage.enqueue_job(run_id, payload, priority=3)
+        # اولویت ۰ = هم‌صف با اجراهای کاربر (FIFO). قبلاً ۳ بود و زنجیرهٔ
+        # چندبخشی، اجرای تازه‌ای که کاربر همین حالا خواسته بود را پشت خود حبس
+        # می‌کرد. الان در هر لحظه حداکثر یک بخش در صف است و کاربر حداکثر یک
+        # تپش (~۱ دقیقه) منتظر می‌ماند، ولی اسکراب هم زمین نمی‌ماند.
+        storage.enqueue_job(run_id, payload, priority=0)
         _log(f"↻ بخش {chunk} اسکراب در صف گذاشته شد "
              f"({continuation.get('remaining')} بخش باقی‌مانده)", quiet=quiet)
         storage.update_run(run_id, progress={

@@ -347,11 +347,15 @@ def _scan_report(engine, plan_labels: list[str], done_boxes: set, resume_state: 
                 scan_done.append(label)
         scan_remaining = [label for label in plan_labels if label not in set(scan_done)]
     chunk = int(resume_state.get("chunk") or 0)
-    max_chunks = int(config.SCAN_MAX_CHUNKS or 8)
     # «انجام‌شده» باید مجموع بخش‌های قبلی و همین بخش باشد؛ وگرنه در ادامهٔ
     # اسکراب، نوار پوشش از صفر شروع می‌شود و کاربر فکر می‌کند کاری نشده.
     labels_done = list(dict.fromkeys(scan_done + list(done_boxes)))
     all_labels = list(dict.fromkeys(list(done_boxes) + list(plan_labels)))
+    # سقف زنجیرهٔ «ادامهٔ خودکار»: حداقل به اندازهٔ تعداد بخش‌های خودِ برنامه
+    # (یک کاشی شهرِ بزرگ نباید فقط چون سقف ۸ بخش پر شده، بی‌ادامه بماند).
+    # سقف سخت ۲۴ بخش است؛ بیشتر از آن با دکمهٔ «ادامهٔ اسکراب» اجرا می‌شود.
+    max_chunks = max(int(config.SCAN_MAX_CHUNKS or 8),
+                     min(24, len(all_labels) + 1))
     scan_info = {
         "full": bool(all_labels),
         "chunk": chunk,
@@ -935,10 +939,12 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
         if all_labels:
             stats_pack["scan"] = scan_info
             if scan_remaining:
+                tail = ("و خودکار ادامه داده می‌شود." if continuation
+                        else "؛ با دکمهٔ «ادامهٔ اسکراب» اجرا می‌شود.")
                 warnings.append(
                     f"اسکراب کامل: {len(scan_done)} بخش از {len(scan_plan_labels)} در این "
-                    f"بخش زمانی انجام شد؛ {len(scan_remaining)} بخش باقی مانده و خودکار "
-                    f"ادامه داده می‌شود.")
+                    f"بخش زمانی انجام شد؛ {len(scan_remaining)} بخش باقی مانده "
+                    f"{tail}")
             else:
                 warnings.append(
                     f"اسکراب کامل: همهٔ {len(all_labels)} بخش منطقه پوشش داده شد.")

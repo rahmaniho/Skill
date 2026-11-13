@@ -423,6 +423,40 @@ class ApiTestCase(unittest.TestCase):
         # موتور و غنی‌سازی با هم زیر سقف ۶۰ثانیه‌ای تابع می‌مانند
         self.assertLessEqual(captured["max_time"] + captured["enrich_budget"], 40)
 
+    def test_21b_tick_keeps_full_scan_limits_proportional(self):
+        """سقف ۶۰تایی فقط برای اجرای سریع است؛ اسکراب کامل همان limit کاربر را نگه می‌دارد."""
+        from leadgen import config as config_mod, worker as worker_mod
+
+        seen: list[dict] = []
+
+        def fake_process(job, quiet=True):
+            seen.append(dict(job.get("request") or {}))
+            return {"ok": True, "run_id": job.get("run_id"), "total": 0, "hot": 0,
+                    "seconds": 0.1, "empty": True}
+
+        original_queue, original_process = config_mod.QUEUE_MODE, worker_mod.process_job
+        try:
+            config_mod.QUEUE_MODE = "always"
+            worker_mod.process_job = fake_process
+            with storage._connect() as conn:
+                conn.execute("delete from jobs")
+            for run_id, extra in (("tick-quick", {}), ("tick-scan", {"scan_full": True})):
+                storage.enqueue_job(run_id, {"run_id": run_id, "city_query": "تهران",
+                                             "niche_query": "کافه", "engine_mode": "demo",
+                                             "limit": 300, "max_time": 60, **extra})
+                self.get("/api/worker/tick?budget=50")
+            with storage._connect() as conn:
+                conn.execute("delete from jobs")
+        finally:
+            worker_mod.process_job = original_process
+            config_mod.QUEUE_MODE = original_queue
+            with storage._connect() as conn:
+                conn.execute("delete from jobs")
+        limits = {item.get("run_id") or "": item.get("limit") for item in seen}
+        self.assertEqual(len(seen), 2)
+        self.assertEqual(seen[0].get("limit"), 60)      # سریع: سقف محافظه‌کارانه
+        self.assertEqual(seen[1].get("limit"), 300)     # اسکراب کامل: عدد کاربر
+
     def test_20b_enrich_run_fills_missing_emails_without_rescraping(self):
         """«غنی‌سازی مجدد»: لیدهای ذخیره‌شده ایمیل/شبکه اجتماعی می‌گیرند، بدون اسکراپ."""
         from leadgen import enrich as enrich_mod

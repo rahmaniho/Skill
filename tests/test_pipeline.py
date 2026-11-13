@@ -1054,6 +1054,24 @@ class ScanPlanTests(unittest.TestCase):
         self.assertEqual(scan2.get("done"), scan2.get("total"))
         self.assertEqual(scan2.get("remaining"), [])
 
+    def test_continuation_chain_covers_a_plan_bigger_than_chunk_default(self):
+        """سقف پیش‌فرض بخش‌ها نباید کاشی‌های شهر بزرگ را نیمه‌کاره رها کند."""
+        from leadgen import config as config_mod
+
+        original = config_mod.SCAN_MAX_CHUNKS
+        config_mod.SCAN_MAX_CHUNKS = 2        # عمداً کوچک‌تر از تعداد کاشی‌ها
+        try:
+            _, result = self._run({"niche_query": "کافه", "city_key": "tehran",
+                                   "city_query": "تهران", "engine_mode": "osm",
+                                   "lang": "fa", "limit": 30}, tiles_done=2)
+        finally:
+            config_mod.SCAN_MAX_CHUNKS = original
+        scan = (result.analytics or {}).get("scan") or {}
+        self.assertGreater(len(scan.get("remaining") or []), 2)
+        # حتی با SCAN_MAX_CHUNKS=2، زنجیرهٔ ادامه باید کاملِ برنامه را پوشش دهد
+        self.assertTrue((result.stats or {}).get("continuation"),
+                        "کاشی‌های باقی‌مانده نباید بی‌ادامه بمانند")
+
     def test_street_run_uses_one_padded_tile_and_clips_to_city(self):
         request = pipeline.ScrapeRequest.from_dict({
             "niche_query": "کافه", "city_query": "یزد", "city_key": "yazd",

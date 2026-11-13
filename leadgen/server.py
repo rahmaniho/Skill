@@ -1400,7 +1400,12 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 request.pop("enrich_budget", None)
             if _int(request.get("limit"), 0):
-                request["limit"] = min(_int(request.get("limit"), 40), 60)
+                # سقف «تعداد لید» در ابر: برای اسکراب کامل منطقه، همان سقف کل
+                # (MAX_LEADS_PER_RUN) است تا تعداد لید تابع حجم واقعی داده باشد؛
+                # برای اجرای سریع تک‌نقطه‌ای همان سقف محافظه‌کارانهٔ ۶۰ می‌ماند.
+                cap = max(60, int(config.MAX_LEADS_PER_RUN or 900)) \
+                    if request.get("scan_full") else 60
+                request["limit"] = min(_int(request.get("limit"), 40), cap)
         job["request"] = request
 
         result = worker_mod.process_job(job, quiet=True)
