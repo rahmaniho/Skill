@@ -295,6 +295,32 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
             continue
         found = candidate
         break
+    # Nominatim برای خیابان‌های بلند فقط یک «تکه» می‌دهد (ولیعصر: ۱ کیلومتر از ۱۷).
+    # اگر Overpass در دسترس باشد، همهٔ wayهای هم‌نام را می‌گیریم و اگر بزرگ‌تر بود
+    # همان را ترجیح می‌دهیم — «کل خیابان»، نه یک تکه از آن.
+    if found and city_box and len(city_box) == 4:
+        try:
+            wide = osm_provider.overpass_street_bbox(
+                [_strip_street_prefix(request.street or request.district or ""),
+                 request.street or request.district or ""],
+                bbox=list(city_box), timeout=min(20.0, float(getattr(request, "max_time", 60) or 60)),
+                budget_s=12.0)
+        except Exception:  # noqa: BLE001 — Overpass پایین باشد، همان Nominatim کافی است
+            wide = {}
+        wide_box = list(wide.get("bbox") or [])
+        if len(wide_box) == 4 and not too_big(wide_box):
+            try:
+                nb = [float(x) for x in found["bbox"]]
+                # فقط جعبه‌ای را می‌پذیریم که تکهٔ Nominatim را کامل در خود داشته باشد
+                contains = (wide_box[0] <= nb[0] + 1e-6 and wide_box[1] >= nb[1] - 1e-6 and
+                            wide_box[2] <= nb[2] + 1e-6 and wide_box[3] >= nb[3] - 1e-6)
+                wider = contains and ((wide_box[1] - wide_box[0]) * (wide_box[3] - wide_box[2])
+                                      > (nb[1] - nb[0]) * (nb[3] - nb[2]))
+            except (KeyError, TypeError, ValueError):
+                wider = False
+            if wider:
+                found = {"bbox": wide_box, "label": (found.get("label") or ""),
+                         "streets": int(wide.get("ways") or 0)}
     if not found:
         if warnings is not None:
             if last_error:
@@ -342,9 +368,11 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
     # شعاع موتورهای نقطه‌ای هم به اندازهٔ همان خیابان/محله شود، نه شعاع ۱۰ کیلومتری شهر.
     request.radius = int(max(250, min(20000, span_km * 500)))
     if warnings is not None:
+        extra = (f" — {found.get('streets')} قطعهٔ خیابان با همین نام جمع شد"
+                 if found.get("streets") else "")
         warnings.append(
-            f"محدودهٔ دقیق «{request.area_label or query}» از OSM گرفته شد "
-            f"(در حدود {span_km:.1f} کیلومتر) — کل این محدوده اسکراب می‌شود.")
+            f"محدودهٔ دقیق «{label}» از OSM گرفته شد "
+            f"(در حدود {span_km:.1f} کیلومتر){extra} — کل این محدوده اسکراب می‌شود.")
     return request.bbox
 
 

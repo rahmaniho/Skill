@@ -1203,7 +1203,8 @@ class StreetVariantTests(unittest.TestCase):
 
         with mock.patch.object(pipeline.config, "OSM_AREA_LOOKUP", True), \
                 mock.patch.object(pipeline.config, "_looks_like_unittest", return_value=False), \
-                mock.patch("leadgen.providers.osm.lookup_area", side_effect=fake_lookup):
+                mock.patch("leadgen.providers.osm.lookup_area", side_effect=fake_lookup), \
+                mock.patch("leadgen.providers.osm.overpass_street_bbox", return_value={}):
             box = pipeline.refine_area_bbox(request, city, allow_network=True)
         # جعبهٔ OSM + حاشیهٔ ~۱۵۰ متری (مغازه‌های دو طرف خیابان)
         self.assertAlmostEqual(box[0], 31.8820, places=3)
@@ -1246,6 +1247,65 @@ class StreetVariantTests(unittest.TestCase):
         with mock.patch.object(pipeline.config, "OSM_AREA_LOOKUP", True), \
                 mock.patch.object(pipeline.config, "_looks_like_unittest", return_value=False), \
                 mock.patch("leadgen.providers.osm.lookup_area",
-                           return_value={"bbox": [31.70, 32.10, 54.10, 54.60]}):
+                           return_value={"bbox": [31.70, 32.10, 54.10, 54.60]}), \
+                mock.patch("leadgen.providers.osm.overpass_street_bbox", return_value={}):
             box = pipeline.refine_area_bbox(request, city, allow_network=True)
         self.assertEqual(box, [], "جعبهٔ هم‌اندازهٔ شهر نباید به‌جای خیابان پذیرفته شود")
+
+
+class StreetWholeOverpassTests(unittest.TestCase):
+    """خیابان بلند (ولیعصر) باید کل مسیر باشد؛ Nominatim فقط یک تکه می‌دهد."""
+
+    def _request(self):
+        request = pipeline.ScrapeRequest.from_dict({
+            "niche_query": "کافه", "city_query": "تهران", "city_key": "tehran",
+            "street": "خیابان ولیعصر", "area_level": "street", "engine_mode": "osm"})
+        request.area_label = "خیابان ولیعصر، تهران"
+        return request
+
+    def test_refine_prefers_overpass_when_it_covers_more_of_the_street(self):
+        request = self._request()
+        city = {"bbox": [35.60, 35.80, 51.20, 51.60], "country": "IR", "label_local": "تهران"}
+        nominatim = {"bbox": [35.705, 35.715, 51.414, 51.416], "label": "خیابان ولیعصر، تهران"}
+        overpass = {"bbox": [35.700, 35.760, 51.390, 51.420], "ways": 41}
+
+        with mock.patch.object(pipeline.config, "OSM_AREA_LOOKUP", True), \
+                mock.patch.object(pipeline.config, "_looks_like_unittest", return_value=False), \
+                mock.patch("leadgen.providers.osm.lookup_area", return_value=dict(nominatim)), \
+                mock.patch("leadgen.providers.osm.overpass_street_bbox", return_value=overpass):
+            box = pipeline.refine_area_bbox(request, city, allow_network=True)
+        # جعبهٔ بزرگ‌تر Overpass + حاشیهٔ کوچک
+        self.assertAlmostEqual(box[0], 35.6988, places=3)
+        self.assertAlmostEqual(box[1], 35.7612, places=3)
+        self.assertLess(box[0], 35.7001, "باید از تکهٔ ۱ کیلومتری Nominatim بزرگ‌تر باشد")
+        self.assertGreater(box[1], 35.7599)
+        self.assertGreater(request.radius, 3000, "شعاع باید اندازهٔ خیابان بلند باشد")
+        self.assertEqual(request.area_level, "street")
+
+    def test_overpass_city_sized_box_is_not_accepted(self):
+        request = self._request()
+        city = {"bbox": [35.60, 35.80, 51.20, 51.60], "country": "IR", "label_local": "تهران"}
+        nominatim = {"bbox": [35.705, 35.715, 51.414, 51.416], "label": "خیابان ولیعصر، تهران"}
+        huge = {"bbox": [35.60, 35.80, 51.20, 51.60], "ways": 900}
+
+        with mock.patch.object(pipeline.config, "OSM_AREA_LOOKUP", True), \
+                mock.patch.object(pipeline.config, "_looks_like_unittest", return_value=False), \
+                mock.patch("leadgen.providers.osm.lookup_area", return_value=dict(nominatim)), \
+                mock.patch("leadgen.providers.osm.overpass_street_bbox", return_value=huge):
+            box = pipeline.refine_area_bbox(request, city, allow_network=True)
+        self.assertAlmostEqual(box[0], 35.7035, places=3)   # همان جعبهٔ Nominatim + حاشیه
+        self.assertAlmostEqual(box[1], 35.7165, places=3)
+
+    def test_overpass_failure_is_swallowed(self):
+        request = self._request()
+        city = {"bbox": [35.60, 35.80, 51.20, 51.60], "country": "IR", "label_local": "تهران"}
+        nominatim = {"bbox": [35.705, 35.715, 51.414, 51.416], "label": "خیابان ولیعصر، تهران"}
+
+        with mock.patch.object(pipeline.config, "OSM_AREA_LOOKUP", True), \
+                mock.patch.object(pipeline.config, "_looks_like_unittest", return_value=False), \
+                mock.patch("leadgen.providers.osm.lookup_area", return_value=dict(nominatim)), \
+                mock.patch("leadgen.providers.osm.overpass_street_bbox",
+                           side_effect=__import__(
+                               "leadgen.providers.osm", fromlist=["OSMDownError"]).OSMDownError("down")):
+            box = pipeline.refine_area_bbox(request, city, allow_network=True)
+        self.assertEqual(len(box), 4, "قطعی Overpass نباید محدودهٔ پیدا‌شده را از بین ببرد")

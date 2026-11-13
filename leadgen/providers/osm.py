@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import threading
 import time
 import urllib.error
@@ -165,7 +166,7 @@ def _endpoints_in_order() -> list[str]:
 
 
 def _overpass_request(query: str, *, timeout: float, retries: int = 1,
-                      deadline_s: float | None = None) -> dict:
+                      deadline_s: float | None = None, trip_breaker: bool = True) -> dict:
     """اجرای کوئری روی آینه‌ها با تلاش دوبارهٔ کوتاه (تحمل خطای سرویس شلوغ).
 
     Overpass یک سرویس عمومی است؛ پاسخ 429/504 در ساعات شلوغ طبیعی است. یک تلاش
@@ -218,7 +219,10 @@ def _overpass_request(query: str, *, timeout: float, retries: int = 1,
             _OVERPASS_LAST_OK[0] = time.time()
             _OVERPASS_DOWN_UNTIL[0] = 0.0
             return data
-    _OVERPASS_DOWN_UNTIL[0] = time.monotonic() + OVERPASS_DOWN_SECONDS
+    # «کلید شکستن مدار» فقط برای جست‌وجوی اصلی؛ یک پرسش جانبی (مثل جعبهٔ خیابان)
+    # نباید کل اجرا را به مسیر جایگزین بیندازد.
+    if trip_breaker:
+        _OVERPASS_DOWN_UNTIL[0] = time.monotonic() + OVERPASS_DOWN_SECONDS
     raise OSMDownError("Overpass پاسخ نداد (" + "; ".join(errors[:4]) + ")")
 
 
@@ -382,6 +386,50 @@ def overpass_search(filters: list[str], *, bbox: list[float], limit: int | None 
                 _OVERPASS_CACHE.pop(oldest, None)
             _OVERPASS_CACHE[key] = (time.time(), [dict(row) for row in out])
     return out
+
+
+def overpass_street_bbox(names: list[str], *, bbox: list[float], timeout: float = 25.0,
+                         budget_s: float | None = None) -> dict:
+    """جعبهٔ **کل** یک خیابان از Overpass (همهٔ wayهای هم‌نام، نه یک تکه).
+
+    چرا؟ Nominatim برای «خیابان ولیعصر» فقط یک way می‌دهد (≈۱ کیلومتر از ۱۷
+    کیلومتر). Overpass می‌تواند همهٔ wayهای همان نام داخل جعبهٔ شهر را بدهد؛
+    جمعِ bounds آن‌ها = کل خیابان. خروجی `{"bbox": [...], "ways": n}` یا `{}`.
+    """
+    pats = []
+    for name in names or []:
+        clean = _strip_street_prefix(str(name or "").strip())
+        clean = clean.split("،")[0].split(",")[0].strip()
+        if len(clean) >= 3 and clean not in pats:
+            pats.append(clean)
+    if not pats or not bbox or len(bbox) != 4:
+        return {}
+    if not overpass_available():
+        return {}
+    pattern = "|".join(re.escape(p) for p in pats)
+    s_, n_, w_, e_ = (float(x) for x in bbox)
+    query = (f'[out:json][timeout:{int(max(8, min(40, timeout)))}];'
+             f'way["name"~"{pattern}",i]({s_},{w_},{n_},{e_});out bb;')
+    data = _overpass_request(query, timeout=timeout, deadline_s=budget_s,
+                             trip_breaker=False)
+    elements = data.get("elements") if isinstance(data, dict) else None
+    boxes: list[list[float]] = []
+    for element in elements or []:
+        bounds = (element or {}).get("bounds") if isinstance(element, dict) else None
+        if not isinstance(bounds, dict):
+            continue
+        try:
+            lo_lat, hi_lat = float(bounds["minlat"]), float(bounds["maxlat"])
+            lo_lon, hi_lon = float(bounds["minlon"]), float(bounds["maxlon"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if hi_lat > lo_lat and hi_lon > lo_lon:
+            boxes.append([lo_lat, hi_lat, lo_lon, hi_lon])
+    if not boxes:
+        return {}
+    merged = [min(b[0] for b in boxes), max(b[1] for b in boxes),
+              min(b[2] for b in boxes), max(b[3] for b in boxes)]
+    return {"bbox": [round(x, 6) for x in merged], "ways": len(boxes)}
 
 
 def split_bbox(bbox: list[float], rows: int = 2, cols: int = 2) -> list[list[float]]:
