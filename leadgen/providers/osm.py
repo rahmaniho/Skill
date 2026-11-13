@@ -170,6 +170,48 @@ def _endpoints_in_order() -> list[str]:
     return fresh + cooled          # اگر همه سرد بودند، باز هم همان‌ها را امتحان می‌کنیم
 
 
+# آینه‌های شناخته‌شدهٔ Overpass. سرویس‌های عمومی زیر بار سنگین مرتب 502/تایم‌اوت
+# می‌دهند؛ آینهٔ سالم با سنجش واقعی انتخاب می‌شود، نه با حدس.
+OVERPASS_MIRRORS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+    "https://overpass.osm.ch/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+    "https://overpass.osm.jp/api/interpreter",
+]
+
+
+def probe_overpass_endpoints(candidates: list[str] | None = None, *,
+                             timeout: float = 10.0) -> list[dict]:
+    """سنجش زندهٔ آینه‌ها با یک کوئری کوچک — کدام‌ها همین حالا پاسخ می‌دهند."""
+    query = "[out:json][timeout:8];node(35.7000,51.4100,35.7002,51.4102);out 1;"
+    payload = urllib.parse.urlencode({"data": query}).encode("utf-8")
+    results: list[dict] = []
+    for url in candidates or OVERPASS_MIRRORS:
+        host = url.split("/")[2] if "//" in url else url
+        started = time.monotonic()
+        try:
+            req = urllib.request.Request(
+                url, data=payload, method="POST",
+                headers={"User-Agent": USER_AGENT, "Accept": "application/json",
+                         "Content-Type": "application/x-www-form-urlencoded"})
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8", "replace"))
+            elements = data.get("elements") if isinstance(data, dict) else None
+            results.append({"url": url, "host": host, "ok": isinstance(elements, list),
+                            "ms": int((time.monotonic() - started) * 1000), "error": ""})
+        except urllib.error.HTTPError as exc:
+            results.append({"url": url, "host": host, "ok": False,
+                            "ms": int((time.monotonic() - started) * 1000),
+                            "error": f"HTTP {exc.code}"})
+        except Exception as exc:                      # noqa: BLE001 — گزارش روشن
+            results.append({"url": url, "host": host, "ok": False,
+                            "ms": int((time.monotonic() - started) * 1000),
+                            "error": f"{type(exc).__name__}: {str(exc)[:80]}"})
+    return results
+
+
 def _overpass_request(query: str, *, timeout: float, retries: int = 1,
                       deadline_s: float | None = None, trip_breaker: bool = True) -> dict:
     """اجرای کوئری روی آینه‌ها با تلاش دوبارهٔ کوتاه (تحمل خطای سرویس شلوغ).

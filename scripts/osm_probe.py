@@ -151,8 +151,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--niche", default="")
     parser.add_argument("--all", action="store_true", help="جاروی همهٔ اصناف (تگ‌محور)")
     parser.add_argument("--street", default="", help="سنجش پوشش کامل یک خیابان")
+    parser.add_argument("--endpoints", action="store_true", help="سنجش آینه‌های Overpass")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+
+    if args.endpoints:
+        rows = osm.probe_overpass_endpoints()
+        for row in rows:
+            mark = "✓" if row["ok"] else "✗"
+            print(f"  {mark} {row['host']} — {row['ms']}ms {row['error']}".rstrip())
+        print(f"\nسالم: {sum(1 for r in rows if r['ok'])}/{len(rows)}")
+        if args.json:
+            print(json.dumps(rows, ensure_ascii=False, indent=2))
+        return 0 if any(r["ok"] for r in rows) else 1
 
     if args.street:
         result = probe_street(args.city or "تهران", args.street)
