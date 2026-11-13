@@ -317,6 +317,12 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
             box = list(found.get("bbox") or [])
     request.bbox = [float(x) for x in box]
     request.area_unresolved = []
+    # سطح را از «شهر» به سطح واقعیِ همان چیزی که پیدا شد ارتقا بده؛ وگرنه
+    # گزارش/رابط می‌گوید «یزد» در حالی که فقط یک خیابان اسکراب شده است.
+    if request.street:
+        request.area_level = "street"
+    elif request.district:
+        request.area_level = "district"
     # نقطهٔ مبنا = مرکز جعبه (برای موتورهایی که فقط نقطه می‌فهمند)
     mid_lat = (box[0] + box[1]) / 2
     request.lat = f"{mid_lat:.6f}"
@@ -324,6 +330,8 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
     height_km = (box[1] - box[0]) * 111
     width_km = (box[3] - box[2]) * 111 * max(0.2, abs(math.cos(math.radians(mid_lat))))
     span_km = max(height_km, width_km)
+    # شعاع موتورهای نقطه‌ای هم به اندازهٔ همان خیابان/محله شود، نه شعاع ۱۰ کیلومتری شهر.
+    request.radius = int(max(250, min(20000, span_km * 500)))
     if warnings is not None:
         warnings.append(
             f"محدودهٔ دقیق «{request.area_label or query}» از OSM گرفته شد "
