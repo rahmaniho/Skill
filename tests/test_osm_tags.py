@@ -765,11 +765,59 @@ class OverpassStreetBBoxTests(unittest.TestCase):
         data = {"elements": [self._way(1, [1, 2], (35.700, 51.410), (35.710, 51.412))]}
         with mock.patch.object(osm, "_overpass_request", return_value=data) as call, \
                 mock.patch.object(osm.config, "OVERPASS_CACHE_TTL", 600):
-            first = osm.overpass_street_bbox(["ولیعصر"], bbox=[35.6, 35.8, 51.2, 51.6])
-            second = osm.overpass_street_bbox(["ولیعصر"], bbox=[35.6, 35.8, 51.2, 51.6])
+            # «ولیعصر» در OSM «ولی عصر» است؛ نام دقیق هیچ تکه‌ای ندارد و مسیر regex
+            # جواب می‌دهد. هر دو درخواست باید کش شوند.
+            first = osm.overpass_street_bbox(["ولی عصر"], bbox=[35.6, 35.8, 51.2, 51.6],
+                                             near=[35.7005, 35.7095, 51.4101, 51.4119])
+            calls_after_first = call.call_count
+            second = osm.overpass_street_bbox(["ولی عصر"], bbox=[35.6, 35.8, 51.2, 51.6],
+                                              near=[35.7005, 35.7095, 51.4101, 51.4119])
+        self.assertTrue(first)
         self.assertEqual(first, second)
-        self.assertEqual(call.call_count, 1, "اجرای دوم باید از کش بیاید")
+        self.assertEqual(call.call_count, calls_after_first, "اجرای دوم باید از کش بیاید")
 
     def test_side_query_does_not_trip_the_global_breaker(self):
         from leadgen.providers import osm
         self.assertIn("trip_breaker", inspect.signature(osm._overpass_request).parameters)
+
+
+class StreetAnchorTests(unittest.TestCase):
+    """تکیه‌گاه باید تکه‌ای باشد که روی جعبهٔ Nominatim نشسته، نه نزدیک‌ترین مرکز."""
+
+    def setUp(self):
+        from leadgen.providers import osm
+        osm._STREET_CACHE.clear()
+
+    def test_anchor_is_chosen_by_overlap_with_the_nominatim_box(self):
+        from leadgen.providers import osm
+        ways = [
+            # کوچهٔ هم‌نام در محلهٔ دور (مرکزش ~۳ کیلومتر فاصله دارد ولی نزدیک‌ترین است)
+            {"id": 1, "nodes": {1, 2}, "box": [35.678, 35.679, 51.412, 51.414], "length_km": 0.1},
+            {"id": 2, "nodes": {5, 6}, "box": [35.705, 35.712, 51.409, 51.414], "length_km": 0.9},
+            {"id": 3, "nodes": {6, 7}, "box": [35.712, 35.720, 51.414, 51.418], "length_km": 1.1},
+        ]
+        cluster = osm._connected_street(ways, [35.7050, 35.7150, 51.4085, 51.4159])
+        self.assertTrue(cluster["anchored"])
+        self.assertEqual([w["id"] for w in cluster["ways"]], [2, 3])
+        self.assertAlmostEqual(sum(w["length_km"] for w in cluster["ways"]), 2.0, places=3)
+
+    def test_unrelated_exact_name_is_rejected_and_regex_result_wins(self):
+        from leadgen.providers import osm
+        stray = {"elements": [
+            {"type": "way", "id": 1, "nodes": [1, 2],
+             "geometry": [{"lat": 35.6780, "lon": 51.4120},
+                          {"lat": 35.6781, "lon": 51.4130}]}]}
+        real = {"elements": [
+            {"type": "way", "id": 5, "nodes": [10, 11],
+             "geometry": [{"lat": 35.7050, "lon": 51.4090},
+                          {"lat": 35.7200, "lon": 51.4170}]},
+            {"type": "way", "id": 6, "nodes": [11, 12],
+             "geometry": [{"lat": 35.7200, "lon": 51.4170},
+                          {"lat": 35.7400, "lon": 51.4200}]}]}
+        with mock.patch.object(osm, "_overpass_request", side_effect=[stray, real]) as call:
+            found = osm.overpass_street_bbox(["ولیعصر"], bbox=[35.6, 35.85, 51.2, 51.6],
+                                             near=[35.7055, 35.7145, 51.4095, 51.4155])
+        self.assertEqual(found["via"], "regex", "نام دقیق کوچهٔ بی‌ربط بود؛ باید regex برنده شود")
+        self.assertEqual(found["ways"], 2)
+        self.assertGreater(found["length_km"], 3.0)
+        self.assertEqual(call.call_count, 2)
