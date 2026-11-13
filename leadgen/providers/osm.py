@@ -625,6 +625,10 @@ def _connected_street(ways: list[dict], seed: list[float] | None) -> dict:
 # Overpass از POSIX ERE استفاده می‌کند: [[:space:]] مجاز است، \s و (?:...) نه.
 _STREET_NAME_PREFIX_RE = ("(خیابان|بلوار|بزرگراه|اتوبان|کوچه|میدان|"
                           "بن بست|بن\u200cبست|بازار)?")
+# در OSM ایران خیلی از خیابان‌ها با لقب ثبت شده‌اند: «آیت الله کاشانی»، «شهید بهشتی»،
+# «امام رضا». کاربر «خیابان کاشانی» می‌نویسد؛ بدون تحمل لقب، هیچ تکه‌ای پیدا نمی‌شد.
+_STREET_HONORIFIC_RE = ("(آیت[[:space:]]*الله|ایت[[:space:]]*الله|شهید|امام|"
+                        "علامه|دکتر|استاد|مهندس|حاج|شهیدان|بزرگ|آیت الله)?")
 _NAME_GAP = "[[:space:]]*"
 
 
@@ -639,8 +643,8 @@ def _name_pattern(name: str) -> str:
     if len(clean) < 3:
         return ""
     body = _NAME_GAP.join(re.escape(ch) for ch in clean)
-    return (f"^{_NAME_GAP}{_STREET_NAME_PREFIX_RE}{_NAME_GAP}{body}"
-            f"{_NAME_GAP}$")
+    return (f"^{_NAME_GAP}{_STREET_NAME_PREFIX_RE}{_NAME_GAP}"
+            f"{_STREET_HONORIFIC_RE}{_NAME_GAP}{body}{_NAME_GAP}$")
 
 
 def overpass_street_bbox(names: list[str], *, bbox: list[float], timeout: float = 25.0,

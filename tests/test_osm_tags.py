@@ -899,3 +899,31 @@ class StreetSegmentSweepTests(unittest.TestCase):
         from leadgen import pipeline as pipeline_mod
         source = inspect.getsource(pipeline_mod.run_scrape)
         self.assertIn('"street_boxes"', source)
+
+
+class StreetHonorificTests(unittest.TestCase):
+    """خیابان‌های ایران با لقب ثبت می‌شوند: «آیت الله کاشانی» = «خیابان کاشانی»."""
+
+    def test_honorific_prefix_is_tolerated(self):
+        import re
+        from leadgen.providers import osm
+        py = osm._name_pattern("کاشانی").replace("[[:space:]]", r"\s")
+        for name in ("آیت الله کاشانی", "ایت الله کاشانی", "خیابان کاشانی", "کاشانی"):
+            self.assertTrue(re.match(py, name), name)
+        for name in ("کاشانی ۲۵", "چهل و سه کاشانی", "کاشانیان"):
+            self.assertFalse(re.match(py, name), name)
+
+    def test_honorific_street_is_used_when_plain_name_has_no_overlap(self):
+        from leadgen.providers import osm
+        osm._STREET_CACHE.clear()
+        plain = {"elements": []}
+        real = {"elements": [
+            {"type": "way", "id": 7, "nodes": [1, 2],
+             "geometry": [{"lat": 31.8798, "lon": 54.3745},
+                          {"lat": 31.8850, "lon": 54.3790}]}]}
+        with mock.patch.object(osm, "_overpass_request", side_effect=[plain, real]):
+            found = osm.overpass_street_bbox(["کاشانی"], bbox=[31.85, 31.95, 54.30, 54.45],
+                                             near=[31.8799, 31.8849, 54.3744, 54.3790])
+        self.assertTrue(found)
+        self.assertEqual(found["via"], "regex")
+        self.assertEqual(found["ways"], 1)
