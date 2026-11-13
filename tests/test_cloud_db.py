@@ -399,6 +399,24 @@ class StreetCacheCloudTests(unittest.TestCase):
         self.assertGreater(got["age_days"], 1.5)
         self.assertIn("key=eq.tehran%7C", self.transport.last["url"])
 
+    def test_get_falls_back_to_city_and_street_filters(self):
+        calls: list = []
+
+        def responder(request, record):
+            calls.append(request.full_url)
+            if len(calls) == 1:
+                return FakeResponse([])          # فیلتر key نتیجه نداد
+            return FakeResponse([{"key": "tehran|ولیعصر", "city_key": "tehran",
+                                  "street": "ولیعصر", "bbox": [35.66, 35.79, 51.39, 51.42],
+                                  "boxes": [[35.66, 35.79, 51.39, 51.42]],
+                                  "ways": 57, "length_km": 15.8,
+                                  "updated_at": time.time() - 3600}])
+        self.transport.responder = responder
+        got = pgstore.get_street_cache("tehran", "ولیعصر")
+        self.assertEqual(57, got["ways"])
+        self.assertIn("city_key=eq.tehran", calls[1])
+        self.assertIn("street=eq.", calls[1])
+
     def test_missing_table_degrades_quietly(self):
         self.transport.responder = lambda r, rec: http_error(404)
         self.assertIsNone(pgstore.get_street_cache("tehran", "ولیعصر"))

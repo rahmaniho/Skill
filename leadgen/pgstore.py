@@ -479,10 +479,21 @@ def get_street_cache(city_key: str, street: str) -> dict | None:
     key = storage.street_cache_key(city_key, street)
     if key.endswith("|"):
         return None
+    rows: list = []
     try:
         rows, _ = _client().rows("street_cache", select="*", limit=1, key=f"eq.{key}")
     except CloudError:
-        return None
+        rows = []
+    if not rows:
+        # اگر فیلتر «key» (به‌خاطر نویسهٔ |) جواب نداد، با دو ستون ساده بگرد؛
+        # نام خیابان در جدول همان شکل نرمال‌شده ذخیره می‌شود.
+        try:
+            rows, _ = _client().rows(
+                "street_cache", select="*", limit=1,
+                city_key=f"eq.{(city_key or '').strip().lower()}",
+                street=f"eq.{storage.normalize_street_name(street)}")
+        except CloudError:
+            return None
     if not rows:
         return None
     data = dict(rows[0])

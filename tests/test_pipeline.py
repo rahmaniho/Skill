@@ -1641,7 +1641,7 @@ class StreetGeometryMemoryTests(unittest.TestCase):
     def _nominatim(self):
         return {"bbox": [35.705, 35.715, 51.414, 51.416], "label": "خیابان ولیعصر، تهران"}
 
-    def _patches(self, *, cached=None, wide=None, put=None, lookup=None):
+    def _patches(self, *, cached=None, wide=None, put=None, lookup=None, cache_error=None):
         return [
             mock.patch.object(pipeline.config, "OSM_AREA_LOOKUP", True),
             mock.patch.object(pipeline.config, "_looks_like_unittest", return_value=False),
@@ -1651,7 +1651,9 @@ class StreetGeometryMemoryTests(unittest.TestCase):
             mock.patch("leadgen.providers.osm.overpass_street_bbox",
                        return_value=dict(wide or {})),
             mock.patch.object(pipeline.storage, "get_street_cache",
-                              return_value=dict(cached) if cached else None),
+                              side_effect=cache_error if cache_error else None,
+                              return_value=None if cache_error else
+                              (dict(cached) if cached else None)),
             mock.patch.object(pipeline.storage, "put_street_cache",
                               side_effect=put if put is not None else (lambda *a, **k: True)),
         ]
@@ -1680,6 +1682,8 @@ class StreetGeometryMemoryTests(unittest.TestCase):
         self.assertLess(box[0], 35.66)
         self.assertGreater(box[1], 35.76)
         self.assertEqual(request.street_areas, [])
+        self.assertEqual("cache", request.street_memory[0]["source"],
+                         "کارنامه باید بگوید نوار از حافظه آمد")
 
     def test_stale_memory_rescues_the_run_when_overpass_is_down(self):
         request = self._request()
@@ -1704,6 +1708,13 @@ class StreetGeometryMemoryTests(unittest.TestCase):
         self.assertEqual("ولیعصر", args[1], "نام بدون پیشوند ذخیره می‌شود")
         self.assertEqual(77, kwargs["ways"])
         self.assertEqual("regex", kwargs["source"])
+
+    def test_memory_error_is_reported_instead_of_silently_rescraping(self):
+        request = self._request()
+        box = self._run(request, wide={}, cache_error=RuntimeError("boom"))
+        self.assertEqual("none", request.street_memory[0]["source"])
+        self.assertIn("boom", request.street_memory[0]["error"])
+        self.assertEqual(4, len(box), "خطای حافظه نباید اجرا را بشکند")
 
     def test_memory_of_another_area_is_not_used(self):
         request = self._request()
