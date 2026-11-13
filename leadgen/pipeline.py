@@ -282,6 +282,17 @@ def _area_query_variants(street: str, district: str, city_fa: str) -> list[str]:
     return out
 
 
+def _boxes_overlap(first, second, pad: float = 0.004) -> bool:
+    """آیا دو جعبه (با ~۴۵۰ متر حاشیه) هم‌پوشانی دارند؟"""
+    try:
+        if not (first and second and len(first) == 4 and len(second) == 4):
+            return False
+        return (float(first[0]) - pad <= float(second[1]) and float(second[0]) - pad <= float(first[1]) and
+                float(first[2]) - pad <= float(second[3]) and float(second[2]) - pad <= float(first[3]))
+    except (TypeError, ValueError):
+        return False
+
+
 def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: bool,
                      warnings: list | None = None) -> list[float]:
     """جعبهٔ واقعیِ خیابان/محله را از OSM می‌گیرد و روی درخواست می‌گذارد.
@@ -364,6 +375,13 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
                 found = {"bbox": wide_box, "label": (found.get("label") or ""),
                          "streets": int(wide.get("ways") or 0),
                          "boxes": wide.get("boxes") or []}
+            elif wide.get("boxes") and _boxes_overlap(wide_box, found.get("bbox")):
+                # Overpass همان محدودهٔ Nominatim را داد؛ جعبه بزرگ‌تر نشد، ولی
+                # تکه‌های واقعی خیابان را داریم — بدون آن‌ها فیلتر «روی خیابان»
+                # بی‌اثر می‌شد و لیدهای همین خیابان هم دور ریخته می‌شدند.
+                found = dict(found)
+                found["boxes"] = list(wide.get("boxes") or [])
+                found["streets"] = int(wide.get("ways") or 0)
     if not found:
         if warnings is not None:
             if last_error:
@@ -738,8 +756,17 @@ def resolve_street_areas(request: "ScrapeRequest", city: dict, *, allow_network:
         if len(box) != 4:
             missing.append(name)
             continue
-        areas.append({"name": name, "bbox": [round(float(x), 5) for x in box],
-                      "boxes": list(probe.street_boxes or [])})
+        clean_box = [round(float(x), 5) for x in box]
+        boxes = list(probe.street_boxes or [])
+        partial = False
+        if not boxes:
+            # Overpass نوار خیابان را نداد (مثلاً نام در OSM با پسوند دیگری است)؛
+            # فقط همان جعبهٔ Nominatim را نگه می‌داریم تا لیدهای این خیابان بی‌صدا
+            # حذف نشوند — و صریح می‌گوییم که ممکن است کل خیابان نباشد.
+            boxes = [clean_box]
+            partial = True
+        areas.append({"name": name, "bbox": clean_box, "boxes": boxes,
+                      "partial": partial})
     if not areas:
         raise EngineError(
             f"هیچ‌کدام از خیابان‌ها پیدا نشد ({'، '.join(missing[:4])})؛ برای اینکه دادهٔ "
@@ -766,6 +793,12 @@ def resolve_street_areas(request: "ScrapeRequest", city: dict, *, allow_network:
     if warnings is not None:
         if missing:
             warnings.append(f"این خیابان‌ها پیدا نشد و اسکراب نشدند: {'، '.join(missing)}")
+        partial_names = [a["name"] for a in areas if a.get("partial")]
+        if partial_names:
+            warnings.append(
+                f"برای «{'، '.join(partial_names)}» فقط تکهٔ Nominatim پیدا شد (Overpass "
+                f"نوار کامل خیابان را نداد)؛ همان محدوده با احتیاط اسکراب می‌شود و ممکن "
+                f"است کل خیابان نباشد.")
         warnings.append(
             f"چند خیابان هم‌زمان: {len(areas)} خیابان ({'، '.join(a['name'] for a in areas)}) — "
             f"فقط مغازه‌های روی همین خیابان‌ها نگه داشته می‌شود.")

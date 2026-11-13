@@ -913,6 +913,32 @@ class StreetHonorificTests(unittest.TestCase):
         for name in ("کاشانی ۲۵", "چهل و سه کاشانی", "کاشانیان"):
             self.assertFalse(re.match(py, name), name)
 
+    def test_qualified_name_suffix_is_tolerated(self):
+        """«خیابان انقلاب» در OSM «انقلاب اسلامی» است (۴۶ تکه، ولی «انقلاب» ۳ تکه)."""
+        import re
+        from leadgen.providers import osm
+        py = osm._name_pattern("انقلاب").replace("[[:space:]]", r"\s")
+        for name in ("انقلاب اسلامی", "خیابان انقلاب اسلامی", "انقلاب شمالی"):
+            self.assertTrue(re.match(py, name), name)
+        for name in ("پیام انقلاب", "انقلاب ۲۵", "انقلابی"):
+            self.assertFalse(re.match(py, name), name)
+
+    def test_qualified_street_name_reaches_the_overpass_query(self):
+        from leadgen.providers import osm
+        osm._STREET_CACHE.clear()
+        data = {"elements": [
+            {"type": "way", "id": 1, "nodes": [1, 2],
+             "geometry": [{"lat": 35.6960, "lon": 51.3915},
+                          {"lat": 35.6990, "lon": 51.3980}]}]}
+        with mock.patch.object(osm, "_overpass_request",
+                               side_effect=[{"elements": []}, data]) as call:
+            found = osm.overpass_street_bbox(["خیابان انقلاب"],
+                                             bbox=[35.6, 35.9, 51.2, 51.6],
+                                             near=[35.6961, 35.7009, 51.3913, 51.4044])
+        self.assertTrue(found)
+        self.assertEqual(found["via"], "regex")
+        self.assertIn(osm._STREET_TAIL_RE, call.call_args_list[1][0][0])
+
     def test_honorific_street_is_used_when_plain_name_has_no_overlap(self):
         from leadgen.providers import osm
         osm._STREET_CACHE.clear()

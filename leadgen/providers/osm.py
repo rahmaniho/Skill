@@ -631,12 +631,19 @@ _STREET_HONORIFIC_RE = ("(آیت[[:space:]]*الله|ایت[[:space:]]*الله|
                         "علامه|دکتر|استاد|مهندس|حاج|شهیدان|بزرگ|آیت الله)?")
 _NAME_GAP = "[[:space:]]*"
 
+# در OSM ایران نام خیابان گاهی یک پسوند دارد: «انقلاب اسلامی» (۴۶ تکه در تهران،
+# ولی «انقلاب» فقط ۳ تکه). پسوند باید واژهٔ فارسی باشد، نه عدد: «کاشانی ۲۵» یا
+# کوچهٔ «کاشانیان» خیابان اصلی نیست.
+# فاصله/نیم‌فاصلهٔ واقعی (نه کلاس POSIX تودرتو؛ Overpass و پایتون هر دو همین را می‌فهمند)
+_STREET_TAIL_RE = "([\u00a0 ]+[^\u00a00-9۰-۹٠-٩]{1,14}){0,2}"
+
 
 def _name_pattern(name: str) -> str:
-    """الگوی نام خیابان با تحمل فاصله/نیم‌فاصله و پیشوند.
+    """الگوی نام خیابان با تحمل فاصله/نیم‌فاصله، پیشوند و پسوند.
 
     چرا؟ OSM «ولی عصر» ثبت کرده و کاربر «ولیعصر» می‌نویسد؛ تطابق دقیق رشته‌ای
-    هیچ‌وقت جور در نمی‌آید و کل خیابان ۱۷ کیلومتری از دست می‌رفت.
+    هیچ‌وقت جور در نمی‌آید و کل خیابان ۱۷ کیلومتری از دست می‌رفت. همچنین
+    «خیابان انقلاب» در OSM «انقلاب اسلامی» ثبت شده و بدون تحمل پسوند پیدا نمی‌شد.
     """
     clean = _strip_street_prefix(str(name or "").strip())
     clean = "".join(_squash(clean).split())        # حذف فاصله/نیم‌فاصله
@@ -644,7 +651,7 @@ def _name_pattern(name: str) -> str:
         return ""
     body = _NAME_GAP.join(re.escape(ch) for ch in clean)
     return (f"^{_NAME_GAP}{_STREET_NAME_PREFIX_RE}{_NAME_GAP}"
-            f"{_STREET_HONORIFIC_RE}{_NAME_GAP}{body}{_NAME_GAP}$")
+            f"{_STREET_HONORIFIC_RE}{_NAME_GAP}{body}{_STREET_TAIL_RE}{_NAME_GAP}$")
 
 
 def overpass_street_bbox(names: list[str], *, bbox: list[float], timeout: float = 25.0,
