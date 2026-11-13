@@ -180,6 +180,11 @@ OVERPASS_MIRRORS = [
     "https://overpass.private.coffee/api/interpreter",
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
     "https://overpass.osm.rambler.ru/cgi/interpreter",
+    "https://gall.openstreetmap.de/api/interpreter",
+    "https://lambert.openstreetmap.de/api/interpreter",
+    "https://overpass.openstreetmap.fr/api/interpreter",
+    "https://overpass.nchc.org.tw/api/interpreter",
+    "https://overpass.monicz.dev/api/interpreter",
     "https://overpass.osm.ch/api/interpreter",
     "https://overpass.osm.jp/api/interpreter",
 ]
