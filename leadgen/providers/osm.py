@@ -757,10 +757,44 @@ def split_bbox(bbox: list[float], rows: int = 2, cols: int = 2) -> list[list[flo
     return tiles
 
 
+def cluster_boxes(boxes: list, groups: int = 6) -> list[list[float]]:
+    """تکه‌های یک خیابان بلند → چند جعبهٔ کوچکِ پشت‌سرهم.
+
+    چرا؟ جعبهٔ کل «خیابان ولیعصر» یک مستطیل ۱۶ کیلومتری روی نصف تهران است؛ Overpass
+    در چنین مستطیلی سقف نتیجه را می‌خورد و مغازه‌های واقعی خیابان جا می‌مانند.
+    پرسیدن چند جعبهٔ باریک روی خودِ خیابان، هم سریع‌تر است هم کامل‌تر.
+    """
+    clean: list[list[float]] = []
+    for item in boxes or []:
+        try:
+            box = [float(x) for x in item]
+        except (TypeError, ValueError):
+            continue
+        if len(box) == 4 and box[1] >= box[0] and box[3] >= box[2]:
+            clean.append(box)
+    if not clean or groups <= 1:
+        return []
+    total_lat = max(b[1] for b in clean) - min(b[0] for b in clean)
+    total_lon = max(b[3] for b in clean) - min(b[2] for b in clean)
+    axis = 0 if total_lat >= total_lon else 2         # محور بلند خیابان
+    clean.sort(key=lambda b: (b[axis] + b[axis + 1]))
+    count = max(1, min(int(groups), len(clean)))
+    size = max(1, len(clean) // count)
+    out: list[list[float]] = []
+    for start in range(0, len(clean), size):
+        chunk = clean[start:start + size]
+        if not chunk:
+            continue
+        out.append([min(b[0] for b in chunk), max(b[1] for b in chunk),
+                    min(b[2] for b in chunk), max(b[3] for b in chunk)])
+    return out[:count]
+
+
 def overpass_search_area(filters: list[str], *, bbox: list[float], limit: int | None = None,
                          timeout: float | None = None, input_id: str = "",
                          lang: str = "fa", tiles: int = 1, max_rows: int | None = None,
-                         budget_s: float | None = None) -> list[dict]:
+                         budget_s: float | None = None,
+                         segments: list | None = None) -> list[dict]:
     """جاروی کامل‌تر یک محدوده: اگر نتیجه به سقف خورد، محدوده به قطعه‌ها شکسته می‌شود.
 
     Overpass با `out ... LIMIT` نتیجه را می‌بُرد؛ در شهرهای بزرگ این یعنی «کمبود
@@ -776,6 +810,41 @@ def overpass_search_area(filters: list[str], *, bbox: list[float], limit: int | 
     # «بُرش» وقتی رخ می‌دهد که یا نتیجه دقیقاً به سقف خورده، یا محدوده بزرگ است.
     truncated = len(first) >= base_limit
     big_area = span > 0.8
+
+    # خیابان بلند: به‌جای مستطیل بزرگ، فقط روی خودِ نوار خیابان پرسیده می‌شود.
+    pieces = cluster_boxes(segments, groups=max(2, min(8, int(tiles) * 2))) if segments \
+        else []
+    if len(pieces) >= 2:
+        merged_rows: dict[str, dict] = {}
+        for piece in pieces:
+            for row in first:
+                if row.get("place_id") in merged_rows:
+                    continue
+                try:
+                    lat, lon = float(row.get("latitude")), float(row.get("longitude"))
+                except (TypeError, ValueError):
+                    continue
+                if piece[0] - 0.0015 <= lat <= piece[1] + 0.0015 and \
+                        piece[2] - 0.0015 <= lon <= piece[3] + 0.0015:
+                    merged_rows[row["place_id"]] = row
+        for piece in pieces:
+            left = budget - (time.monotonic() - started)
+            if left < 6:
+                break
+            try:
+                found = overpass_search(filters, bbox=piece, limit=base_limit,
+                                        timeout=min(per_call, left - 2),
+                                        input_id=input_id, lang=lang, budget_s=left)
+            except OSMDownError:
+                continue
+            for row in found:
+                merged_rows.setdefault(row["place_id"], row)
+            if max_rows and len(merged_rows) >= int(max_rows):
+                break
+        if merged_rows:
+            out = list(merged_rows.values())
+            return out[:int(max_rows)] if max_rows else out
+
     if int(tiles) <= 1 or not (truncated or big_area):
         return first
 

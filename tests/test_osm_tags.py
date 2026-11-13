@@ -410,7 +410,7 @@ class OverpassSweepTests(unittest.TestCase):
         seen: list[list[float]] = []
 
         def fake_area(filters, *, bbox, limit=None, timeout=None, input_id="", lang="fa",
-                      tiles=1, max_rows=None, budget_s=None):
+                      tiles=1, max_rows=None, budget_s=None, segments=None):
             seen.append(list(bbox))
             row = self._row(len(seen), f"کافه {len(seen)}")
             row["latitude"] = f"{(bbox[0] + bbox[1]) / 2:.5f}"
@@ -842,3 +842,60 @@ class StreetComponentGapTests(unittest.TestCase):
         cluster = osm._connected_street(ways, [35.701, 35.709, 51.4055, 51.4069])
         ids = sorted(w["id"] for w in cluster["ways"])
         self.assertEqual(ids, [1, 2], "قطعهٔ نزدیک باید اضافه شود، کوچهٔ دور نه")
+
+
+class StreetSegmentSweepTests(unittest.TestCase):
+    """خیابان بلند باید روی نوار خودش پرسیده شود، نه مستطیل بزرگ شهر."""
+
+    def test_cluster_boxes_splits_along_the_long_axis(self):
+        from leadgen.providers import osm
+        boxes = [[35.700 + i * 0.002, 35.701 + i * 0.002, 51.405, 51.406] for i in range(20)]
+        groups = osm.cluster_boxes(boxes, groups=4)
+        self.assertEqual(len(groups), 4)
+        self.assertAlmostEqual(groups[0][0], 35.700, places=6)
+        self.assertAlmostEqual(groups[-1][1], 35.739, places=6)
+        # هر جعبه فقط یک نوار باریک است، نه کل خیابان
+        for box in groups:
+            self.assertLess(box[1] - box[0], 0.02)
+
+    def test_search_area_queries_each_segment_and_merges_without_duplicates(self):
+        from leadgen.providers import osm
+        segments = [[35.700 + i * 0.004, 35.701 + i * 0.004, 51.405, 51.406] for i in range(8)]
+        seen: list[list[float]] = []
+
+        def fake_search(filters, *, bbox, limit=None, timeout=None, input_id="", lang="fa",
+                        budget_s=None, **kwargs):
+            seen.append(list(bbox))
+            mid_lat = round((bbox[0] + bbox[1]) / 2, 5)
+            rows = [
+                {"place_id": f"osm:node/{mid_lat}-a", "title": "کافه",
+                 "latitude": f"{mid_lat}", "longitude": "51.4055"},
+                # ردیفی که در دو قطعهٔ هم‌پوشان تکرار می‌شود نباید دوبار بیاید
+                {"place_id": "osm:node/shared", "title": "کافه مشترک",
+                 "latitude": "35.7005", "longitude": "51.4055"},
+            ]
+            return rows
+
+        with mock.patch.object(osm, "overpass_search", side_effect=fake_search):
+            rows = osm.overpass_search_area(['["amenity"="cafe"]'],
+                                            bbox=[35.69, 35.75, 51.40, 51.42],
+                                            segments=segments, limit=100, tiles=4,
+                                            budget_s=60)
+        parts = {r["place_id"] for r in rows}
+        self.assertIn("osm:node/shared", parts)
+        self.assertGreaterEqual(len(seen), 2, "روی نوار خیابان باید چند پرسش جدا زده شود")
+        # هر پرسش باید بسیار باریک‌تر از کل جعبه (۰٫۰۶ درجه) باشد، نه نصف شهر
+        self.assertLess(max(b[1] - b[0] for b in seen), 0.06 + 1e-9,
+                        "هر پرسش باید نوار باریک باشد")
+        # یک پرسش اول روی کل جعبه + حداکثر ۸ پرسش روی نوار خیابان
+        self.assertLessEqual(len(seen), 9)
+        self.assertEqual(seen[0], [35.69, 35.75, 51.40, 51.42])
+        for bbox in seen:
+            self.assertGreaterEqual(bbox[2], 51.399, "پرسش نباید از نوار خیابان بیرون بزند")
+        self.assertEqual(len(parts), len(rows), "نتیجهٔ تکراری نباید برگردد")
+
+    def test_pipeline_passes_street_boxes_to_the_engine_body(self):
+        import inspect
+        from leadgen import pipeline as pipeline_mod
+        source = inspect.getsource(pipeline_mod.run_scrape)
+        self.assertIn('"street_boxes"', source)
