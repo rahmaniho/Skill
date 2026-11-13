@@ -496,6 +496,27 @@ def _grow_street_cluster(boxes: list[list[float]], seed: list[float],
     return cluster
 
 
+_STREET_NAME_PREFIX_RE = ("(?:خیابان|بلوار|بزرگراه|اتوبان|کوچه|میدان|"
+                          "بن بست|بن\u200cبست|بازار)?")
+# Overpass از POSIX regex استفاده می‌کند: [[:space:]] معتبر است، \s نه.
+_NAME_GAP = "[[:space:]\u200c]*"
+
+
+def _name_pattern(name: str) -> str:
+    """الگوی نام خیابان با تحمل فاصله/نیم‌فاصله و پیشوند.
+
+    چرا؟ OSM «ولی عصر» ثبت کرده و کاربر «ولیعصر» می‌نویسد؛ تطابق دقیق رشته‌ای
+    هیچ‌وقت جور در نمی‌آید و کل خیابان ۱۷ کیلومتری از دست می‌رفت.
+    """
+    clean = _strip_street_prefix(str(name or "").strip())
+    clean = "".join(_squash(clean).split())        # حذف فاصله/نیم‌فاصله
+    if len(clean) < 3:
+        return ""
+    body = _NAME_GAP.join(re.escape(ch) for ch in clean)
+    return (f"^{_NAME_GAP}{_STREET_NAME_PREFIX_RE}{_NAME_GAP}{body}"
+            f"{_NAME_GAP}$")
+
+
 def overpass_street_bbox(names: list[str], *, bbox: list[float], timeout: float = 25.0,
                          budget_s: float | None = None,
                          near: list[float] | None = None,
@@ -531,10 +552,13 @@ def overpass_street_bbox(names: list[str], *, bbox: list[float], timeout: float 
     seconds = int(max(8, min(40, timeout)))
     box = f"({s_},{w_},{n_},{e_})"
     exact = "".join(f'way["name"="{p}"]{box};' for p in pats)
-    pattern = "|".join(re.escape(p) for p in pats)
-    regex = f'way["name"~"^({pattern})$",i]{box};'
+    patterns = [pat for pat in (_name_pattern(p) for p in pats) if pat]
+    regex = (f'way["name"~"{pattern}",i]{box};'
+             if (pattern := "|".join(patterns)) else "")
     found: dict = {}
     for via, body in (("exact", exact), ("regex", regex)):
+        if not body:
+            continue
         query = f"[out:json][timeout:{seconds}];({body});out bb;"
         try:
             data = _overpass_request(query, timeout=timeout, retries=0,
