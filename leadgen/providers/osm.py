@@ -854,8 +854,10 @@ def _street_family(base: str, *, bbox: list[float], near: list[float] | None,
         return []
     body = _NAME_GAP.join(re.escape(ch) for ch in "".join(root.split()))
     s_, n_, w_, e_ = (float(x) for x in bbox)
+    # نکتهٔ Overpass QL: داخل پرانتزِ union هر بیانیه باید با «؛» تمام شود
+    # (`(...;);`)؛ وگرنه سرور «parse error: ';' expected» می‌دهد (باگ HTTP 400).
     query = (f'[out:json][timeout:20];'
-             f'(way["name"~"{body}",i]({s_},{w_},{n_},{e_}));out geom;')
+             f'(way["name"~"{body}",i]({s_},{w_},{n_},{e_}););out geom;')
     try:
         data = _overpass_request(query, timeout=20, retries=0, deadline_s=budget_s,
                                  trip_breaker=False, per_endpoint_s=8.0)
