@@ -145,6 +145,29 @@ def probe_street(city: str, street: str) -> dict:
             "ways": wide.get("ways", 0), "via": wide.get("via"), "seconds": elapsed}
 
 
+def probe_nominatim(query: str) -> dict:
+    """چند تکه از یک خیابان را Nominatim می‌دهد؟ (dedupe=0 — برای پوشش کامل)"""
+    import urllib.parse
+    params = {"q": query, "format": "jsonv2", "limit": 50, "dedupe": 0,
+              "extratags": 1, "addressdetails": 0, "accept-language": "fa,en",
+              "countrycodes": "ir"}
+    url = f"{osm.config.OSM_ENDPOINT}/search?" + urllib.parse.urlencode(params)
+    try:
+        data = osm._http_json(url, timeout=30)
+    except Exception as exc:                             # noqa: BLE001
+        print(f"  ✗ Nominatim: {type(exc).__name__}: {exc}")
+        return {"ok": False, "error": str(exc)[:200]}
+    rows = [d for d in (data or []) if isinstance(d, dict)
+            and (d.get("type") in osm.STREET_TYPES or d.get("class") in osm.STREET_TYPES)]
+    print(f"• Nominatim «{query}»: {len(data or [])} پاسخ، {len(rows)} خیابان")
+    for row in rows[:8]:
+        print(f"    - {row.get('type')}/{row.get('class')} {row.get('display_name')} "
+              f"{row.get('boundingbox')}")
+    return {"ok": bool(rows), "total": len(data or []), "streets": len(rows),
+            "boxes": [r.get("boundingbox") for r in rows],
+            "labels": [r.get("display_name") for r in rows]}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="آزمون دودی موتور دادهٔ OSM")
     parser.add_argument("--city", default="")
@@ -152,8 +175,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--all", action="store_true", help="جاروی همهٔ اصناف (تگ‌محور)")
     parser.add_argument("--street", default="", help="سنجش پوشش کامل یک خیابان")
     parser.add_argument("--endpoints", action="store_true", help="سنجش آینه‌های Overpass")
+    parser.add_argument("--nominatim", default="", help="شمارش تکه‌های یک خیابان در Nominatim")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+
+    if args.nominatim:
+        result = probe_nominatim(args.nominatim)
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result.get("ok") else 1
 
     if args.endpoints:
         rows = osm.probe_overpass_endpoints()
