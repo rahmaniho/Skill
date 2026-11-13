@@ -532,6 +532,7 @@ def put_street_cache(city_key: str, street: str, *, bbox: list, boxes: list,
         _client().insert("street_cache", [payload], upsert=True, on_conflict="key")
     except Exception:                      # noqa: BLE001 — کش نباید اجرا را بشکند
         return False
+    storage._maybe_prune_street_cache()    # حداکثر یک‌بار در روز
     return True
 
 
