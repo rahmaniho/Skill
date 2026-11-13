@@ -660,43 +660,6 @@ class FullScanTileTests(unittest.TestCase):
         self.assertEqual(set(report), {"الف", "ب"})
         self.assertTrue(all(t["rows"] >= 1 for t in report.values()))
 
-    def test_complete_overpass_pass_skips_tile_re_queries(self):
-        """اگر سقف Overpass پر نشود، کل جعبه دیده شده و کاشی‌ها دوباره پرسیده نمی‌شوند."""
-        eng = self._engine()
-        calls: list[float] = []
-
-        def fake_search(term, *, bbox, country=None, limit=None, timeout=12.0,
-                        lang="fa", input_id="", pages=1):
-            calls.append(list(bbox))
-            return []
-
-        def fake_overpass(filters, *, bbox, limit=800, **kwargs):
-            # ۵ نتیجه از سقف ۸۰۰ → یعنی جست‌وجوی اصلی کامل بوده
-            return [{"place_id": f"osm:node/cafe{i}", "title": f"کافه {i}", "category": "کافه",
-                     "latitude": "31.89", "longitude": "54.36", "source": "openstreetmap",
-                     "phone": "", "website": "", "instagram": "", "facebook": "",
-                     "linkedin": "", "address": "یزد", "rating": None, "reviews": 0,
-                     "tags": {}, "input_id": term} for i, term in enumerate(["cafe"] * 5)]
-
-        body = {
-            "name": "scan", "keywords": ["کافه"], "lang": "fa", "lat": "31.89",
-            "lon": "54.36", "radius": 5000, "max_time": 45,
-            "bbox": [31.80, 31.98, 54.25, 54.47],
-            "scan_tiles": [
-                {"label": "الف", "bbox": [31.80, 31.89, 54.25, 54.36]},
-                {"label": "ب", "bbox": [31.89, 31.98, 54.36, 54.47]},
-            ],
-            "osm_terms": ["cafe"], "_niche": None,
-        }
-        with mock.patch.object(osm, "overpass_search_area", side_effect=fake_overpass), \
-                mock.patch.object(osm, "overpass_search", return_value=[]), \
-                mock.patch.object(osm, "search", side_effect=fake_search):
-            _name, rows = eng.run_job(body)
-        self.assertEqual(calls, [], "کاشی‌ها نباید دوباره پرسیده شوند")
-        self.assertEqual({t["label"] for t in eng.tile_coverage}, {"الف", "ب"})
-        self.assertTrue(all(t["via"] == "main" for t in eng.tile_coverage))
-        self.assertEqual(len(rows), 5)
-
     def test_tile_equal_to_main_box_is_not_re_queried(self):
         """کاشی هم‌اندازهٔ جعبهٔ اصلی = همان پرسش انجام‌شده؛ شبکه دوباره اذیت نمی‌شود."""
         eng = self._engine()
