@@ -14,6 +14,30 @@ on:
         description: "صنف (مثلاً رستوران، دندانپزشکی)"
         required: false
         default: ""
+      street:
+        description: "خیابان برای سنجش پوشش کامل (مثلاً ولیعصر) — خالی = سنجش شهر"
+        required: false
+        default: ""
+      endpoints:
+        description: "سنجش آینه‌های Overpass (1 = بله)"
+        required: false
+        default: ""
+      nominatim:
+        description: "شمارش تکه‌های یک خیابان در Nominatim (مثلاً ولیعصر، تهران)"
+        required: false
+        default: ""
+      coverage:
+        description: "سنجش پوشش جغرافیایی آینه‌ها (1 = بله)"
+        required: false
+        default: ""
+      raw:
+        description: "کوئری‌های Overpass برای عیب‌یابی (با ||| جدا شوند)"
+        required: false
+        default: ""
+      parts:
+        description: "محله‌ها برای تکه‌کردن خیابان (مثل ونک,تجریش,پارکوی)"
+        required: false
+        default: ""
   # اجرای خودکار وقتی موتور داده تغییر می‌کند
   push:
     paths:
@@ -41,10 +65,28 @@ jobs:
           OSM_MODE: hybrid
           CITY: ${{ github.event.inputs.city }}
           NICHE: ${{ github.event.inputs.niche }}
+          STREET: ${{ github.event.inputs.street }}
+          ENDPOINTS: ${{ github.event.inputs.endpoints }}
+          NOMINATIM: ${{ github.event.inputs.nominatim }}
+          COVERAGE: ${{ github.event.inputs.coverage }}
+          PARTS: ${{ github.event.inputs.parts }}
+          RAW: ${{ github.event.inputs.raw }}
         run: |
           set -o pipefail
           set +e
-          if [ -n "$CITY" ]; then
+          if [ -n "$RAW" ]; then
+            python3 scripts/osm_probe.py --raw "$RAW" 2>&1 | tee probe.log
+          elif [ -n "$PARTS" ]; then
+            python3 scripts/osm_probe.py --city "${CITY:-تهران}" --street "${STREET:-ولیعصر}" --parts "$PARTS" --json 2>&1 | tee probe.log
+          elif [ "$COVERAGE" = "1" ]; then
+            python3 scripts/osm_probe.py --coverage --json 2>&1 | tee probe.log
+          elif [ -n "$NOMINATIM" ]; then
+            python3 scripts/osm_probe.py --nominatim "$NOMINATIM" --json 2>&1 | tee probe.log
+          elif [ "$ENDPOINTS" = "1" ]; then
+            python3 scripts/osm_probe.py --endpoints --json 2>&1 | tee probe.log
+          elif [ -n "$STREET" ]; then
+            python3 scripts/osm_probe.py --city "${CITY:-تهران}" --street "$STREET" --json 2>&1 | tee probe.log
+          elif [ -n "$CITY" ]; then
             python3 scripts/osm_probe.py --city "$CITY" --niche "$NICHE" --json 2>&1 | tee probe.log
           else
             python3 scripts/osm_probe.py --json 2>&1 | tee probe.log
@@ -56,6 +98,10 @@ jobs:
         run: |
           # لاگ آرتیفکت گاهی از GitHub قابل دانلود نیست؛ اینجا همان متن را به‌صورت
           # annotation منتشر می‌کنیم تا نتیجهٔ واقعی همیشه خواندنی باشد.
+          summary=$(grep -m1 '^SUMMARY ' probe.log 2>/dev/null || true)
+          if [ -n "$summary" ]; then
+            echo "::error title=street-summary::${summary#SUMMARY }"
+          fi
           if [ ! -f probe.log ]; then
             echo "::error title=probe::probe.log ساخته نشد (اسکریپت پیش از اجرا شکست)"
           else

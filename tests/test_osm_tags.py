@@ -692,6 +692,10 @@ class FullScanTileTests(unittest.TestCase):
 class OverpassStreetBBoxTests(unittest.TestCase):
     """همهٔ wayهای هم‌نام یک خیابان → یک جعبهٔ واحد (نه یک تکه)."""
 
+    def setUp(self):
+        from leadgen.providers import osm
+        osm._STREET_CACHE.clear()
+
     def test_merges_bounds_of_every_matching_way(self):
         from leadgen.providers import osm
         data = {"elements": [
@@ -699,29 +703,64 @@ class OverpassStreetBBoxTests(unittest.TestCase):
             {"bounds": {"minlat": 35.750, "maxlat": 35.770, "minlon": 51.400, "maxlon": 51.405}},
             {"note": "بدون bounds"},
         ]}
-        with mock.patch.object(osm, "overpass_available", return_value=True), \
-                mock.patch.object(osm, "_overpass_request", return_value=data) as call:
+        with mock.patch.object(osm, "_overpass_request", return_value=data) as call:
             found = osm.overpass_street_bbox(["خیابان ولیعصر", "ولیعصر"],
                                              bbox=[35.6, 35.8, 51.2, 51.6])
         self.assertEqual(found["bbox"], [35.7, 35.77, 51.4, 51.416])
         self.assertEqual(found["ways"], 2)
+        self.assertEqual(found["via"], "exact")
         query = call.call_args[0][0]
-        self.assertIn('way["name"~', query)
+        # نام دقیق اول (سریع، از ایندکس) و خروجی فقط bounds
+        self.assertIn('way["name"="ولیعصر"](35.6,51.2,35.8,51.6)', query)
         self.assertIn("out bb;", query)
-        self.assertIn("ولیعصر", query)
+
+    def test_falls_back_to_anchored_regex_when_exact_name_misses(self):
+        from leadgen.providers import osm
+        boxes = {"elements": [
+            {"bounds": {"minlat": 35.700, "maxlat": 35.710, "minlon": 51.410, "maxlon": 51.416}}]}
+        with mock.patch.object(osm, "_overpass_request", side_effect=[{"elements": []}, boxes]) as call:
+            found = osm.overpass_street_bbox(["ولیعصر"], bbox=[35.6, 35.8, 51.2, 51.6])
+        self.assertEqual(found["via"], "regex")
+        regex_query = call.call_args_list[1][0][0]
+        self.assertIn('way["name"~"^[[:space:]', regex_query)
+        # «ولیعصر» و «ولی عصر» باید یک خیابان حساب شوند (OSM فاصله می‌گذارد)
+        self.assertIn("و[[:space:]]*ل[[:space:]]*ی", regex_query)
+        self.assertNotIn("(?:", regex_query, "Overpass فقط POSIX ERE را می‌پذیرد")
+
+    def test_only_contiguous_segments_join_the_cluster(self):
+        """کوچهٔ هم‌نام در محلهٔ دور نباید جعبه را تا انتهای شهر بکشد."""
+        from leadgen.providers import osm
+        data = {"elements": [
+            {"bounds": {"minlat": 35.705, "maxlat": 35.710, "minlon": 51.410, "maxlon": 51.416}},
+            {"bounds": {"minlat": 35.710, "maxlat": 35.720, "minlon": 51.410, "maxlon": 51.416}},
+            {"bounds": {"minlat": 35.780, "maxlat": 35.781, "minlon": 51.300, "maxlon": 51.301}},
+        ]}
+        with mock.patch.object(osm, "_overpass_request", return_value=data):
+            found = osm.overpass_street_bbox(["ولیعصر"], bbox=[35.6, 35.9, 51.2, 51.6],
+                                             near=[35.7055, 35.7095, 51.411, 51.415])
+        self.assertEqual(found["ways"], 2, "تکهٔ دورافتاده نباید جمع شود")
+        self.assertAlmostEqual(found["bbox"][1], 35.720, places=6)
 
     def test_empty_bbox_when_no_way_matches(self):
         from leadgen.providers import osm
-        with mock.patch.object(osm, "overpass_available", return_value=True), \
-                mock.patch.object(osm, "_overpass_request", return_value={"elements": []}):
+        with mock.patch.object(osm, "_overpass_request", return_value={"elements": []}):
             self.assertEqual(osm.overpass_street_bbox(["خیابان ناموجود"], bbox=[1, 2, 3, 4]), {})
 
-    def test_skips_network_when_overpass_is_down(self):
+    def test_down_service_returns_empty_without_raising(self):
         from leadgen.providers import osm
-        with mock.patch.object(osm, "overpass_available", return_value=False), \
-                mock.patch.object(osm, "_overpass_request") as call:
+        with mock.patch.object(osm, "_overpass_request", side_effect=osm.OSMDownError("down")):
             self.assertEqual(osm.overpass_street_bbox(["ولیعصر"], bbox=[1, 2, 3, 4]), {})
-        call.assert_not_called()
+
+    def test_result_is_cached_between_calls(self):
+        from leadgen.providers import osm
+        data = {"elements": [
+            {"bounds": {"minlat": 35.700, "maxlat": 35.710, "minlon": 51.410, "maxlon": 51.416}}]}
+        with mock.patch.object(osm, "_overpass_request", return_value=data) as call, \
+                mock.patch.object(osm.config, "OVERPASS_CACHE_TTL", 600):
+            first = osm.overpass_street_bbox(["ولیعصر"], bbox=[35.6, 35.8, 51.2, 51.6])
+            second = osm.overpass_street_bbox(["ولیعصر"], bbox=[35.6, 35.8, 51.2, 51.6])
+        self.assertEqual(first, second)
+        self.assertEqual(call.call_count, 1, "اجرای دوم باید از کش بیاید")
 
     def test_side_query_does_not_trip_the_global_breaker(self):
         from leadgen.providers import osm
