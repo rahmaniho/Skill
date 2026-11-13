@@ -397,7 +397,9 @@ class StreetCacheCloudTests(unittest.TestCase):
         self.assertEqual(got["ways"], 77)
         self.assertEqual(got["bbox"], [35.66, 35.76, 51.40, 51.43])
         self.assertGreater(got["age_days"], 1.5)
-        self.assertIn("key=eq.tehran%7C", self.transport.last["url"])
+        # خواندن اول با دو ستون ساده انجام می‌شود (نه کلید دارای «|»)
+        self.assertIn("city_key=eq.tehran", self.transport.last["url"])
+        self.assertIn("street=eq.", self.transport.last["url"])
 
     def test_get_falls_back_to_city_and_street_filters(self):
         calls: list = []
@@ -405,7 +407,7 @@ class StreetCacheCloudTests(unittest.TestCase):
         def responder(request, record):
             calls.append(request.full_url)
             if len(calls) == 1:
-                return FakeResponse([])          # فیلتر key نتیجه نداد
+                return FakeResponse([])          # فیلتر دوستونه نتیجه نداد
             return FakeResponse([{"key": "tehran|ولیعصر", "city_key": "tehran",
                                   "street": "ولیعصر", "bbox": [35.66, 35.79, 51.39, 51.42],
                                   "boxes": [[35.66, 35.79, 51.39, 51.42]],
@@ -414,8 +416,8 @@ class StreetCacheCloudTests(unittest.TestCase):
         self.transport.responder = responder
         got = pgstore.get_street_cache("tehran", "ولیعصر")
         self.assertEqual(57, got["ways"])
-        self.assertIn("city_key=eq.tehran", calls[1])
-        self.assertIn("street=eq.", calls[1])
+        self.assertIn("city_key=eq.tehran", calls[0])
+        self.assertIn("key=eq.tehran%7C", calls[1])
 
     def test_missing_table_degrades_quietly(self):
         self.transport.responder = lambda r, rec: http_error(404)

@@ -494,6 +494,10 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
             "age_days": round(float(cached.get("age_days") or 0.0), 2) if cache_used else None,
             "span_km": round(span_km, 2),
         }
+        if cache_ok:
+            memory_row["cache_city"] = cache_city
+            memory_row["cache_found"] = bool(cached)
+            memory_row["cache_key"] = storage.street_cache_key(cache_city, street_name)
         if cache_error:
             memory_row["error"] = cache_error
         request.street_memory.append(memory_row)
@@ -813,6 +817,7 @@ def resolve_street_areas(request: "ScrapeRequest", city: dict, *, allow_network:
         probe.bbox = []
         probe.area_level = "street"
         probe.area_unresolved = []
+        probe.street_memory = []          # copy.copy لیست‌ها را هم‌رسان می‌کند؛ جدا لازم است
         if city_fa:
             probe.city_query = city_fa          # وگرنه نام مرکب چندخیابانی به Nominatim می‌رفت
         probe.area_label = f"{name}، {city_fa}".strip(" ،") if city_fa else name
