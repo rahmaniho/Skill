@@ -26,6 +26,10 @@ on:
         description: "شمارش تکه‌های یک خیابان در Nominatim (مثلاً ولیعصر، تهران)"
         required: false
         default: ""
+      coverage:
+        description: "سنجش پوشش جغرافیایی آینه‌ها (1 = بله)"
+        required: false
+        default: ""
   # اجرای خودکار وقتی موتور داده تغییر می‌کند
   push:
     paths:
@@ -56,10 +60,13 @@ jobs:
           STREET: ${{ github.event.inputs.street }}
           ENDPOINTS: ${{ github.event.inputs.endpoints }}
           NOMINATIM: ${{ github.event.inputs.nominatim }}
+          COVERAGE: ${{ github.event.inputs.coverage }}
         run: |
           set -o pipefail
           set +e
-          if [ -n "$NOMINATIM" ]; then
+          if [ "$COVERAGE" = "1" ]; then
+            python3 scripts/osm_probe.py --coverage --json 2>&1 | tee probe.log
+          elif [ -n "$NOMINATIM" ]; then
             python3 scripts/osm_probe.py --nominatim "$NOMINATIM" --json 2>&1 | tee probe.log
           elif [ "$ENDPOINTS" = "1" ]; then
             python3 scripts/osm_probe.py --endpoints --json 2>&1 | tee probe.log

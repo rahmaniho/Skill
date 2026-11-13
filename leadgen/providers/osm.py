@@ -182,10 +182,14 @@ OVERPASS_MIRRORS = [
 ]
 
 
+DEFAULT_PROBE_QUERY = "[out:json][timeout:8];node(35.7000,51.4100,35.7002,51.4102);out 1;"
+
+
 def probe_overpass_endpoints(candidates: list[str] | None = None, *,
-                             timeout: float = 10.0) -> list[dict]:
+                             timeout: float = 10.0,
+                             query: str | None = None) -> list[dict]:
     """سنجش زندهٔ آینه‌ها با یک کوئری کوچک — کدام‌ها همین حالا پاسخ می‌دهند."""
-    query = "[out:json][timeout:8];node(35.7000,51.4100,35.7002,51.4102);out 1;"
+    query = query or DEFAULT_PROBE_QUERY
     payload = urllib.parse.urlencode({"data": query}).encode("utf-8")
     results: list[dict] = []
     for url in candidates or OVERPASS_MIRRORS:

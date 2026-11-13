@@ -176,8 +176,29 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--street", default="", help="سنجش پوشش کامل یک خیابان")
     parser.add_argument("--endpoints", action="store_true", help="سنجش آینه‌های Overpass")
     parser.add_argument("--nominatim", default="", help="شمارش تکه‌های یک خیابان در Nominatim")
+    parser.add_argument("--coverage", action="store_true",
+                        help="کدام آینه دادهٔ تهران/زوریخ دارد؟ (جهانی یا منطقه‌ای)")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+
+    if args.coverage:
+        checks = [
+            ("زوریخ", '[out:json][timeout:20];way["name"~"Bahnhofstrasse"]'
+                      '(47.36,8.52,47.39,8.56);out bb;'),
+            ("تهران", '[out:json][timeout:20];nwr["amenity"="cafe"]'
+                      '(35.70,51.41,35.71,51.42);out 3;'),
+        ]
+        report = {}
+        for label, query in checks:
+            rows = osm.probe_overpass_endpoints(timeout=15, query=query)
+            report[label] = rows
+            for row in rows:
+                mark = "✓" if row["ok"] else "✗"
+                print(f"  {mark} [{label}] {row['host']} — {row['ms']}ms {row['error']}".rstrip())
+        print(f"\nTehran rows: {{'zurich': ..., 'tehran': ...}}")
+        if args.json:
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
 
     if args.nominatim:
         result = probe_nominatim(args.nominatim)
