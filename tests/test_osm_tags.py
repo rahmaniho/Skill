@@ -724,7 +724,8 @@ class OverpassStreetBBoxTests(unittest.TestCase):
         regex_query = call.call_args_list[1][0][0]
         self.assertIn('way["name"~"^[[:space:]', regex_query)
         # «ولیعصر» و «ولی عصر» باید یک خیابان حساب شوند (OSM فاصله می‌گذارد)
-        self.assertIn("و[[:space:]\u200c]*ل[[:space:]\u200c]*ی", regex_query)
+        self.assertIn("و[[:space:]]*ل[[:space:]]*ی", regex_query)
+        self.assertNotIn("(?:", regex_query, "Overpass فقط POSIX ERE را می‌پذیرد")
 
     def test_only_contiguous_segments_join_the_cluster(self):
         """کوچهٔ هم‌نام در محلهٔ دور نباید جعبه را تا انتهای شهر بکشد."""

@@ -496,10 +496,10 @@ def _grow_street_cluster(boxes: list[list[float]], seed: list[float],
     return cluster
 
 
-_STREET_NAME_PREFIX_RE = ("(?:خیابان|بلوار|بزرگراه|اتوبان|کوچه|میدان|"
+# Overpass از POSIX ERE استفاده می‌کند: [[:space:]] مجاز است، \s و (?:...) نه.
+_STREET_NAME_PREFIX_RE = ("(خیابان|بلوار|بزرگراه|اتوبان|کوچه|میدان|"
                           "بن بست|بن\u200cبست|بازار)?")
-# Overpass از POSIX regex استفاده می‌کند: [[:space:]] معتبر است، \s نه.
-_NAME_GAP = "[[:space:]\u200c]*"
+_NAME_GAP = "[[:space:]]*"
 
 
 def _name_pattern(name: str) -> str:
