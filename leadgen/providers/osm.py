@@ -599,7 +599,23 @@ def _connected_street(ways: list[dict], seed: list[float] | None) -> dict:
     overlapping = [c for c in components if _bbox_gap(c["box"], seed) <= 0.0]
     if overlapping:
         best = max(overlapping, key=lambda c: c["length_km"])
-        return {"ways": best["ways"], "anchored": True}
+        # بعضی خیابان‌های بلند در OSM چند مؤلفهٔ جدا دارند (میدان/زیرگذر گرهٔ مشترک
+        # را قطع می‌کند). فقط مؤلفه‌هایی که ≤ ~۱۶۰ متر به خوشهٔ فعلی می‌چسبند اضافه
+        # می‌شوند؛ کوچهٔ هم‌نام در محلهٔ دور هرگز به این فاصله نمی‌رسد.
+        members = list(best["ways"])
+        box = list(best["box"])
+        rest = [c for c in components if c is not best]
+        grew = True
+        while grew:
+            grew = False
+            for comp in list(rest):
+                if _bbox_gap(comp["box"], box) <= 0.0015:
+                    members.extend(comp["ways"])
+                    box = [min(box[0], comp["box"][0]), max(box[1], comp["box"][1]),
+                           min(box[2], comp["box"][2]), max(box[3], comp["box"][3])]
+                    rest.remove(comp)
+                    grew = True
+        return {"ways": members, "anchored": True}
     nearest = min(components, key=lambda c: _bbox_gap(c["box"], seed))
     if _bbox_gap(nearest["box"], seed) <= 0.01:      # ≤ ~۱ کیلومتر
         return {"ways": nearest["ways"], "anchored": False}

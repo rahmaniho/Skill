@@ -821,3 +821,24 @@ class StreetAnchorTests(unittest.TestCase):
         self.assertEqual(found["ways"], 2)
         self.assertGreater(found["length_km"], 3.0)
         self.assertEqual(call.call_count, 2)
+
+
+class StreetComponentGapTests(unittest.TestCase):
+    """خیابان بلند ممکن است چند مؤلفهٔ جدا داشته باشد (میدان/زیرگذر)."""
+
+    def test_nearby_component_is_added_but_distant_one_is_not(self):
+        from leadgen.providers import osm
+        ways = []
+        nid = 1000
+        # مؤلفهٔ اصلی روی جعبهٔ Nominatim
+        ways.append({"id": 1, "nodes": {nid, nid + 1},
+                     "box": [35.700, 35.710, 51.405, 51.407], "length_km": 1.1})
+        # مؤلفهٔ بعدی، ۵۰ متر بالاتر (گرهٔ مشترک ندارد)
+        ways.append({"id": 2, "nodes": {nid + 2, nid + 3},
+                     "box": [35.7104, 35.720, 51.407, 51.409], "length_km": 1.1})
+        # کوچهٔ هم‌نام در محلهٔ دور
+        ways.append({"id": 3, "nodes": {nid + 4, nid + 5},
+                     "box": [35.760, 35.761, 51.440, 51.441], "length_km": 0.1})
+        cluster = osm._connected_street(ways, [35.701, 35.709, 51.4055, 51.4069])
+        ids = sorted(w["id"] for w in cluster["ways"])
+        self.assertEqual(ids, [1, 2], "قطعهٔ نزدیک باید اضافه شود، کوچهٔ دور نه")
