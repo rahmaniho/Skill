@@ -407,6 +407,8 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
             cached = {}
             cache_error = f"{type(exc).__name__}: {exc}"[:160]
     cache_used = ""
+    wide_diag: list = []
+    cache_hit = False
     if found and city_box and len(city_box) == 4:
         seed_box = list(found.get("bbox") or [])
         fresh_limit = float(getattr(config, "STREET_CACHE_DAYS", 14) or 0)
@@ -435,6 +437,7 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
                     "siblings": int(cached.get("siblings") or 0)}
             cache_used = "fresh"
         else:
+            wide_diag: list = []
             probe_names = [street_name, request.street or request.district or ""]
             derived = _name_from_label(str(found.get("label") or ""),
                                        str(city.get("label_local") or ""), street_name)
@@ -445,7 +448,7 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
                     [name for name in dict.fromkeys(probe_names) if name],
                     bbox=list(city_box),
                     timeout=min(20.0, float(getattr(request, "max_time", 60) or 60)),
-                    budget_s=20.0, near=seed_box)
+                    budget_s=20.0, near=seed_box, diag=wide_diag)
             except Exception:  # noqa: BLE001 — Overpass پایین باشد، همان Nominatim کافی است
                 wide = {}
             if cache_ok and wide.get("bbox") and wide.get("boxes"):
@@ -562,6 +565,9 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
             memory_row["cache_city"] = cache_city
             memory_row["cache_found"] = bool(cached)
             memory_row["cache_key"] = storage.street_cache_key(cache_city, street_name)
+        if not cache_hit and wide_diag:
+            # عیب‌یابی عملیاتی: چرا نوار کامل نیامد؟ (حداکثر ۴ خط)
+            memory_row["diag"] = wide_diag[:4]
         if cache_error:
             memory_row["error"] = cache_error
         request.street_memory.append(memory_row)
