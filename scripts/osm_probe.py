@@ -122,14 +122,17 @@ def probe_street(city: str, street: str) -> dict:
     print(f"• خیابان «{street}» در {area['label']} — تکهٔ Nominatim: "
           f"{[round(x, 4) for x in seed] or '—'}")
     t0 = time.time()
+    diag: list[str] = []
     try:
         wide = osm.overpass_street_bbox(
             [street, osm._strip_street_prefix(street)], bbox=bbox,
-            timeout=25.0, budget_s=30.0, near=seed or None)
+            timeout=25.0, budget_s=30.0, near=seed or None, diag=diag)
     except Exception as exc:                             # noqa: BLE001
         wide = {}
-        print(f"  ✗ Overpass: {type(exc).__name__}: {exc}")
+        diag.append(f"{type(exc).__name__}: {exc}")
     elapsed = round(time.time() - t0, 1)
+    for line in diag:
+        print(f"  · {line}")
     if wide:
         span = max(wide["bbox"][1] - wide["bbox"][0],
                    (wide["bbox"][3] - wide["bbox"][2]) * 0.9) * 111.0
