@@ -156,9 +156,13 @@ def probe_street(city: str, street: str) -> dict:
                   f"({len(data.get('elements') or [])} المان)")
         except Exception as exc:                         # noqa: BLE001
             print(f"  · عیب‌یابی نام: {type(exc).__name__}: {exc}")
-    return {"ok": bool(wide), "city": area["label"], "street": street,
-            "seed_bbox": seed, "street_bbox": wide.get("bbox"),
-            "ways": wide.get("ways", 0), "via": wide.get("via"), "seconds": elapsed}
+    result = {"ok": bool(wide), "city": area["label"], "street": street,
+              "seed_bbox": seed, "street_bbox": wide.get("bbox"),
+              "ways": wide.get("ways", 0), "via": wide.get("via"),
+              "seconds": elapsed, "diag": diag}
+    # یک خط جمع‌بندی برای اینکه در گزارش Actions هم دیده شود (لاگ کامل در دسترس نیست)
+    print("SUMMARY " + json.dumps(result, ensure_ascii=False))
+    return result
 
 
 def probe_nominatim(query: str) -> dict:

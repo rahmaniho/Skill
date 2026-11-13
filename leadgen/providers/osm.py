@@ -551,6 +551,8 @@ def overpass_street_bbox(names: list[str], *, bbox: list[float], timeout: float 
             continue
         chosen = _grow_street_cluster(boxes, near) if (near and len(near) == 4) else boxes
         if not chosen:
+            if diag is not None:
+                diag.append(f"{via}: {len(boxes)} تکه، هیچ‌کدام به تکهٔ Nominatim نچسبید")
             continue
         merged = [min(b[0] for b in chosen), max(b[1] for b in chosen),
                   min(b[2] for b in chosen), max(b[3] for b in chosen)]
