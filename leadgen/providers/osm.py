@@ -469,31 +469,101 @@ def _boxes_touch(a: list[float], b: list[float], gap: float) -> bool:
                 a[3] < b[2] - gap or b[3] < a[2] - gap)
 
 
-def _grow_street_cluster(boxes: list[list[float]], seed: list[float],
-                         gap: float = 0.0025) -> list[list[float]]:
-    """همهٔ تکه‌های هم‌نامِ متصل به تکهٔ Nominatim را جمع می‌کند.
+def _km_between(a: tuple[float, float], b: tuple[float, float]) -> float:
+    """فاصلهٔ تقریبی دو نقطه بر حسب کیلومتر (haversine ساده)."""
+    lat1, lon1 = math.radians(a[0]), math.radians(a[1])
+    lat2, lon2 = math.radians(b[0]), math.radians(b[1])
+    dlat, dlon = lat2 - lat1, lon2 - lon1
+    h = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
+    return 2 * 6371.0 * math.asin(min(1.0, math.sqrt(h)))
 
-    چرا؟ در تهران چند «کوچهٔ ولیعصر» هم وجود دارد؛ اگر همهٔ آن‌ها را با هم جمع
-    کنیم، جعبه تا انتهای شهر کش می‌آید. رشد پله‌پله فقط تکه‌های پیوسته را
-    نگه می‌دارد. `gap` ≈ ۱۶۰ متر برای پر کردن فاصلهٔ گره‌های میانی است.
-    """
-    if not boxes:
-        return []
-    used = [False] * len(boxes)
-    cluster: list[list[float]] = []
-    union = [float(x) for x in seed]
-    grew = True
-    while grew:
-        grew = False
-        for i, box in enumerate(boxes):
-            if used[i] or not _boxes_touch(box, union, gap):
+
+def _ways_from_elements(data: dict) -> list[dict]:
+    """المان‌های Overpass → wayهای خیابان (با گره‌ها، جعبه و طول)."""
+    ways: list[dict] = []
+    for element in (data.get("elements") if isinstance(data, dict) else None) or []:
+        if not isinstance(element, dict):
+            continue
+        geometry = element.get("geometry") or []
+        points: list[tuple[float, float]] = []
+        for point in geometry:
+            try:
+                points.append((float(point["lat"]), float(point["lon"])))
+            except (KeyError, TypeError, ValueError):
                 continue
-            used[i] = True
-            cluster.append(box)
-            union = [min(union[0], box[0]), max(union[1], box[1]),
-                     min(union[2], box[2]), max(union[3], box[3])]
-            grew = True
-    return cluster
+        if points:
+            box = [min(p[0] for p in points), max(p[0] for p in points),
+                   min(p[1] for p in points), max(p[1] for p in points)]
+        else:
+            bounds = element.get("bounds") or {}
+            try:
+                box = [float(bounds["minlat"]), float(bounds["maxlat"]),
+                       float(bounds["minlon"]), float(bounds["maxlon"])]
+            except (KeyError, TypeError, ValueError):
+                continue
+        # قطعهٔ کاملاً شمالی-جنوبی یا شرقی-غربی «پهنا» ندارد؛ صفرِ کامل را با یک
+        # اپسیلون باز می‌کنیم تا از دست نرود (در OSM واقعی نادر ولی ممکن است).
+        if box[1] <= box[0]:
+            box[1] = box[0] + 1e-9
+        if box[3] <= box[2]:
+            box[3] = box[2] + 1e-9
+        length = sum(_km_between(points[i], points[i + 1]) for i in range(len(points) - 1))
+        ways.append({
+            "id": element.get("id"),
+            "nodes": {n for n in (element.get("nodes") or []) if n is not None},
+            "box": box,
+            "length_km": length,
+        })
+    return ways
+
+
+def _connected_street(ways: list[dict], seed: list[float] | None) -> list[dict]:
+    """تکه‌های **به‌هم‌پیوستهٔ** خیابان را از یک تکهٔ مرجع پیدا می‌کند.
+
+    چرا گره (node) و نه «جعبه‌های چسبیده»؟ «ولیعصر» در تهران ده‌ها کوچهٔ هم‌نام هم
+    دارد؛ چسبیدن جعبه‌به‌جعبه باعث می‌شد زنجیره‌ای تا محله‌های دور (منطقه ۱۴) برود.
+    تکه‌های یک خیابان واقعی گرهٔ مشترک دارند؛ پس اتصالِ توپولوژیک درست است.
+    """
+    if not ways:
+        return []
+
+    def center_distance(way: dict) -> float:
+        if not (seed and len(seed) == 4):
+            return 0.0
+        box = way["box"]
+        dlat = ((box[0] + box[1]) - (seed[0] + seed[1])) / 2
+        dlon = ((box[2] + box[3]) - (seed[2] + seed[3])) / 2
+        return abs(dlat) + abs(dlon)
+
+    if seed and len(seed) == 4:
+        seed_way = min(ways, key=center_distance)
+    else:                      # بدون مرجع: بزرگ‌ترین شبکهٔ به‌هم‌پیوسته
+        seed_way = max(ways, key=lambda w: w["length_km"])
+
+    node_owner: dict = {}
+    for index, way in enumerate(ways):
+        for node in way["nodes"]:
+            node_owner.setdefault(node, []).append(index)
+
+    picked = {ways.index(seed_way)}
+    queue = [ways.index(seed_way)]
+    while queue:
+        current = queue.pop()
+        for node in ways[current]["nodes"]:
+            for other in node_owner.get(node, ()):
+                if other not in picked:
+                    picked.add(other)
+                    queue.append(other)
+
+    # پلِ یک‌مرحله‌ای برای قطعه‌های کوچکِ جداافتاده (تونل/تقاطع بدون گرهٔ مشترک):
+    # فقط قطعه‌های کوتاه که مستقیماً به یکی از قطعه‌های همین خیابان می‌چسبند.
+    cluster_boxes = [ways[i]["box"] for i in picked]
+    for index, way in enumerate(ways):
+        if index in picked or way["length_km"] > 0.6:
+            continue
+        if any(_boxes_touch(way["box"], box, 0.0018) for box in cluster_boxes):
+            picked.add(index)
+    return [ways[i] for i in sorted(picked)]
 
 
 # Overpass از POSIX ERE استفاده می‌کند: [[:space:]] مجاز است، \s و (?:...) نه.
@@ -521,15 +591,16 @@ def overpass_street_bbox(names: list[str], *, bbox: list[float], timeout: float 
                          budget_s: float | None = None,
                          near: list[float] | None = None,
                          diag: list | None = None) -> dict:
-    """جعبهٔ **کل** یک خیابان از Overpass (همهٔ wayهای هم‌نام، نه یک تکه).
+    """جعبهٔ **کل** یک خیابان از Overpass (همهٔ تکه‌های به‌هم‌پیوسته، نه یک تکه).
 
     چرا؟ Nominatim برای «خیابان ولیعصر» فقط یک way می‌دهد (≈۱ کیلومتر از ۱۷
     کیلومتر). Overpass همهٔ wayهای همان نام داخل جعبهٔ شهر را می‌دهد؛ با `near`
-    فقط تکه‌های **پیوسته به همان تکه** جمع می‌شوند (وگرنه کوچه‌های هم‌نام در
-    محله‌های دیگر جعبه را تا انتهای شهر می‌کشند).
+    فقط شبکهٔ به‌هم‌پیوستهٔ همان تکه (اتصال از راه گره‌های مشترک) نگه داشته می‌شود
+    تا کوچه‌های هم‌نام در محله‌های دیگر وارد نشوند.
 
-    ابتدا نام دقیق (سریع، از ایندکس Overpass) و اگر چیزی نبود الگوی لنگرشده.
-    خروجی `{"bbox": [...], "ways": n, "via": "exact|regex"}` یا `{}`.
+    ابتدا نام دقیق (سریع، از ایندکس Overpass) و اگر چیزی نبود الگوی فاصله‌تحمل.
+    خروجی `{"bbox": [...], "ways": n, "boxes": [...], "length_km": x, "via": ...}`
+    یا `{}`.
     """
     pats: list[str] = []
     for name in names or []:
@@ -559,7 +630,8 @@ def overpass_street_bbox(names: list[str], *, bbox: list[float], timeout: float 
     for via, body in (("exact", exact), ("regex", regex)):
         if not body:
             continue
-        query = f"[out:json][timeout:{seconds}];({body});out bb;"
+        # `out geom` هم مختصات گره‌ها را می‌دهد (برای اتصال توپولوژیک) هم bounds را
+        query = f"[out:json][timeout:{seconds}];({body});out geom;"
         try:
             data = _overpass_request(query, timeout=timeout, retries=0,
                                      deadline_s=budget_s, trip_breaker=False,
@@ -568,28 +640,24 @@ def overpass_street_bbox(names: list[str], *, bbox: list[float], timeout: float 
             if diag is not None:
                 diag.append(f"{via}: {exc}")
             break                       # سرویس پایین/شلوغ است؛ تلاش دوم بی‌فایده
-        boxes = _bounds_from_elements(data)
-        if not boxes:
+        ways = _ways_from_elements(data)
+        if not ways:
             if diag is not None:
                 diag.append(f"{via}: «{pats[0]}» تکه‌ای نداشت")
             continue
-        chosen = _grow_street_cluster(boxes, near) if (near and len(near) == 4) else boxes
+        chosen = _connected_street(ways, near)
         if not chosen:
             if diag is not None:
-                diag.append(f"{via}: {len(boxes)} تکه، هیچ‌کدام به تکهٔ Nominatim نچسبید")
-                if near and len(near) == 4:
-                    gap = min(max(0.0, max(b[0] - near[1], near[0] - b[1]),
-                                  max(b[2] - near[3], near[2] - b[3])) for b in boxes)
-                    diag.append(f"{via}: نزدیک‌ترین تکه {gap:.4f}° فاصله دارد؛ "
-                                f"نمونه {boxes[0]} در برابر seed {near}")
+                diag.append(f"{via}: {len(ways)} تکه، هیچ‌کدام به تکهٔ Nominatim نچسبید")
             continue
-        merged = [min(b[0] for b in chosen), max(b[1] for b in chosen),
-                  min(b[2] for b in chosen), max(b[3] for b in chosen)]
+        merged = [min(b["box"][0] for b in chosen), max(b["box"][1] for b in chosen),
+                  min(b["box"][2] for b in chosen), max(b["box"][3] for b in chosen)]
         # جعبهٔ هر تکه را هم می‌دهیم: پایپ‌لاین با آن‌ها فقط مغازه‌های «روی خیابان» را
         # نگه می‌دارد (جعبهٔ کل خیابان یک مستطیل بزرگ است، خودِ خیابان یک نوار باریک).
-        boxes_out = [[round(float(x), 5) for x in b] for b in chosen][:400]
+        boxes_out = [[round(float(x), 5) for x in b["box"]] for b in chosen][:400]
         found = {"bbox": [round(x, 6) for x in merged], "ways": len(chosen),
-                 "via": via, "boxes": boxes_out}
+                 "via": via, "boxes": boxes_out,
+                 "length_km": round(sum(b["length_km"] for b in chosen), 2)}
         break
     if found and ttl > 0:
         with _OVERPASS_CACHE_LOCK:
@@ -601,20 +669,7 @@ def overpass_street_bbox(names: list[str], *, bbox: list[float], timeout: float 
 
 def _bounds_from_elements(data: dict) -> list[list[float]]:
     """bounds المان‌های Overpass → جعبه‌های معتبر."""
-    elements = data.get("elements") if isinstance(data, dict) else None
-    boxes: list[list[float]] = []
-    for element in elements or []:
-        bounds = (element or {}).get("bounds") if isinstance(element, dict) else None
-        if not isinstance(bounds, dict):
-            continue
-        try:
-            lo_lat, hi_lat = float(bounds["minlat"]), float(bounds["maxlat"])
-            lo_lon, hi_lon = float(bounds["minlon"]), float(bounds["maxlon"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        if hi_lat > lo_lat and hi_lon > lo_lon:
-            boxes.append([lo_lat, hi_lat, lo_lon, hi_lon])
-    return boxes
+    return [way["box"] for way in _ways_from_elements(data)]
 
 
 def split_bbox(bbox: list[float], rows: int = 2, cols: int = 2) -> list[list[float]]:
