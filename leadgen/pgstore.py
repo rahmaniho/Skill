@@ -472,6 +472,58 @@ def last_delivery(kind: str = "digest") -> dict | None:
 
 
 # ── دیدبان (watchlist) ────────────────────────────────────────────────────────
+# ── حافظهٔ خیابان‌ها (همان رفتار SQLite، جدول `street_cache`) ──────────────────
+def get_street_cache(city_key: str, street: str) -> dict | None:
+    """نوار ذخیره‌شدهٔ یک خیابان + سن آن یا None (جدول نبود → None، بی‌خطا)."""
+    storage = _storage()
+    key = storage.street_cache_key(city_key, street)
+    if key.endswith("|"):
+        return None
+    try:
+        rows, _ = _client().rows("street_cache", select="*", limit=1, key=f"eq.{key}")
+    except CloudError:
+        return None
+    if not rows:
+        return None
+    data = dict(rows[0])
+    data["bbox"] = _storage()._json_or(data.get("bbox"), [])
+    data["boxes"] = _storage()._json_or(data.get("boxes"), [])
+    try:
+        updated = float(data.get("updated_at") or 0)
+    except (TypeError, ValueError):
+        updated = 0.0
+    data["age_days"] = round(max(0.0, (time.time() - updated) / 86400.0), 1)
+    return data
+
+
+def put_street_cache(city_key: str, street: str, *, bbox: list, boxes: list,
+                     ways: int = 0, length_km: float = 0.0,
+                     source: str = "overpass") -> bool:
+    storage = _storage()
+    key = storage.street_cache_key(city_key, street)
+    if key.endswith("|") or not bbox or len(bbox) != 4 or not boxes:
+        return False
+    payload = {
+        "key": key, "city_key": (city_key or "").strip().lower(), "street": street,
+        "bbox": [float(x) for x in bbox], "boxes": [[float(y) for y in b] for b in boxes],
+        "ways": int(ways or 0), "length_km": float(length_km or 0.0),
+        "source": source or "overpass", "updated_at": time.time(),
+    }
+    try:
+        _client().insert("street_cache", [payload], upsert=True)
+    except CloudError:
+        return False
+    return True
+
+
+def prune_street_cache(days: int = 120) -> int:
+    cutoff = time.time() - max(1, int(days)) * 86400
+    try:
+        return int(_client().delete("street_cache", updated_at=f"lt.{cutoff}") or 0)
+    except CloudError:
+        return 0
+
+
 def _watch_row(item: dict) -> dict:
     """ردیف دیدبان را به شکل جدول ابری درمی‌آورد (فقط ستون‌های موجود)."""
     allowed = ("id", "created_at", "province", "city", "city_key", "niche_query",

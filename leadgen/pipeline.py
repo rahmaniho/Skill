@@ -294,7 +294,7 @@ def _boxes_overlap(first, second, pad: float = 0.004) -> bool:
 
 
 def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: bool,
-                     warnings: list | None = None) -> list[float]:
+                     warnings: list | None = None, use_cache: bool = False) -> list[float]:
     """جعبهٔ واقعیِ خیابان/محله را از OSM می‌گیرد و روی درخواست می‌گذارد.
 
     چرا لازم است؟ `regions` برای خیابان/محله فقط یک نقطهٔ تقریبی می‌دهد و
@@ -349,16 +349,59 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
     # اگر Overpass در دسترس باشد، همهٔ wayهای هم‌نام را می‌گیریم و اگر بزرگ‌تر بود
     # همان را ترجیح می‌دهیم — «کل خیابان»، نه یک تکه از آن.
     street_partial = False
+    street_name = _strip_street_prefix(request.street or request.district or "")
+    cache_city = (request.city_key or city.get("key") or "").strip()
+    # حافظه فقط با درخواست صریحِ مسیر واقعی روشن می‌شود (`run_scrape`)، نه در
+    # فراخوانی‌های مستقیم/آزمون‌ها؛ وگرنه یک اجرا نوار اجرای دیگری را می‌دید.
+    cache_ok = (bool(use_cache) and float(getattr(config, "STREET_CACHE_DAYS", 14) or 0) > 0)
+    cached: dict = {}
+    if street_name and cache_ok:
+        try:                              # حافظهٔ خیابان‌ها (Overpass قبلی همین خیابان)
+            cached = storage.get_street_cache(cache_city, street_name) or {}
+        except Exception:                 # noqa: BLE001 — کش نباید اجرا را بشکند
+            cached = {}
+    cache_used = ""
     if found and city_box and len(city_box) == 4:
-        try:
-            wide = osm_provider.overpass_street_bbox(
-                [_strip_street_prefix(request.street or request.district or ""),
-                 request.street or request.district or ""],
-                bbox=list(city_box),
-                timeout=min(20.0, float(getattr(request, "max_time", 60) or 60)),
-                budget_s=20.0, near=list(found.get("bbox") or []))
-        except Exception:  # noqa: BLE001 — Overpass پایین باشد، همان Nominatim کافی است
-            wide = {}
+        seed_box = list(found.get("bbox") or [])
+        fresh_limit = float(getattr(config, "STREET_CACHE_DAYS", 14) or 0)
+        cache_hit = bool(cache_ok and cached and cached.get("bbox") and cached.get("boxes")
+                         and _boxes_overlap(seed_box, cached.get("bbox"))
+                         and float(cached.get("age_days") or 9999) <= fresh_limit)
+        if cache_hit:
+            # نوار کامل و تازه داریم: نه به Overpass فشار می‌آوریم، نه ریسک تکه‌شدن.
+            wide = {"bbox": list(cached.get("bbox") or []),
+                    "boxes": list(cached.get("boxes") or []),
+                    "ways": int(cached.get("ways") or len(cached.get("boxes") or [])),
+                    "length_km": float(cached.get("length_km") or 0.0), "via": "cache"}
+            cache_used = "fresh"
+        else:
+            try:
+                wide = osm_provider.overpass_street_bbox(
+                    [street_name, request.street or request.district or ""],
+                    bbox=list(city_box),
+                    timeout=min(20.0, float(getattr(request, "max_time", 60) or 60)),
+                    budget_s=20.0, near=seed_box)
+            except Exception:  # noqa: BLE001 — Overpass پایین باشد، همان Nominatim کافی است
+                wide = {}
+            if cache_ok and wide.get("bbox") and wide.get("boxes"):
+                try:                          # برای اجرای بعدیِ همین خیابان
+                    storage.put_street_cache(
+                        cache_city, street_name, bbox=list(wide.get("bbox") or []),
+                        boxes=list(wide.get("boxes") or []),
+                        ways=int(wide.get("ways") or 0),
+                        length_km=float(wide.get("length_km") or 0.0),
+                        source=str(wide.get("via") or "overpass"))
+                except Exception:             # noqa: BLE001 — ذخیرهٔ کش اختیاری است
+                    pass
+            if not (wide.get("bbox") and wide.get("boxes")) and cached.get("bbox") \
+                    and cached.get("boxes") and _boxes_overlap(seed_box, cached.get("bbox")):
+                # Overpass الان جواب نداد؛ نوار قدیمی همان خیابان از تکهٔ Nominatim
+                # بهتر است — با ذکر سن، تا کاربر بداند داده از حافظه آمده است.
+                wide = {"bbox": list(cached.get("bbox") or []),
+                        "boxes": list(cached.get("boxes") or []),
+                        "ways": int(cached.get("ways") or len(cached.get("boxes") or [])),
+                        "length_km": float(cached.get("length_km") or 0.0), "via": "cache"}
+                cache_used = f"stale:{float(cached.get('age_days') or 0):.0f}"
         street_partial = not wide
         wide_box = list(wide.get("bbox") or [])
         if len(wide_box) == 4 and not too_big(wide_box):
@@ -437,6 +480,9 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
         if street_partial:
             extra += (" — جست‌وجوی کامل خیابان در Overpass نتیجه نداد؛ "
                       "اگر خیابان بلند است، ممکن است بخشی از آن جا بماند")
+        if cache_used.startswith("stale"):
+            extra += (f" — نوار خیابان از حافظه ({cache_used.split(':', 1)[1]} روز پیش) "
+                      f"خوانده شد؛ Overpass الان جواب نداد")
         warnings.append(
             f"محدودهٔ دقیق «{label}» از OSM گرفته شد "
             f"(در حدود {span_km:.1f} کیلومتر){extra} — کل این محدوده اسکراب می‌شود.")
@@ -749,7 +795,7 @@ def resolve_street_areas(request: "ScrapeRequest", city: dict, *, allow_network:
         probe.area_label = f"{name}، {city_fa}".strip(" ،") if city_fa else name
         try:
             refined = refine_area_bbox(probe, city, allow_network=allow_network,
-                                       warnings=[])
+                                       warnings=[], use_cache=True)
         except Exception:  # noqa: BLE001 — یک خیابان نباید بقیه را متوقف کند
             refined = []
         return name, probe, list(refined or probe.bbox or [])
@@ -883,7 +929,8 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
                                      warnings=warnings) if len(request.streets or []) >= 2 else []
         # ── محدودهٔ واقعی خیابان/محله از خودِ OSM (کل خیابان، نه یک نقطه) ─────
         if not multi and (request.area_level in ("street", "district") or request.area_unresolved):
-            refine_area_bbox(request, city, allow_network=engine.live, warnings=warnings)
+            refine_area_bbox(request, city, allow_network=engine.live, warnings=warnings,
+                             use_cache=True)
         if request.area_unresolved:
             # خیابان/منطقهٔ ناشناخته: به‌جای چسبیدن به نزدیک‌ترین نام، صریح می‌گوییم
             # که پیدا نشد — وگرنه کاربر فکر می‌کند «خیابان X» را اسکراب کرده، در حالی
