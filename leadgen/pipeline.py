@@ -307,6 +307,25 @@ def _name_from_label(label: str, city_fa: str = "", street: str = "") -> str:
     return head
 
 
+def _span_km(boxes: list) -> float:
+    """بزرگ‌ترین بُعد مجموعه‌ای از جعبه‌ها بر حسب کیلومتر (برای سنجش کوتاهی نوار)."""
+    clean: list[list[float]] = []
+    for item in boxes or []:
+        try:
+            box = [float(x) for x in item]
+        except (TypeError, ValueError):
+            continue
+        if len(box) == 4:
+            clean.append(box)
+    if not clean:
+        return 0.0
+    height = (max(b[1] for b in clean) - min(b[0] for b in clean)) * 111.0
+    width = ((max(b[3] for b in clean) - min(b[2] for b in clean)) * 111.0
+             * max(0.2, abs(math.cos(math.radians(
+                 (max(b[1] for b in clean) + min(b[0] for b in clean)) / 2)))))
+    return max(height, width)
+
+
 def _boxes_overlap(first, second, pad: float = 0.004) -> bool:
     """آیا دو جعبه (با ~۴۵۰ متر حاشیه) هم‌پوشانی دارند؟"""
     try:
@@ -396,7 +415,15 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
             cache_age = float(cached["age_days"]) if cached.get("age_days") is not None else 9999.0
         except (TypeError, ValueError):
             cache_age = 9999.0
+        # حافظهٔ «خیلی کوتاه» برای خیابانی که ریشهٔ خانوادگی دارد مشکوک است
+        # (قبل از نسخهٔ خواهر-خیابان‌ها ذخیره شده)؛ یک‌بار دوباره از Overpass
+        # می‌پرسیم تا نوار قدیمیِ ناقص برای همیشه نچسبد.
+        cache_boxes = list(cached.get("boxes") or [])
+        short_cache = bool(cache_boxes and _span_km(cache_boxes) < 2.0
+                           and getattr(osm_provider, "_family_root", None)
+                           and osm_provider._family_root(street_name))
         cache_hit = bool(cache_ok and cached and cached.get("bbox") and cached.get("boxes")
+                         and not short_cache
                          and _boxes_overlap(seed_box, cached.get("bbox"))
                          and cache_age <= fresh_limit)
         if cache_hit:
