@@ -690,56 +690,65 @@ class FullScanTileTests(unittest.TestCase):
 
 
 class OverpassStreetBBoxTests(unittest.TestCase):
-    """همهٔ wayهای هم‌نام یک خیابان → یک جعبهٔ واحد (نه یک تکه)."""
+    """همهٔ تکه‌های به‌هم‌پیوستهٔ یک خیابان → یک جعبهٔ واحد (نه یک تکه)."""
 
     def setUp(self):
         from leadgen.providers import osm
         osm._STREET_CACHE.clear()
 
-    def test_merges_bounds_of_every_matching_way(self):
+    @staticmethod
+    def _way(wid, nodes, start, end):
+        """یک way سادهٔ دو نقطه‌ای (مثل خروجی out geom)."""
+        return {"type": "way", "id": wid, "nodes": list(nodes),
+                "geometry": [{"lat": start[0], "lon": start[1]},
+                             {"lat": end[0], "lon": end[1]}]}
+
+    def test_merges_connected_segments_of_the_same_street(self):
         from leadgen.providers import osm
         data = {"elements": [
-            {"bounds": {"minlat": 35.700, "maxlat": 35.710, "minlon": 51.410, "maxlon": 51.416}},
-            {"bounds": {"minlat": 35.750, "maxlat": 35.770, "minlon": 51.400, "maxlon": 51.405}},
-            {"note": "بدون bounds"},
+            self._way(1, [10, 11, 12], (35.700, 51.410), (35.710, 51.412)),
+            self._way(2, [12, 13, 14], (35.710, 51.412), (35.750, 51.420)),
+            self._way(3, [99, 98], (35.800, 51.300), (35.801, 51.301)),
         ]}
         with mock.patch.object(osm, "_overpass_request", return_value=data) as call:
             found = osm.overpass_street_bbox(["خیابان ولیعصر", "ولیعصر"],
-                                             bbox=[35.6, 35.8, 51.2, 51.6])
-        self.assertEqual(found["bbox"], [35.7, 35.77, 51.4, 51.416])
-        self.assertEqual(found["ways"], 2)
+                                             bbox=[35.6, 35.9, 51.2, 51.6],
+                                             near=[35.7005, 35.7095, 51.4101, 51.4119])
+        self.assertEqual(found["bbox"], [35.7, 35.75, 51.41, 51.42])
+        self.assertEqual(found["ways"], 2, "تکهٔ جداافتاده نباید جمع شود")
         self.assertEqual(found["via"], "exact")
+        self.assertGreater(found["length_km"], 3.0)
+        self.assertEqual(len(found["boxes"]), 2, "جعبهٔ هر تکه برای فیلتر «روی خیابان»")
         query = call.call_args[0][0]
-        # نام دقیق اول (سریع، از ایندکس) و خروجی فقط bounds
-        self.assertIn('way["name"="ولیعصر"](35.6,51.2,35.8,51.6)', query)
-        self.assertIn("out bb;", query)
+        self.assertIn('way["name"="ولیعصر"](35.6,51.2,35.9,51.6)', query)
+        self.assertIn("out geom;", query, "مختصات گره‌ها برای تشخیص اتصال لازم است")
 
-    def test_falls_back_to_anchored_regex_when_exact_name_misses(self):
+    def test_neighbouring_same_name_street_is_not_joined_by_proximity(self):
+        """دو «ولیعصر» موازی با فاصلهٔ ~۲۰۰ متر ولی بدون گرهٔ مشترک نباید یکی شوند."""
+        from leadgen.providers import osm
+        data = {"elements": [
+            self._way(1, [1, 2], (35.7000, 51.4100), (35.7100, 51.4100)),
+            self._way(2, [3, 4], (35.7000, 51.4122), (35.7100, 51.4122)),
+        ]}
+        with mock.patch.object(osm, "_overpass_request", return_value=data):
+            found = osm.overpass_street_bbox(["ولیعصر"], bbox=[35.6, 35.9, 51.2, 51.6],
+                                             near=[35.7005, 35.7095, 51.4099, 51.4101])
+        self.assertEqual(found["ways"], 1)
+        self.assertAlmostEqual(found["bbox"][3], 51.4100, places=5)
+
+    def test_falls_back_to_spacing_tolerant_regex_when_exact_name_misses(self):
         from leadgen.providers import osm
         boxes = {"elements": [
-            {"bounds": {"minlat": 35.700, "maxlat": 35.710, "minlon": 51.410, "maxlon": 51.416}}]}
-        with mock.patch.object(osm, "_overpass_request", side_effect=[{"elements": []}, boxes]) as call:
-            found = osm.overpass_street_bbox(["ولیعصر"], bbox=[35.6, 35.8, 51.2, 51.6])
+            self._way(1, [1, 2], (35.700, 51.410), (35.710, 51.412))]}
+        with mock.patch.object(osm, "_overpass_request",
+                               side_effect=[{"elements": []}, boxes]) as call:
+            found = osm.overpass_street_bbox(["ولیعصر"], bbox=[35.6, 35.9, 51.2, 51.6])
         self.assertEqual(found["via"], "regex")
         regex_query = call.call_args_list[1][0][0]
         self.assertIn('way["name"~"^[[:space:]', regex_query)
         # «ولیعصر» و «ولی عصر» باید یک خیابان حساب شوند (OSM فاصله می‌گذارد)
         self.assertIn("و[[:space:]]*ل[[:space:]]*ی", regex_query)
         self.assertNotIn("(?:", regex_query, "Overpass فقط POSIX ERE را می‌پذیرد")
-
-    def test_only_contiguous_segments_join_the_cluster(self):
-        """کوچهٔ هم‌نام در محلهٔ دور نباید جعبه را تا انتهای شهر بکشد."""
-        from leadgen.providers import osm
-        data = {"elements": [
-            {"bounds": {"minlat": 35.705, "maxlat": 35.710, "minlon": 51.410, "maxlon": 51.416}},
-            {"bounds": {"minlat": 35.710, "maxlat": 35.720, "minlon": 51.410, "maxlon": 51.416}},
-            {"bounds": {"minlat": 35.780, "maxlat": 35.781, "minlon": 51.300, "maxlon": 51.301}},
-        ]}
-        with mock.patch.object(osm, "_overpass_request", return_value=data):
-            found = osm.overpass_street_bbox(["ولیعصر"], bbox=[35.6, 35.9, 51.2, 51.6],
-                                             near=[35.7055, 35.7095, 51.411, 51.415])
-        self.assertEqual(found["ways"], 2, "تکهٔ دورافتاده نباید جمع شود")
-        self.assertAlmostEqual(found["bbox"][1], 35.720, places=6)
 
     def test_empty_bbox_when_no_way_matches(self):
         from leadgen.providers import osm
@@ -753,8 +762,7 @@ class OverpassStreetBBoxTests(unittest.TestCase):
 
     def test_result_is_cached_between_calls(self):
         from leadgen.providers import osm
-        data = {"elements": [
-            {"bounds": {"minlat": 35.700, "maxlat": 35.710, "minlon": 51.410, "maxlon": 51.416}}]}
+        data = {"elements": [self._way(1, [1, 2], (35.700, 51.410), (35.710, 51.412))]}
         with mock.patch.object(osm, "_overpass_request", return_value=data) as call, \
                 mock.patch.object(osm.config, "OVERPASS_CACHE_TTL", 600):
             first = osm.overpass_street_bbox(["ولیعصر"], bbox=[35.6, 35.8, 51.2, 51.6])
