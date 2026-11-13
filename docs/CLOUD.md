@@ -30,6 +30,13 @@
 > | ورکر بیرونی | `leadgen.worker` در Codespace/Actions/VPS | داکر برای دادهٔ غنی‌تر |
 >
 > اگر ورکر بیرونی روشن باشد، tick خودش کنار می‌رود (`worker_online: true`).
+>
+> **ورکر آماده در GitHub Actions:** workflow `Worker` (`.github/workflows/worker.yml`)
+> هر ۲۰ دقیقه و با اجرای دستی، `leadgen.worker --once` را با کدِ همان مخزن اجرا
+> می‌کند. فقط `SUPABASE_URL` و `SUPABASE_SERVICE_KEY` (یا `SUPABASE_KEY`) را در
+> Secrets بگذارید؛ بدون آن‌ها با پیام روشن رد می‌شود. اگر Vercel سهمیهٔ ساخت
+> روزانه‌اش تمام شود یا اجرا از چند ده ثانیهٔ تابع serverless بیشتر طول بکشد،
+> همین ورکر صف را تمام می‌کند.
 
 ---
 
