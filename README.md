@@ -366,7 +366,11 @@ curl -X POST "$APP/api/watchlist" -H 'Content-Type: application/json' \
 curl "$APP/api/watchlist"                       # فهرست + days_left + next_due_at
 curl -X POST "$APP/api/watchlist/tick"          # اجرای رسیده‌ها (کرون همین را صدا می‌زند)
 curl "$APP/api/runs/<id>/leads?fresh=1"         # فقط تازه‌های یک اجرا
+curl "$APP/api/watchlist/<id>/new?format=html"  # همان ایمیل «فقط تازه‌ها» در مرورگر
 ```
+اگر `GMAIL_REFRESH_TOKEN`/`GMAIL_APP_PASSWORD` تنظیم نشده باشد، ایمیل ارسال نمی‌شود
+ولی از دست نمی‌رود: در برنامه ساخته می‌شود، وضعیتش در `GET /api/watchlist` زیر
+`email.ready` می‌آید و با دکمهٔ «👁 پیش‌نمایش» (همان `?format=html`) باز و دانلود می‌شود.
 نصب: `supabase/watchlist.sql` + `supabase/cron_watchlist.sql` (برای تیک روزانه).
 
 ### شهرها و پوشش کامل شهر
@@ -417,7 +421,8 @@ curl "$APP/api/runs/<id>/leads?fresh=1"         # فقط تازه‌های یک 
 | GET·POST | `/api/watchlist` | **دیدبان شهر**: ساخت (`city`/`province` + `niche_query` + `interval_days`)، فهرست با «نوبت بعدی» |
 | PATCH·DELETE | `/api/watchlist/{id}` | ویرایش / حذف دیدبان |
 | POST | `/api/watchlist/{id}/run` | اجرای فوری دیدبان (`202` + `run_id`) |
-| GET | `/api/watchlist/{id}/new` | فقط **تازه‌های** آخرین اجرای دیدبان |
+| GET | `/api/watchlist/{id}/new` | فقط **تازه‌های** آخرین اجرای دیدبان · `?format=html\|text` = همان ایمیل هفتگی برای خواندن/دانلود در مرورگر (بدون Gmail هم کار می‌کند) |
+| POST | `/api/watchlist/{id}/deliver` | ساخت/ارسال ایمیل «فقط تازه‌های آخرین اجرا» (بدون تنظیم Gmail: `.eml` ساخته می‌شود) |
 | GET·POST | `/api/watchlist/tick` | دیدبان‌های رسیده را اجرا می‌کند (همان چیزی که کرون صدا می‌زند) |
 | POST | `/api/runs/{id}/enrich` | **غنی‌سازی مجدد** لیدهای ذخیره‌شده (ایمیل/شبکه اجتماعی از سایت خودشان، بدون اسکراپ؛ بدنه: `{budget:25, limit:0, socials:true, emails:true}`) |
 | GET | `/api/leads/{id}` | جزئیات لید + breakdown امتیاز + همه متن‌های کمپین |

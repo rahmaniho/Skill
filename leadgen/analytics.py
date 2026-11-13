@@ -166,7 +166,7 @@ def insights(rows: list[dict], niche=None, city: str = "") -> list[dict]:
         out.append({
             "kind": "opportunity",
             "fa": f"{no_site} کسب‌وکار ({_pct(no_site, total)}٪) اصلاً وب‌سایت ندارند — "
-                  f"بزرگ‌ترین فرصت برای پیشنهاد «{rows[0].get('pitch', 'سایت')}».",
+                  f"بزرگ‌ترین فرصت برای پیشنهاد «{rows[0].get('pitch') or 'سایت حرفه‌ای'}».",
         })
     no_email = total - cov["email"]
     if no_email:

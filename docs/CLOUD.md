@@ -304,7 +304,14 @@ curl -s https://<app>.vercel.app/api/watchlist | python3 -m json.tool   # فهر
 curl -s "https://<app>.vercel.app/api/watchlist/tick?limit=5"           # اجرای رسیده‌ها
 curl -s -X POST https://<app>.vercel.app/api/watchlist/<id>/run         # همین حالا
 curl -s "https://<app>.vercel.app/api/watchlist/<id>/new?limit=50"      # فقط تازه‌های آخرین اجرا
+curl -s -X POST "https://<app>.vercel.app/api/watchlist/<id>/deliver"   # ساخت/ارسال ایمیل تازه‌ها
+curl -s "https://<app>.vercel.app/api/watchlist/<id>/new?format=html"   # همان ایمیل، در مرورگر
 ```
+
+> **بدون Gmail هم گزارش از دست نمی‌رود.** اگر `GMAIL_REFRESH_TOKEN` (یا برای SMTP،
+> `GMAIL_APP_PASSWORD`) تنظیم نشده باشد، ارسال به‌جای خطا یک فایل `.eml` می‌سازد و
+> همان ایمیل با `?format=html` در مرورگر باز/دانلود می‌شود؛ `GET /api/watchlist` هم
+> زیر `email` می‌گوید مسیر ایمیل «آماده» است یا نه (`ready`, `hint`, `transport`).
 
 نصب روی Supabase (یک‌بار):
 

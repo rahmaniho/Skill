@@ -661,10 +661,22 @@ class Handler(BaseHTTPRequestHandler):
             item = storage.get_watch(match.group(1))
             if not item:
                 raise ApiError("دیدبان پیدا نشد.", 404)
-            rows = watchlist.only_new_leads(item.get("last_run_id") or "",
-                                            limit=_int(query.get("limit"), 100) or 100)
+            limit = _int(query.get("limit"), 100) or 100
+            rows = watchlist.only_new_leads(item.get("last_run_id") or "", limit=limit)
+            # format=html|text → همان ایمیل «فقط تازه‌ها» که ارسال می‌شد، برای
+            # خواندن/پرینت/دانلود در مرورگر. وقتی مسیر ایمیل تنظیم نشده باشد،
+            # این تنها راهِ دیدنِ گزارش هفتگی است (بدون وابستگی به Gmail).
+            fmt = str(query.get("format") or "").strip().lower()
+            if fmt in ("html", "text"):
+                mail = watchlist.preview(match.group(1), limit=limit)
+                if fmt == "html":
+                    page = mail["html"] or self._empty_mail_page(mail)
+                    return self._send(200, page.encode("utf-8"), "text/html; charset=utf-8")
+                body = mail["text"] or mail.get("reason") or ""
+                return self._send(200, body.encode("utf-8"), "text/plain; charset=utf-8")
             return self._json({"watch": item, "leads": rows, "count": len(rows),
-                               "run_id": item.get("last_run_id") or ""})
+                               "run_id": item.get("last_run_id") or "",
+                               "email": watchlist.email_status()})
 
         if path == "/api/worker":
             stats = storage.queue_stats()
@@ -765,6 +777,21 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "watch": item,
                                "label": watchlist.label_for(item),
                                "items": watchlist.overview().get("items") or []}, 201)
+
+        match = re.fullmatch(r"/api/watchlist/([\w\-]+)/deliver", path)
+        if match:
+            body = self._read_json() if method == "POST" else {}
+            item = storage.get_watch(match.group(1))
+            if not item:
+                raise ApiError("دیدبان پیدا نشد.", 404)
+            dry = body.get("dry_run")
+            try:
+                result = watchlist.deliver_last(
+                    match.group(1), limit=_int(body.get("limit"), 200) or 200,
+                    dry_run=bool(dry) if dry is not None else None)
+            except ValueError as exc:
+                raise ApiError(str(exc), 400) from exc
+            return self._json(result, 200)
 
         match = re.fullmatch(r"/api/watchlist/([\w\-]+)/run", path)
         if match and method == "POST":
@@ -1328,6 +1355,21 @@ class Handler(BaseHTTPRequestHandler):
                                "⚖ داده‌های اسکراپ‌شده شخصی‌اند: مبنای قانونی، هویت فرستنده و امکان "
                                "«لغو دریافت» را در هر پیام نگه دارید (GDPR / CCPA / CAN-SPAM). "
                                "از ارسال انبوه بدون شخصی‌سازی خودداری کنید.")})
+
+    @staticmethod
+    def _empty_mail_page(mail: dict) -> str:
+        """صفحهٔ سادهٔ فارسی وقتی هنوز ایمیل «تازه‌ها» چیزی ندارد."""
+        reason = mail.get("reason") or "برای این دیدبان هنوز ایمیلی ساخته نشده است."
+        watch = mail.get("watch") or {}
+        label = watch.get("niche_query") or "همهٔ کسب‌وکارها"
+        area = watch.get("city") or watch.get("province") or "منطقه"
+        return ("<!doctype html><html lang='fa' dir='rtl'><meta charset='utf-8'>"
+                "<title>دیدبان — بدون تازه</title>"
+                "<body style='font-family:Tahoma,system-ui;background:#0b0f14;color:#e6edf3;"
+                "padding:40px;line-height:2'>"
+                f"<h2>👁 {label} · {area}</h2><p>{reason}</p>"
+                "<p style='color:#8b98a5'>وقتی اجرای بعدی دیدبان لید تازه پیدا کند، "
+                "همین نشانی ایمیل کامل را نشان می‌دهد.</p></body></html>")
 
     def _watchlist_tick(self, query: dict) -> None:
         """دیدبان‌های رسیده را اجرا می‌کند (کرون روزانهٔ Supabase همین را صدا می‌زند).
