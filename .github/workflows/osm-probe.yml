@@ -30,6 +30,10 @@ on:
         description: "سنجش پوشش جغرافیایی آینه‌ها (1 = بله)"
         required: false
         default: ""
+      raw:
+        description: "کوئری‌های Overpass برای عیب‌یابی (با ||| جدا شوند)"
+        required: false
+        default: ""
       parts:
         description: "محله‌ها برای تکه‌کردن خیابان (مثل ونک,تجریش,پارکوی)"
         required: false
@@ -66,10 +70,13 @@ jobs:
           NOMINATIM: ${{ github.event.inputs.nominatim }}
           COVERAGE: ${{ github.event.inputs.coverage }}
           PARTS: ${{ github.event.inputs.parts }}
+          RAW: ${{ github.event.inputs.raw }}
         run: |
           set -o pipefail
           set +e
-          if [ -n "$PARTS" ]; then
+          if [ -n "$RAW" ]; then
+            python3 scripts/osm_probe.py --raw "$RAW" 2>&1 | tee probe.log
+          elif [ -n "$PARTS" ]; then
             python3 scripts/osm_probe.py --city "${CITY:-تهران}" --street "${STREET:-ولیعصر}" --parts "$PARTS" --json 2>&1 | tee probe.log
           elif [ "$COVERAGE" = "1" ]; then
             python3 scripts/osm_probe.py --coverage --json 2>&1 | tee probe.log
