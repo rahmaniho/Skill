@@ -125,7 +125,7 @@ def probe_street(city: str, street: str) -> dict:
     diag: list[str] = []
     try:
         wide = osm.overpass_street_bbox(
-            [street, osm._strip_street_prefix(street)], bbox=bbox,
+            [osm._strip_street_prefix(street), street], bbox=bbox,
             timeout=25.0, budget_s=30.0, near=seed or None, diag=diag)
     except Exception as exc:                             # noqa: BLE001
         wide = {}
@@ -140,6 +140,22 @@ def probe_street(city: str, street: str) -> dict:
               f"{[round(x, 4) for x in wide['bbox']]} ≈ {span:.1f} کیلومتر در {elapsed}s")
     else:
         print(f"  ✗ Overpass تکه‌ای برنگرداند ({elapsed}s)")
+        # عیب‌یابی: OSM این خیابان را با چه نامی ذخیره کرده؟
+        base = osm._strip_street_prefix(street)
+        s_, n_, w_, e_ = bbox
+        probe_q = (f'[out:json][timeout:20];way["name"~"{base}"]'
+                   f'({s_},{w_},{n_},{e_});out tags 8;')
+        try:
+            data = osm.overpass_raw(probe_q, timeout=25, budget_s=30)
+            names = []
+            for element in (data.get("elements") or [])[:8]:
+                name = str((element.get("tags") or {}).get("name") or "")
+                if name and name not in names:
+                    names.append(name)
+            print(f"  · نام‌های موجود شامل «{base}»: {names} "
+                  f"({len(data.get('elements') or [])} المان)")
+        except Exception as exc:                         # noqa: BLE001
+            print(f"  · عیب‌یابی نام: {type(exc).__name__}: {exc}")
     return {"ok": bool(wide), "city": area["label"], "street": street,
             "seed_bbox": seed, "street_bbox": wide.get("bbox"),
             "ways": wide.get("ways", 0), "via": wide.get("via"), "seconds": elapsed}

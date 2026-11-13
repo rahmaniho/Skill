@@ -204,6 +204,7 @@ def probe_overpass_endpoints(candidates: list[str] | None = None, *,
                 data = json.loads(resp.read().decode("utf-8", "replace"))
             elements = data.get("elements") if isinstance(data, dict) else None
             results.append({"url": url, "host": host, "ok": isinstance(elements, list),
+                            "n": len(elements or []),
                             "ms": int((time.monotonic() - started) * 1000), "error": ""})
         except urllib.error.HTTPError as exc:
             results.append({"url": url, "host": host, "ok": False,
@@ -214,6 +215,14 @@ def probe_overpass_endpoints(candidates: list[str] | None = None, *,
                             "ms": int((time.monotonic() - started) * 1000),
                             "error": f"{type(exc).__name__}: {str(exc)[:80]}"})
     return results
+
+
+def overpass_raw(query: str, *, timeout: float = 20.0,
+                 budget_s: float | None = None) -> dict:
+    """اجرای خام یک کوئری Overpass (برای عیب‌یابی/سنجش؛ به کش و شکستن مدار دست نمی‌زند)."""
+    return _overpass_request(query, timeout=timeout, retries=0,
+                             deadline_s=budget_s, trip_breaker=False,
+                             per_endpoint_s=12.0)
 
 
 def _overpass_request(query: str, *, timeout: float, retries: int = 1,
