@@ -212,6 +212,41 @@ class SmartBrainTestCase(unittest.TestCase):
         self.assertTrue(request.get("niche_query") or request["all_niches"] or request["keywords"])
 
 
+    # ── چند خیابان هم‌زمان ─────────────────────────────────────────────────
+    def test_parse_two_streets_from_one_sentence(self):
+        out = smart.parse("کافه در خیابان ولیعصر و خیابان انقلاب، تهران")
+        request = out["request"]
+        self.assertEqual(["خیابان ولیعصر", "خیابان انقلاب"], request["streets"])
+        self.assertEqual("street", request["area_level"])
+        self.assertEqual("", request["street"], "در حالت چندخیابانی، تک‌خیابان نباید ست شود")
+        self.assertIn("تهران", request["area_label"])
+        self.assertEqual(["خیابان ولیعصر", "خیابان انقلاب"],
+                         out["detected"]["area"]["street_names"])
+        self.assertTrue(any("۲ خیابان" in w or "2 خیابان" in w for w in out["warnings"]))
+
+    def test_parse_bare_street_names_of_the_same_city(self):
+        # «ولیعصر» در فهرست تبریز هم هست؛ شهر جمله (تهران) باید برنده شود
+        out = smart.parse("کافه در ولیعصر و انقلاب تهران")
+        self.assertEqual(["خیابان ولیعصر", "خیابان انقلاب"], out["request"]["streets"])
+        self.assertEqual("tehran", out["detected"]["city_key"])
+
+    def test_parse_accepts_explicit_streets_list(self):
+        out = smart.parse("کافه", city="تهران", streets="ولیعصر، انقلاب")
+        self.assertEqual(["ولیعصر", "انقلاب"], out["request"]["streets"])
+        self.assertEqual("street", out["request"]["area_level"])
+
+    def test_single_street_or_none_stays_single(self):
+        out = smart.parse("کافه در خیابان ولیعصر، تهران")
+        self.assertEqual([], out["request"]["streets"])
+        self.assertEqual("خیابان ولیعصر", out["request"]["street"])
+
+    def test_city_name_is_not_cut_out_of_a_street_name(self):
+        # «کاشانی» نباید شهر «کاشان» فهمیده شود؛ شهر واقعی جمله «یزد» است
+        out = smart.parse("کافه در خیابان کاشانی، یزد")
+        self.assertEqual("yazd", out["detected"]["city_key"])
+        self.assertEqual([], out["request"]["streets"])
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # ۲) سرویس HTTP: مسیرهای جدید و فایل‌های ایستا
 # ══════════════════════════════════════════════════════════════════════════
@@ -329,6 +364,20 @@ class SmartApiTestCase(unittest.TestCase):
         self.assertTrue(data["ready"])
         self.assertTrue(data["request"]["all_niches"])
         self.assertTrue(data["keywords"])
+
+    def test_08b_api_parse_multiple_streets(self):
+        status, data = self.post("/api/smart/parse", {
+            "text": "کافه در ولیعصر و انقلاب تهران", "engine_mode": "demo"})
+        self.assertEqual(status, 200)
+        self.assertEqual(["خیابان ولیعصر", "خیابان انقلاب"], data["request"]["streets"])
+        self.assertEqual("street", data["request"]["area_level"])
+        self.assertIn("خیابان", data["request"]["area_label"])
+
+    def test_08c_api_parse_explicit_streets(self):
+        status, data = self.post("/api/smart/parse", {
+            "text": "کافه", "city": "تهران", "streets": "ولیعصر + انقلاب", "engine_mode": "demo"})
+        self.assertEqual(status, 200)
+        self.assertEqual(["ولیعصر", "انقلاب"], data["request"]["streets"])
 
     def test_09_api_parse_empty(self):
         status, data = self.post("/api/smart/parse", {"text": ""})

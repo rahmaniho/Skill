@@ -483,6 +483,18 @@
     el.innerHTML = "فهمیدم: " + bits.join(" · ");
     el.hidden = false;
     if (d.city) { S.area.label = d.city; $("areaLabel").textContent = d.city; }
+    var da = d.area || {};
+    if (da.city_key) S.area.city = da.city_key;
+    if (da.city_fa) S.area.city_fa = da.city_fa;
+    if (da.province) S.area.province = da.province;
+    if (da.street_names && da.street_names.length >= 2) {
+      S.area.streets = da.street_names.slice();
+      S.area.street = "";
+      S.area.label = da.label || S.area.label;
+    } else if (da.street) {
+      S.area.street = da.street;
+      S.area.streets = [];
+    }
     if (d.all_trades) { S.niche = { label: "همهٔ کسب‌وکارها", query: "" }; $("nicheLabel").textContent = "همهٔ کسب‌وکارها"; }
     else if (d.niche_fa) { S.niche = { label: d.niche_fa, query: d.niche_fa }; $("nicheLabel").textContent = d.niche_fa; }
   }
@@ -855,28 +867,62 @@
 
   /* ────────────────────────── شیت منطقه (آبشاری) ────────────────────────── */
   function openAreaSheet() {
-    var st = { province: S.area.province, city: S.area.city, district: S.area.district, street: S.area.street };
+    var st = { province: S.area.province, city: S.area.city, cityFa: S.area.city_fa || "",
+      district: S.area.district, street: S.area.street,
+      streets: (S.area.streets || (S.area.street ? [S.area.street] : [])).slice() };
     function crumb() {
       var parts = [];
       if (st.province) parts.push('<button data-act="area-lvl" data-lvl="province">استان</button>');
       if (st.city) parts.push("› <button data-act=\"area-lvl\" data-lvl=\"city\">شهر</button>");
       if (st.district) parts.push("› <button data-act=\"area-lvl\" data-lvl=\"district\">منطقه</button>");
-      if (st.street) parts.push("› <span>خیابان</span>");
+      var n = (st.streets || []).length;
+      if (n >= 2) parts.push("› <span>" + fa(n) + " خیابان</span>");
+      else if (n === 1) parts.push("› <span>خیابان</span>");
       return '<div class="breadcrumb">' + (parts.join(" ") || "از استان شروع کن") + "</div>";
+    }
+    function paintChips(scope) {
+      var box = (scope || document).querySelector("#streetChips");
+      if (!box) return;
+      var list = st.streets || [];
+      box.hidden = list.length === 0;
+      box.innerHTML = list.length
+        ? '<span class="muted">' + fa(list.length) + " خیابان انتخاب شد:</span>" +
+          list.map(function (name) {
+            return '<button class="chip" data-act="street-remove" data-fa="' + esc(name) + '">' +
+              esc(name) + " ✕</button>";
+          }).join("")
+        : "";
+    }
+    function toggleStreet(name) {
+      if (!name) return;
+      st.streets = st.streets || [];
+      var at = st.streets.indexOf(name);
+      if (at >= 0) st.streets.splice(at, 1); else st.streets.push(name);
+      st.street = st.streets.length === 1 ? st.streets[0] : "";
     }
     function paint(body) {
       var html = '<div class="cascade">' + crumb() +
         '<input class="input" id="areaSearch" type="search" placeholder="یا مستقیم بنویس: ونک، خیابان انقلاب، شیراز…">' +
+        '<div class="street-chips" id="streetChips" hidden></div>' +
         '<div class="stack-list" id="areaStack"></div>' +
         '<button class="btn btn-primary" data-act="area-done">همین‌جا خوبه ✔</button></div>';
       body.innerHTML = html;
       var stack = body.querySelector("#areaStack");
       function items(list, kind) {
         stack.innerHTML = list.map(function (x) {
-          return '<button class="stack-item" data-act="area-pick" data-kind="' + kind + '" data-id="' + esc(x.id != null ? x.id : x.fa) + '" data-fa="' + esc(x.fa) + '">' +
-            "<span>" + esc(x.fa) + "</span>" + (x.note ? "<small>" + esc(x.note) + "</small>"
+          var on = kind === "street" && (st.streets || []).indexOf(x.fa) >= 0;
+          var mark = kind === "street" ? '<i class="pick-mark">' + (on ? "✓" : "+") + "</i>" : "";
+          return '<button class="stack-item' + (on ? " is-on" : "") + '" data-act="area-pick" data-kind="' + kind + '" data-id="' + esc(x.id != null ? x.id : x.fa) + '" data-fa="' + esc(x.fa) + '">' +
+            mark + "<span>" + esc(x.fa) + "</span>" + (x.note ? "<small>" + esc(x.note) + "</small>"
               : x.districts != null ? "<small>" + fa(x.districts) + " منطقه</small>" : "") + "</button>";
         }).join("") || '<p class="muted">چیزی نیست.</p>';
+        if (kind === "street") {
+          var oldHint = stack.parentNode.querySelector("#streetHint");
+          if (oldHint) oldHint.remove();
+          stack.insertAdjacentHTML("beforebegin",
+            '<p class="muted street-hint" id="streetHint">چند خیابان را می‌توانی هم‌زمان بزنی؛ هر کدام محدودهٔ خودش را دارد.</p>');
+          paintChips(stack.parentNode);
+        }
       }
       function loadLevel() {
         if (!st.city) {
@@ -936,24 +982,31 @@
           if (kind === "any" && raw) {
             st.province = raw.province || st.province;
             st.city = raw.kind === "city" ? (raw.city || raw.id || st.city) : (raw.city || st.city);
-            if (raw.kind === "district") st.district = raw.name; if (raw.kind === "street") { st.district = raw.district || st.district; st.street = raw.name; }
-            if (raw.kind === "city") { st.district = ""; st.street = ""; }
+            if (raw.kind === "district") st.district = raw.name;
+            if (raw.kind === "street") { st.district = raw.district || st.district; toggleStreet(raw.name); }
+            if (raw.kind === "city") {
+              st.district = ""; st.streets = []; st.street = "";
+              st.city = raw.city || raw.id || st.city; st.cityFa = raw.fa || raw.label || st.cityFa;
+            }
           } else if (kind === "province") {
-            st.province = pick.dataset.id; st.city = ""; st.district = ""; st.street = "";
+            st.province = pick.dataset.id; st.city = ""; st.cityFa = ""; st.district = ""; st.street = ""; st.streets = [];
           } else if (kind === "city") {
             var ids = String(pick.dataset.id).split("|");
-            st.province = ids[0]; st.city = ids[1] || ids[0]; st.district = ""; st.street = "";
-          } else if (kind === "district") { st.district = pick.dataset.fa; st.street = ""; }
-          else if (kind === "street") { st.street = pick.dataset.fa; }
-          else if (kind === "city-fa") { st.city = pick.dataset.id; st.cityFa = pick.dataset.fa; st.district = ""; st.street = ""; }
+            st.province = ids[0]; st.city = ids[1] || ids[0]; st.cityFa = pick.dataset.fa;
+            st.district = ""; st.street = ""; st.streets = [];
+          } else if (kind === "district") { st.district = pick.dataset.fa; st.street = ""; st.streets = []; }
+          else if (kind === "street") { toggleStreet(pick.dataset.fa); }
+          else if (kind === "city-fa") { st.city = pick.dataset.id; st.cityFa = pick.dataset.fa; st.district = ""; st.street = ""; st.streets = []; }
           paint(body);
           return;
         }
+        var chip = ev.target.closest("[data-act='street-remove']");
+        if (chip) { toggleStreet(chip.dataset.fa); paint(body); return; }
         var lvl = ev.target.closest("[data-act='area-lvl']");
         if (lvl) {
           if (lvl.dataset.lvl === "province") { st.province = ""; st.city = ""; st.district = ""; st.street = ""; }
           if (lvl.dataset.lvl === "city") { st.district = ""; st.street = ""; }
-          if (lvl.dataset.lvl === "district") { st.street = ""; }
+          if (lvl.dataset.lvl === "district") { st.street = ""; st.streets = []; }
           paint(body);
           return;
         }
@@ -967,13 +1020,19 @@
   function resolveArea(st, body) {
     function finish(label, extra) {
       var info = extra || {};
+      var streets = (st.streets || []).slice();
+      var multi = streets.length >= 2;
+      var cityFa = info.city_fa || st.cityFa || "";
+      if (multi) label = streets.join(" + ") + (cityFa ? "، " + cityFa : "");
       // شهرِ انتخاب‌شده (کلید استاندارد) جدا از برچسب نمایشی نگه داشته می‌شود؛
       // وگرنه «خیابان ولیعصر، تهران» به‌جای شهر به سرور می‌رفت و جست‌وجو
       // می‌توانست جای دیگری بیفتد.
       S.area = { label: label || st.city || "تهران", province: st.province, city: st.city,
-        city_fa: info.city_fa || "", district: st.district, street: st.street,
-        level: info.level || "", bbox: info.bbox || null,
-        unresolved: info.unresolved || [] };
+        city_fa: cityFa, district: multi ? "" : st.district,
+        street: multi ? "" : (st.street || ""),
+        streets: multi ? streets : [],
+        level: multi ? "street" : (info.level || ""), bbox: multi ? null : (info.bbox || null),
+        unresolved: multi ? [] : (info.unresolved || []) };
       $("areaLabel").textContent = S.area.label;
       N.sheetHide();
       if ((info.unresolved || []).length) {
@@ -981,8 +1040,14 @@
           " را پیدا نکردم؛ یه نام دقیق‌تر بده تا دادهٔ جای دیگه‌ای نیاد.", "warn", 6000);
         return;
       }
+      if (multi) {
+        N.toast("باشه! " + fa(streets.length) + " خیابان را هم‌زمان می‌گردم: " + streets.join(" + "), "ok", 5000);
+        return;
+      }
       N.toast("باشه! می‌گردم توی: " + S.area.label, "ok");
     }
+    // چند خیابان: هر خیابان سمت سرور محدودهٔ خودش را می‌گیرد (resolve تک‌خیابانی لازم نیست)
+    if ((st.streets || []).length >= 2) { finish("", {}); return; }
     if (S.mode === "demo") { finish(st.street || st.district || st.cityFa || S.area.label); return; }
     jget("api/regions/resolve?province=" + encodeURIComponent(st.province || "") + "&city=" + encodeURIComponent(st.city || "") +
       "&district=" + encodeURIComponent(st.district || "") + "&street=" + encodeURIComponent(st.street || ""))
@@ -1043,7 +1108,17 @@
     if (S.area.province) base.province = S.area.province;
     if (S.area.city) base.city_key = S.area.city;
     if (S.area.district) base.district = S.area.district; else delete base.district;
-    if (S.area.street) base.street = S.area.street; else delete base.street;
+    if (S.area.streets && S.area.streets.length >= 2) {
+      // چند خیابان: فهرست می‌رود، تک‌خیابان و جعبهٔ تقریبی پاک می‌شوند تا پایپ‌لاین
+      // خودش نوار هر خیابان را از OSM بگیرد و نتیجهٔ خیابان همسایه نیاید.
+      base.streets = S.area.streets.slice();
+      delete base.street;
+      base.area_level = "street";
+      base.bbox = [];
+    } else {
+      delete base.streets;
+      if (S.area.street) base.street = S.area.street; else delete base.street;
+    }
     base.area_label = S.area.label || "";
     base.depth = +$("depth").value || 4;
     base.grid = +$("grid").value || 0;

@@ -1,6 +1,6 @@
 /* نُوا — سرویس‌ورکر: پوستهٔ اپ آفلاین + کش شبکه‌ای-اول برای API
    فقط روی https ثبت می‌شه؛ داخل پیش‌نمایش سندباکس (iframe بدون شبکه) بی‌ضرر است. */
-var CACHE = "nova-shell-v1";
+var CACHE = "nova-shell-v2";
 var SHELL = ["./", "./index.html", "./styles.css", "./ui.js", "./app.js",
   "./manifest.webmanifest", "./icons/icon.svg", "./icons/icon-192.png", "./icons/icon-512.png"];
 

@@ -110,25 +110,71 @@ def row_from_place(place: dict, *, input_id: str = "") -> dict | None:
     }
 
 
+def _rect(bbox: list) -> dict | None:
+    """[s, n, w, e] → مستطیل مجاز Places (سخت‌گیرانه‌تر از دایره)."""
+    try:
+        south, north, west, east = (float(x) for x in bbox)
+    except (TypeError, ValueError):
+        return None
+    if not (north > south and east > west):
+        return None
+    return {"rectangle": {"low": {"latitude": south, "longitude": west},
+                          "high": {"latitude": north, "longitude": east}}}
+
+
 def search(term: str, *, lat: float | None = None, lon: float | None = None,
            radius: int = 10000, limit: int = 20, lang: str = "fa",
-           timeout: float = 15.0, input_id: str = "") -> list[dict]:
+           timeout: float = 15.0, input_id: str = "", bbox: list | None = None,
+           pages: int = 1, strict: bool | None = None,
+           page_wait: float = 1.2) -> list[dict]:
+    """Text Search گوگل — با پشتیبانی از مستطیل (bbox) و صفحه‌بندی.
+
+    چرا مستطیل؟ برای «خیابان/محله» دایرهٔ ۱۰ کیلومتری همسایه‌ها را هم می‌آورد؛
+    `locationRestriction.rectangle` فقط همان محدوده را برمی‌گرداند. صفحه‌بندی هم
+    سقف ۲۰ نتیجهٔ هر درخواست را تا ۶۰ بالا می‌برد — در شهرهای کوچک تفاوت زیاد است.
+    """
+    rect = _rect(bbox) if bbox else None
+    restricted = rect is not None and (strict if strict is not None else True)
     body: dict = {
         "textQuery": term,
         "languageCode": "fa" if str(lang).startswith("fa") else "en",
         "maxResultCount": max(1, min(20, int(limit))),
     }
-    if lat is not None and lon is not None:
+    if restricted:
+        body["locationRestriction"] = rect
+    elif lat is not None and lon is not None:
         body["locationBias"] = {"circle": {"center": {"latitude": float(lat),
                                                       "longitude": float(lon)},
                                            "radius": float(max(500, min(50_000, int(radius))))}}
-    data = _post(body, timeout=timeout)
-    rows = []
-    for place in data.get("places") or []:
-        if isinstance(place, dict):
+    started = time.time()
+    rows: list[dict] = []
+    seen: set[str] = set()
+    token = ""
+    for page in range(max(1, min(3, int(pages)))):
+        left = timeout - (time.time() - started)
+        if left <= 2:
+            break
+        if page and token:
+            body = dict(body, pageToken=token)
+            if page_wait:
+                time.sleep(min(float(page_wait), max(0.0, left - 2)))
+        data = _post(body, timeout=min(left, float(timeout)))
+        for place in data.get("places") or []:
+            if not isinstance(place, dict):
+                continue
             row = row_from_place(place, input_id=input_id)
-            if row:
-                rows.append(row)
+            if not row:
+                continue
+            pid = row.get("place_id") or row.get("title")
+            if pid in seen:
+                continue
+            seen.add(pid)
+            rows.append(row)
+            if len(rows) >= int(limit):
+                return rows
+        token = str(data.get("nextPageToken") or "")
+        if not token:
+            break
     return rows
 
 

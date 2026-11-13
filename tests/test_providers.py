@@ -460,6 +460,89 @@ class PlacesProviderTest(unittest.TestCase):
         self.assertEqual("کلینیک دندانپزشکی نمونه", rows[0]["title"])
 
 
+class PlacesSearchShapeTest(unittest.TestCase):
+    """Places باید محدودهٔ سخت (مستطیل) بگیرد، نه دایرهٔ ۱۰ کیلومتری."""
+
+    def _run(self, body):
+        captured = []
+
+        def fake_post(payload, *, timeout=0.0):
+            captured.append(dict(payload))
+            if "pageToken" not in payload:
+                return {"places": [PLACES_ITEM], "nextPageToken": "tok"}
+            second = dict(PLACES_ITEM, id="ChIJ_second", displayName={"text": "کلینیک دوم"})
+            return {"places": [second]}
+
+        original = places._post
+        places._post = fake_post
+        try:
+            rows = places.search(**body)
+        finally:
+            places._post = original
+        return rows, captured
+
+    def test_bbox_becomes_rectangle_restriction(self):
+        _, sent = self._run({"term": "کافه در ولیعصر", "bbox": [35.70, 35.72, 51.40, 51.42]})
+        rect = sent[0]["locationRestriction"]["rectangle"]
+        self.assertAlmostEqual(35.70, rect["low"]["latitude"])
+        self.assertAlmostEqual(35.72, rect["high"]["latitude"])
+        self.assertAlmostEqual(51.40, rect["low"]["longitude"])
+        self.assertAlmostEqual(51.42, rect["high"]["longitude"])
+        self.assertNotIn("locationBias", sent[0], "مستطیل سخت نباید با دایره قاطی شود")
+
+    def test_no_bbox_keeps_soft_circle_bias(self):
+        _, sent = self._run({"term": "کافه", "lat": 35.7, "lon": 51.4, "radius": 3000})
+        self.assertNotIn("locationRestriction", sent[0])
+        circle = sent[0]["locationBias"]["circle"]
+        self.assertEqual(3000, circle["radius"])
+
+    def test_pagination_follows_next_page_token(self):
+        rows, sent = self._run({"term": "کافه", "bbox": [35.70, 35.72, 51.40, 51.42],
+                                "limit": 20, "pages": 2, "page_wait": 0})
+        self.assertEqual(2, len(sent))
+        self.assertEqual("tok", sent[1]["pageToken"])
+        self.assertEqual(2, len(rows), "صفحهٔ دوم نباید ردیف تکراری بسازد")
+
+    def test_pages_respect_limit(self):
+        rows, _ = self._run({"term": "کافه", "bbox": [35.70, 35.72, 51.40, 51.42],
+                             "limit": 1, "pages": 3, "page_wait": 0})
+        self.assertEqual(1, len(rows))
+
+    def test_engine_searches_each_street_in_its_own_rectangle(self):
+        calls = []
+
+        def fake_search(term, **kwargs):
+            calls.append((term, kwargs.get("bbox")))
+            row = places.row_from_place(PLACES_ITEM, input_id=term)
+            row["place_id"] = f"gp:{len(calls)}"
+            return [row]
+
+        original = places.search
+        places.search = fake_search
+        try:
+            _, rows = engine.PlacesEngine().run_job({
+                "keywords": ["کافه در ولیعصر + انقلاب، تهران"],
+                "area_label": "ولیعصر + انقلاب، تهران",
+                "street_areas": [
+                    {"name": "خیابان ولیعصر", "bbox": [35.70, 35.72, 51.40, 51.42],
+                     "boxes": [[35.70, 35.72, 51.40, 51.42]]},
+                    {"name": "خیابان انقلاب", "bbox": [35.69, 35.71, 51.43, 51.45],
+                     "boxes": [[35.69, 35.71, 51.43, 51.45]]},
+                ],
+                "lat": "35.7", "lon": "51.4", "radius": 5000, "lang": "fa",
+                "max_time": 60, "limit": 20, "name": "multi",
+            })
+        finally:
+            places.search = original
+        self.assertEqual(2, len(calls))
+        self.assertIn("ولیعصر", calls[0][0])
+        self.assertNotIn("انقلاب", calls[0][0])
+        self.assertEqual([35.6994, 35.7206, 51.3994, 51.4206], [round(x, 4) for x in calls[0][1]])
+        self.assertIn("انقلاب", calls[1][0])
+        self.assertAlmostEqual(51.43, calls[1][1][2], places=2)
+        self.assertEqual(2, len(rows))
+
+
 class EngineChainTest(unittest.TestCase):
     def test_explicit_modes(self):
         self.assertEqual("demo", engine.make_engine("demo").name)
@@ -467,12 +550,28 @@ class EngineChainTest(unittest.TestCase):
         self.assertEqual("osm", engine.make_engine("osm").name)
         self.assertEqual("places", engine.make_engine("places").name)
 
-    def test_auto_prefers_places_when_key_exists(self):
+    def test_auto_prefers_free_osm_and_uses_places_only_as_reserve(self):
         original_key, original_mode = config.PLACES_API_KEY, config.ENGINE_MODE
         try:
             config.PLACES_API_KEY = "test-key"
             config.ENGINE_MODE = "auto"     # بدون پین، «auto» یعنی زنجیرهٔ خودکار
-            self.assertEqual("places", engine.make_engine("auto").name)
+            with mock.patch.object(engine.OSMEngine, "health", return_value={"up": True}), \
+                    mock.patch.object(engine.DockerEngine, "health", return_value={"up": False}):
+                self.assertEqual("osm", engine.make_engine("auto").name,
+                                 "OSM رایگان است؛ Places نباید هر اجرا هزینه بسازد")
+                self.assertEqual("places", engine.make_engine("places").name,
+                                 "انتخاب صریح Places همیشه برنده است")
+        finally:
+            config.PLACES_API_KEY, config.ENGINE_MODE = original_key, original_mode
+
+    def test_auto_falls_back_to_places_when_osm_is_down(self):
+        original_key, original_mode = config.PLACES_API_KEY, config.ENGINE_MODE
+        try:
+            config.PLACES_API_KEY = "test-key"
+            config.ENGINE_MODE = "auto"
+            with mock.patch.object(engine.OSMEngine, "health", return_value={"up": False}), \
+                    mock.patch.object(engine.DockerEngine, "health", return_value={"up": False}):
+                self.assertEqual("places", engine.make_engine("auto").name)
         finally:
             config.PLACES_API_KEY, config.ENGINE_MODE = original_key, original_mode
 
@@ -480,7 +579,7 @@ class EngineChainTest(unittest.TestCase):
         status = engine.engine_status("demo")
         self.assertEqual("demo", status["active"])
         self.assertFalse(status["live"])
-        self.assertEqual(["docker", "places", "osm", "demo"], status["chain"])
+        self.assertEqual(["docker", "osm", "places", "demo"], status["chain"])
         self.assertIn("reason", status)
 
 

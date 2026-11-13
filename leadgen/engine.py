@@ -1008,32 +1008,92 @@ class PlacesEngine:
         keywords = [str(k).strip() for k in (body.get("keywords") or []) if str(k).strip()]
         want = max(1, int(body.get("limit") or 20))
 
+        def _boxes(raw) -> list[list[float]]:
+            out = []
+            for box in raw or []:
+                try:
+                    if len(box) == 4 and float(box[1]) > float(box[0]) \
+                            and float(box[3]) > float(box[2]):
+                        out.append([float(x) for x in box])
+                except (TypeError, ValueError):
+                    continue
+            return out
+
+        def _rect(raw) -> list | None:
+            boxes = _boxes(raw)
+            if boxes:
+                pad = 0.0006
+                return [min(b[0] for b in boxes) - pad, max(b[1] for b in boxes) + pad,
+                        min(b[2] for b in boxes) - pad, max(b[3] for b in boxes) + pad]
+            try:
+                if raw and len(raw) == 4 and float(raw[1]) > float(raw[0]) \
+                        and float(raw[3]) > float(raw[2]):
+                    return [float(x) for x in raw]
+            except (TypeError, ValueError):
+                pass
+            return None
+
+        # چند خیابان هم‌زمان: هر خیابان مستطیل و جست‌وجوی خودش را دارد تا نتیجهٔ
+        # خیابان همسایه به خیابان دیگر نسبت داده نشود.
+        areas = [a for a in (body.get("street_areas") or [])
+                 if isinstance(a, dict) and a.get("name")][:8]
+        label = str(body.get("area_label") or "")
+        shared_rect = _rect(body.get("street_boxes")) or _rect(body.get("bbox"))
+        targets: list[dict | None] = areas or [None]
+        per_terms = 2 if areas else 3
+
         rows: list[dict] = []
         errors: list[str] = []
-        for index, keyword in enumerate(keywords[:3]):
-            left = budget - (time.time() - started)
-            if left < 6 or len(rows) >= want:
+        seen: set[str] = set()
+        done = 0
+        total_steps = max(1, len(targets) * min(per_terms, len(keywords) or 1))
+        for area in targets:
+            rect = _rect(area.get("boxes")) or _rect(area.get("bbox")) if area else shared_rect
+            terms: list[str] = []
+            for keyword in keywords[:per_terms]:
+                term = keyword
+                if area and label and label in keyword:
+                    term = keyword.replace(label, str(area["name"]))
+                elif area:
+                    term = f"{keyword} {area['name']}".strip()
+                if term not in terms:
+                    terms.append(term)
+            for keyword in terms:
+                left = budget - (time.time() - started)
+                if left < 6 or len(rows) >= want:
+                    break
+                done += 1
+                if on_progress:
+                    on_progress({"stage": "working", "status": "working",
+                                 "job_id": body.get("name") or "places",
+                                 "percent": int(100 * done / total_steps),
+                                 "message": f"[Places] {keyword}"
+                                            + (f" ({done}/{total_steps})" if len(targets) > 1 else "")})
+                try:
+                    found = places.search(
+                        keyword, lat=lat, lon=lon, radius=radius,
+                        limit=min(20, max(1, want - len(rows))), lang=lang,
+                        timeout=min(14.0, left), input_id=keyword, bbox=rect,
+                        pages=2 if left >= 16 else 1)
+                except PlacesError as exc:
+                    errors.append(f"{keyword}: {exc}")
+                    continue
+                for row in found:
+                    pid = row.get("place_id") or row.get("title")
+                    if pid in seen:
+                        continue
+                    seen.add(pid)
+                    rows.append(row)
+                    if len(rows) >= want:
+                        break
+            if len(rows) >= want:
                 break
-            term = keyword if place and place.lower() in keyword.lower() else (
-                f"{keyword} {place}".strip())
-            if on_progress:
-                on_progress({"stage": "working", "status": "working",
-                             "job_id": body.get("name") or "places",
-                             "percent": int(100 * index / max(1, min(3, len(keywords)))),
-                             "message": f"[Places] {term} ({index + 1}/{min(3, len(keywords))})"})
-            try:
-                found = places.search(term, lat=lat, lon=lon, radius=radius,
-                                      limit=min(20, want - len(rows)), lang=lang,
-                                      timeout=min(15.0, left), input_id=keyword)
-            except PlacesError as exc:
-                errors.append(f"{keyword}: {exc}")
-                continue
-            seen = {r.get("place_id") for r in rows}
-            rows.extend([r for r in found if r.get("place_id") not in seen])
+
         if not rows:
+            tried = [k for k in keywords[:per_terms]]
             raise EmptyResult("در این محدوده چیزی پیدا نشد" +
                               (f" ({'; '.join(errors[:2])})" if errors else ""),
-                              tried=keywords[:3])
+                              tried=tried)
         if on_progress:
             on_progress({"stage": "ok", "status": "ok", "job_id": body.get("name") or "places",
                          "percent": 100, "message": f"[Places] {len(rows)} ردیف"})
@@ -1061,9 +1121,10 @@ def _resolve_mode(mode: str | None) -> str:
 def make_engine(mode: str | None = None, base_url: str | None = None) -> Engine:
     """انتخاب موتور.
 
-    `auto` به ترتیب: داکر (گوگل‌مپ واقعی) → Google Places (اگر کلید باشد) →
-    OpenStreetMap (واقعی، بدون کلید) → دمو. یعنی همیشه یا دادهٔ واقعی می‌دهد یا
-    با دلیل روشن به دمو می‌افتد — و روی Vercel هم کار می‌کند.
+    `auto` به ترتیب: داکر (گوگل‌مپ واقعی) → OpenStreetMap (واقعی و رایگان) →
+    Google Places (اگر کلید باشد) → دمو. Places به‌صورت پیش‌فرض فقط جاهای خالی را
+    پر می‌کند (در پایپ‌لاین)، نه اینکه هر اجرا هزینه بسازد؛ انتخاب صریح `places`
+    همیشه برنده است.
     """
     mode = _resolve_mode(mode)
     docker = DockerEngine(base_url=base_url)
@@ -1078,11 +1139,12 @@ def make_engine(mode: str | None = None, base_url: str | None = None) -> Engine:
     # auto
     if docker.health().get("up"):
         return docker
-    if config.PLACES_API_KEY:
-        return PlacesEngine()
     osm_engine = OSMEngine()
     if osm_engine.health().get("up"):
+        # اول OSM رایگان؛ Places فقط پُرکنندهٔ جاهای خالی است (در پایپ‌لاین)
         return osm_engine
+    if config.PLACES_API_KEY:
+        return PlacesEngine()
     return DemoEngine()
 
 
@@ -1113,8 +1175,9 @@ def engine_health(name: str, *, force: bool = False, probe: bool = True) -> dict
 def engine_status(mode: str | None = None) -> dict:
     """وضعیت کامل موتور برای داشبورد: کدام فعال است و چرا.
 
-    زنجیرهٔ `auto`: داکر (گوگل‌مپ) → Google Places (اگر کلید باشد) → OpenStreetMap
-    (واقعی، بدون کلید) → دمو. `live` یعنی دادهٔ واقعی از اینترنت می‌آید.
+    زنجیرهٔ `auto`: داکر (گوگل‌مپ) → OpenStreetMap (واقعی و رایگان) → Google Places
+    (اگر کلید باشد) → دمو. Places در اجرای OSM هم جاهای خالی خیابان/محله را پر
+    می‌کند. `live` یعنی دادهٔ واقعی از اینترنت می‌آید.
     """
     docker = DockerEngine()
     docker_health = docker.health()
@@ -1156,12 +1219,13 @@ def engine_status(mode: str | None = None) -> dict:
         if docker_health.get("up"):
             active = "docker"
             reason = "موتور داکر روی " + docker_health.get("base_url", config.SCRAPER_BASE_URL)
-        elif config.PLACES_API_KEY:
-            active = "places"
-            reason = "Google Places API (کلید تنظیم شده)"
         elif _osm().get("up"):
             active = "osm"
-            reason = "OpenStreetMap — دادهٔ واقعی بدون داکر"
+            reason = ("OpenStreetMap — دادهٔ واقعی بدون داکر"
+                      + ("؛ Google Places جاهای خالی را پر می‌کند" if config.PLACES_API_KEY else ""))
+        elif config.PLACES_API_KEY:
+            active = "places"
+            reason = "OSM در دسترس نیست؛ Google Places API (کلید تنظیم شده)"
         else:
             active = "demo"
             reason = "نه داکر، نه کلید Places، نه دسترسی OSM → دادهٔ نمونه (پایپ‌لاین کامل)"
@@ -1174,7 +1238,8 @@ def engine_status(mode: str | None = None) -> dict:
         "docker": docker_health,
         "osm": osm_health or ({"up": None} if not config.SELF_DRIVE else {}),
         "places": places_health or {"key_set": bool(config.PLACES_API_KEY)},
-        "chain": ["docker", "places", "osm", "demo"],
+        "places_fill": bool(config.PLACES_API_KEY),
+        "chain": ["docker", "osm", "places", "demo"],
         "base_url": config.SCRAPER_BASE_URL,
         "proxies": len(config.SCRAPER_PROXIES),
     }

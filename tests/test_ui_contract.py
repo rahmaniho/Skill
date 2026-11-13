@@ -144,6 +144,38 @@ if __name__ == "__main__":
     unittest.main(verbosity=2)
 
 
+class MultiStreetUiTests(unittest.TestCase):
+    """چند خیابان هم‌زمان: انتخاب در شیت منطقه و ارسال به /api/runs."""
+
+    def read(self, relative: str) -> str:
+        return (ROOT / relative).read_text(encoding="utf-8")
+
+    def test_area_sheet_toggles_streets(self):
+        app = self.read("nova/app.js")
+        for needle in ("streetChips", "toggleStreet", "street-remove", "st.streets",
+                       "خیابان انتخاب شد"):
+            self.assertIn(needle, app)
+
+    def test_build_request_sends_the_street_list(self):
+        app = self.read("nova/app.js")
+        for needle in ("base.streets = S.area.streets.slice()", "delete base.street",
+                       'base.area_level = "street"', "base.bbox = []"):
+            self.assertIn(needle, app)
+
+    def test_parse_result_keeps_multi_street_state(self):
+        app = self.read("nova/app.js")
+        self.assertIn("da.street_names", app)
+
+    def test_styles_cover_selection_chips(self):
+        css = self.read("nova/styles.css")
+        for needle in (".street-chips", ".pick-mark", ".street-hint"):
+            self.assertIn(needle, css)
+
+    def test_server_passes_streets_to_the_parser(self):
+        server = self.read("leadgen/server.py")
+        self.assertIn('streets=str(body.get("streets", "") or "")', server)
+
+
 class QueueLabelContractTests(unittest.TestCase):
     """جدول صف باید بگوید هر کار «چه چیزی» می‌سازد، نه فقط شناسهٔ اجرا."""
 

@@ -77,6 +77,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         province=args.province or "",
         district=args.district or "",
         street=args.street or "",
+        streets=args.streets or "",
     )
 
     def on_progress(payload: dict) -> None:
@@ -456,6 +457,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--province", help='استان (برای مرکز استان یا جست‌وجوی سطح استان)')
     p_run.add_argument("--district", help='منطقه/محله، مثال: "ونک" یا "چیتگر" (شعاع ۲۵۰۰ متر)')
     p_run.add_argument("--street", help='خیابان، مثال: "خیابان ملاصدرا" (شعاع ۹۰۰ متر)')
+    p_run.add_argument("--streets", help='چند خیابان هم‌زمان، مثال: "ولیعصر + انقلاب" '
+                                          '(هر خیابان محدودهٔ خودش)')
     p_run.add_argument("--lat"); p_run.add_argument("--lon")
     p_run.add_argument("--keyword", action="append", help="کلیدواژه دستی (تکرارپذیر)")
     p_run.add_argument("--lang", default="en", choices=["en", "fa"], help="زبان کلیدواژه‌های ارسالی به موتور")

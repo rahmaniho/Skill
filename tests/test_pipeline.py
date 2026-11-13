@@ -1382,3 +1382,194 @@ class StreetCorridorTests(unittest.TestCase):
                                        allow_network=False)
         self.assertEqual(box, [])
         self.assertEqual(request.street_boxes, [])
+
+
+class MultiStreetTests(unittest.TestCase):
+    """«کافه در ولیعصر و انقلاب» = دو خیابان با دو نوار جدا، نه یک نقطه."""
+
+    def test_split_streets_accepts_the_separators_users_actually_type(self):
+        self.assertEqual(
+            pipeline._split_streets("خیابان ولیعصر + خیابان انقلاب، خیابان آزادی"),
+            ["خیابان ولیعصر", "خیابان انقلاب", "خیابان آزادی"])
+        self.assertEqual(
+            pipeline._split_streets("ولیعصر؛ انقلاب | آزادی\nکارگر"),
+            ["ولیعصر", "انقلاب", "آزادی", "کارگر"])
+        # «و» جداکننده نیست: «ولیعصر و انقلاب» یک نام است تا کاربر خودش «+» بگذارد
+        self.assertEqual(pipeline._split_streets("ولیعصر و انقلاب، آزادی"),
+                         ["ولیعصر و انقلاب", "آزادی"])
+        self.assertEqual(pipeline._split_streets(""), [])
+
+    def test_split_streets_dedupes_and_caps_at_eight(self):
+        many = "، ".join(f"خیابان شماره {i}" for i in range(1, 15))
+        names = pipeline._split_streets(many)
+        self.assertEqual(8, len(names))
+        self.assertEqual(len(names), len(set(names)))
+        self.assertEqual(["خیابان الف", "خیابان ب"],
+                         pipeline._split_streets("خیابان الف، خیابان الف، خیابان ب"))
+
+    def test_from_dict_parses_streets_string_and_list(self):
+        from_string = pipeline.ScrapeRequest.from_dict({"streets": "ولیعصر، انقلاب، آزادی"})
+        self.assertEqual(["ولیعصر", "انقلاب", "آزادی"], from_string.streets)
+        from_list = pipeline.ScrapeRequest.from_dict({"streets": ["ولیعصر", "انقلاب"]})
+        self.assertEqual(["ولیعصر", "انقلاب"], from_list.streets)
+
+    def _city(self):
+        return {"bbox": [35.57, 35.83, 51.10, 51.60], "country": "IR",
+                "label_local": "تهران", "label": "Tehran", "key": "tehran",
+                "lat": 35.69, "lon": 51.39}
+
+    def _request(self):
+        return pipeline.ScrapeRequest.from_dict({
+            "niche_query": "کافه", "city_query": "تهران", "city_key": "tehran",
+            "streets": "خیابان ولیعصر، خیابان انقلاب", "area_level": "street",
+            "engine_mode": "osm"})
+
+    def test_resolve_street_areas_unions_each_streets_own_boxes(self):
+        boxes = {"ولیعصر": [35.700, 35.710, 51.410, 51.414],
+                 "انقلاب": [35.720, 35.730, 51.400, 51.404]}
+
+        def fake_lookup(query, **kwargs):
+            for name, box in boxes.items():
+                if name in query:
+                    return {"bbox": box, "label": f"{name}، تهران", "boxes": [box]}
+            return {}
+
+        def fake_overpass(names, **kwargs):
+            # مثل Overpass: جعبهٔ کل wayهای هم‌نام (اینجا همان جعبهٔ Nominatim)
+            box = list(kwargs.get("near") or [])
+            return {"bbox": box, "ways": 2, "boxes": [box] if box else []}
+
+        request = self._request()
+        warnings = []
+        with mock.patch.object(pipeline.config, "OSM_AREA_LOOKUP", True), \
+                mock.patch.object(pipeline.config, "_looks_like_unittest", return_value=False), \
+                mock.patch("leadgen.providers.osm.lookup_area", side_effect=fake_lookup), \
+                mock.patch("leadgen.providers.osm.overpass_street_bbox",
+                           side_effect=fake_overpass):
+            areas = pipeline.resolve_street_areas(request, self._city(),
+                                                  allow_network=True, warnings=warnings)
+        self.assertEqual(2, len(areas))
+        self.assertEqual("خیابان ولیعصر + خیابان انقلاب، تهران", request.area_label)
+        self.assertEqual(2, len(request.street_boxes))
+        self.assertIn(boxes["ولیعصر"], request.street_boxes)
+        self.assertIn(boxes["انقلاب"], request.street_boxes)
+        # حاشیهٔ ~۱۵۰ متری refine_area_bbox: اجتماع دو نوار، نه یکی
+        self.assertAlmostEqual(35.700, request.bbox[0], places=2)
+        self.assertAlmostEqual(35.730, request.bbox[1], places=2)
+        self.assertAlmostEqual(51.400, request.bbox[2], places=2)
+        self.assertAlmostEqual(51.414, request.bbox[3], places=2)
+        self.assertEqual("street", request.area_level)
+        self.assertTrue(any("چند خیابان" in w for w in warnings))
+        self.assertTrue(600 + 1 > len(request.street_boxes))   # سقف جعبه‌ها
+
+    def test_resolve_street_areas_reports_missing_instead_of_silently_using_it(self):
+        def fake_lookup(query, **kwargs):
+            if "ولیعصر" in query:
+                return {"bbox": [35.700, 35.710, 51.410, 51.414], "label": "ولیعصر، تهران"}
+            return {}
+
+        request = self._request()
+        request.streets = ["خیابان ولیعصر", "خیابان خیالی"]
+        warnings = []
+        with mock.patch.object(pipeline.config, "OSM_AREA_LOOKUP", True), \
+                mock.patch.object(pipeline.config, "_looks_like_unittest", return_value=False), \
+                mock.patch("leadgen.providers.osm.lookup_area", side_effect=fake_lookup), \
+                mock.patch("leadgen.providers.osm.overpass_street_bbox",
+                           return_value={"bbox": [], "ways": 0, "boxes": []}):
+            areas = pipeline.resolve_street_areas(request, self._city(),
+                                                  allow_network=True, warnings=warnings)
+        self.assertEqual(["خیابان ولیعصر"], [a["name"] for a in areas])
+        self.assertTrue(any("پیدا نشد" in w and "خیابان خیالی" in w for w in warnings))
+        self.assertEqual("خیابان ولیعصر، تهران", request.area_label)
+
+    def test_all_streets_unresolved_stops_the_run(self):
+        request = self._request()
+        with mock.patch.object(pipeline.config, "OSM_AREA_LOOKUP", True), \
+                mock.patch.object(pipeline.config, "_looks_like_unittest", return_value=False), \
+                mock.patch("leadgen.providers.osm.lookup_area", return_value={}):
+            with self.assertRaises(pipeline.EngineError):
+                pipeline.resolve_street_areas(request, self._city(),
+                                              allow_network=True, warnings=[])
+        self.assertEqual([], request.street_boxes, "نباید محدودهٔ جای دیگری اسکراب شود")
+
+    def test_single_street_is_not_handled_here(self):
+        request = self._request()
+        request.streets = ["خیابان ولیعصر"]
+        self.assertEqual([], pipeline.resolve_street_areas(request, self._city(),
+                                                           allow_network=False))
+
+
+class PlacesFillTests(unittest.TestCase):
+    """OSM در شهرهای کوچک نازک است؛ Places همان خیابان را پر می‌کند، نه جای دیگر."""
+
+    def _request(self, streets=None):
+        request = pipeline.ScrapeRequest.from_dict({
+            "niche_query": "کافه", "city_query": "یزد", "city_key": "yazd",
+            "street": "خیابان کاشانی", "area_level": "street", "engine_mode": "osm",
+            "limit": 20})
+        request.street_boxes = [[31.870, 31.880, 54.370, 54.385]]
+        request.bbox = [31.868, 31.882, 54.368, 54.387]
+        request.area_label = "خیابان کاشانی، یزد"
+        if streets:
+            request.streets = list(streets)
+            request.street_areas = [
+                {"name": name, "bbox": box, "boxes": [box]}
+                for name, box in zip(streets, [
+                    [35.700, 35.720, 51.400, 51.420],
+                    [35.690, 35.710, 51.430, 51.450],
+                ])]
+        return request
+
+    def _row(self, lat, lon, pid):
+        return {"title": f"کافه {pid}", "latitude": str(lat), "longitude": str(lon),
+                "place_id": pid, "source": "google_places"}
+
+    def test_no_key_means_silent_no_op(self):
+        request = self._request()
+        with mock.patch("leadgen.providers.places.available", return_value=False), \
+                mock.patch("leadgen.providers.places.search") as search:
+            self.assertEqual([], pipeline._places_fill(request, [{"keywords": ["کافه در کاشانی"]}], []))
+        search.assert_not_called()
+
+    def test_rows_outside_the_street_corridor_are_dropped(self):
+        request = self._request()
+        rows = [self._row(31.875, 54.377, "in"), self._row(31.900, 54.500, "far")]
+        warnings = []
+        with mock.patch("leadgen.providers.places.available", return_value=True), \
+                mock.patch("leadgen.providers.places.search", return_value=rows):
+            got = pipeline._places_fill(request, [{"keywords": ["کافه در کاشانی"]}], warnings)
+        self.assertEqual(["in"], [r["place_id"] for r in got])
+        self.assertTrue(any("بیرون از نوار خیابان" in w for w in warnings))
+        self.assertTrue(any("Google Places" in w for w in warnings))
+
+    def test_places_failure_is_reported_not_raised(self):
+        request = self._request()
+        warnings = []
+        with mock.patch("leadgen.providers.places.available", return_value=True), \
+                mock.patch("leadgen.providers.places.search", side_effect=RuntimeError("quota")):
+            got = pipeline._places_fill(request, [{"keywords": ["کافه در کاشانی"]}], warnings)
+        self.assertEqual([], got)
+        self.assertTrue(any("Google Places هم نتیجه نداد" in w for w in warnings))
+
+    def test_each_street_gets_its_own_rectangle_and_query(self):
+        request = self._request(streets=["خیابان ولیعصر", "خیابان انقلاب"])
+        request.area_label = "خیابان ولیعصر + خیابان انقلاب، تهران"
+        request.street_boxes = [a["boxes"][0] for a in request.street_areas]
+        request.bbox = [35.690, 35.720, 51.400, 51.450]
+        calls = []
+
+        def fake_search(term, **kwargs):
+            calls.append((term, kwargs.get("bbox")))
+            return [self._row(35.71, 51.41, f"p{len(calls)}")]
+
+        with mock.patch("leadgen.providers.places.available", return_value=True), \
+                mock.patch("leadgen.providers.places.search", side_effect=fake_search):
+            got = pipeline._places_fill(
+                request, [{"keywords": ["کافه در خیابان ولیعصر + خیابان انقلاب، تهران"]}], [])
+        self.assertEqual(2, len(calls))
+        self.assertIn("ولیعصر", calls[0][0])
+        self.assertNotIn("انقلاب", calls[0][0])
+        self.assertIn("انقلاب", calls[1][0])
+        self.assertAlmostEqual(35.6994, calls[0][1][0], places=4)
+        self.assertAlmostEqual(51.4294, calls[1][1][2], places=4)
+        self.assertEqual(2, len(got))

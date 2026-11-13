@@ -762,11 +762,14 @@ def split_bbox(bbox: list[float], rows: int = 2, cols: int = 2) -> list[list[flo
 
 
 def cluster_boxes(boxes: list, groups: int = 6) -> list[list[float]]:
-    """تکه‌های یک خیابان بلند → چند جعبهٔ کوچکِ پشت‌سرهم.
+    """تکه‌های یک یا چند خیابان → چند جعبهٔ باریکِ پشت‌سرهم.
 
     چرا؟ جعبهٔ کل «خیابان ولیعصر» یک مستطیل ۱۶ کیلومتری روی نصف تهران است؛ Overpass
     در چنین مستطیلی سقف نتیجه را می‌خورد و مغازه‌های واقعی خیابان جا می‌مانند.
     پرسیدن چند جعبهٔ باریک روی خودِ خیابان، هم سریع‌تر است هم کامل‌تر.
+
+    چند خیابانِ دور از هم: اول به زنجیره‌های جدا (تکه‌های نزدیک به هم) شکسته می‌شوند
+    تا جعبهٔ هر زنجیره باریک بماند و سهم هر خیابان از سقف پرسش‌ها حفظ شود.
     """
     clean: list[list[float]] = []
     for item in boxes or []:
@@ -776,22 +779,52 @@ def cluster_boxes(boxes: list, groups: int = 6) -> list[list[float]]:
             continue
         if len(box) == 4 and box[1] >= box[0] and box[3] >= box[2]:
             clean.append(box)
-    if not clean or groups <= 1:
+    if len(clean) < 2 or groups <= 1:
         return []
-    total_lat = max(b[1] for b in clean) - min(b[0] for b in clean)
-    total_lon = max(b[3] for b in clean) - min(b[2] for b in clean)
-    axis = 0 if total_lat >= total_lon else 2         # محور بلند خیابان
-    clean.sort(key=lambda b: (b[axis] + b[axis + 1]))
-    count = max(1, min(int(groups), len(clean)))
-    size = max(1, len(clean) // count)
+
+    # ۱) زنجیره‌سازی: تکه‌هایی که به هم می‌رسند (یا ≤ ~۲۰۰ متر فاصله دارند)
+    remaining = set(range(len(clean)))
+    chains: list[list[list[float]]] = []
+    while remaining:
+        seed_index = remaining.pop()
+        chain = [clean[seed_index]]
+        queue = [clean[seed_index]]
+        while queue:
+            current = queue.pop()
+            for index in list(remaining):
+                if _boxes_touch(current, clean[index], 0.0025):
+                    remaining.remove(index)
+                    chain.append(clean[index])
+                    queue.append(clean[index])
+        chains.append(chain)
+
+    # ۲) سهم هر زنجیره از سقف پرسش‌ها، به نسبت اندازه‌اش
+    total = sum(len(chain) for chain in chains)
+    alloc = [max(1, round(groups * len(chain) / total)) for chain in chains]
+    while sum(alloc) > max(1, groups) and max(alloc) > 1:   # سقف را رعایت کن
+        biggest = max(range(len(alloc)), key=lambda i: alloc[i])
+        alloc[biggest] -= 1
+    while sum(alloc) < groups and len(alloc) < groups:      # و از سقف کمتر نمان
+        smallest = min(range(len(chains)), key=lambda i: alloc[i])
+        if alloc[smallest] >= len(chains[smallest]):
+            break
+        alloc[smallest] += 1
+
+    # ۳) هر زنجیره در امتداد محور بلندش به n جعبهٔ باریک تقسیم می‌شود
     out: list[list[float]] = []
-    for start in range(0, len(clean), size):
-        chunk = clean[start:start + size]
-        if not chunk:
-            continue
-        out.append([min(b[0] for b in chunk), max(b[1] for b in chunk),
-                    min(b[2] for b in chunk), max(b[3] for b in chunk)])
-    return out[:count]
+    for chain, count in zip(chains, alloc):
+        lat_span = max(b[1] for b in chain) - min(b[0] for b in chain)
+        lon_span = max(b[3] for b in chain) - min(b[2] for b in chain)
+        axis = 0 if lat_span >= lon_span else 2
+        chain = sorted(chain, key=lambda b: (b[axis] + b[axis + 1]))
+        size = max(1, len(chain) // max(1, count))
+        for start in range(0, len(chain), size):
+            chunk = chain[start:start + size]
+            if not chunk:
+                continue
+            out.append([min(b[0] for b in chunk), max(b[1] for b in chunk),
+                        min(b[2] for b in chunk), max(b[3] for b in chunk)])
+    return out[:max(1, groups)]
 
 
 def overpass_search_area(filters: list[str], *, bbox: list[float], limit: int | None = None,
