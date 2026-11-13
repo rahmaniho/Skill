@@ -269,8 +269,11 @@ def main(argv: list[str] | None = None) -> int:
         rows = osm.probe_overpass_endpoints()
         for row in rows:
             mark = "✓" if row["ok"] else "✗"
-            print(f"  {mark} {row['host']} — {row['ms']}ms {row['error']}".rstrip())
-        print(f"\nسالم: {sum(1 for r in rows if r['ok'])}/{len(rows)}")
+            # یک خط فشرده تا در گزارش Actions هم کامل دیده شود (n = تعداد نتیجه)
+            print(f"  {mark} {row['host']} n={row.get('n', 0)} {row['ms']}ms "
+                  f"{row['error']}".rstrip())
+        print(f"\nسالم: {sum(1 for r in rows if r['ok'])}/{len(rows)} | "
+              f"با دادهٔ تهران: {sum(1 for r in rows if r.get('n'))}/{len(rows)}")
         if args.json:
             print(json.dumps(rows, ensure_ascii=False, indent=2))
         return 0 if any(r["ok"] for r in rows) else 1
