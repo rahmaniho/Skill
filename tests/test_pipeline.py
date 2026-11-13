@@ -1342,3 +1342,43 @@ class StreetWholeOverpassTests(unittest.TestCase):
                 mock.patch("leadgen.providers.osm.overpass_street_bbox", return_value={}):
             pipeline.refine_area_bbox(request, city, allow_network=True, warnings=warnings)
         self.assertTrue(any("بخشی از آن جا بماند" in w for w in warnings), warnings)
+
+
+class StreetCorridorTests(unittest.TestCase):
+    """جعبهٔ کل خیابان یک مستطیل بزرگ است؛ فقط مغازه‌های نوار خیابان باید بمانند."""
+
+    def test_near_street_accepts_corridor_and_keeps_rows_without_coordinates(self):
+        boxes = [[35.7000, 35.7040, 51.4100, 51.4120]]
+        self.assertTrue(pipeline._near_street({"latitude": "35.7020", "longitude": "51.4110"}, boxes))
+        # ~۱۳۰ متر حاشیه: ۰٫۰۰۰۹ درجه بالاتر از لبه
+        self.assertTrue(pipeline._near_street({"latitude": "35.7049", "longitude": "51.4110"}, boxes))
+        self.assertFalse(pipeline._near_street({"latitude": "35.7300", "longitude": "51.4110"}, boxes))
+        self.assertTrue(pipeline._near_street({}, boxes), "ردیف بدون مختصات نباید حذف شود")
+
+    def test_refine_stores_street_boxes_for_the_corridor_filter(self):
+        request = pipeline.ScrapeRequest.from_dict({
+            "niche_query": "کافه", "city_query": "تهران", "city_key": "tehran",
+            "street": "خیابان ولیعصر", "area_level": "street", "engine_mode": "osm"})
+        request.area_label = "خیابان ولیعصر، تهران"
+        city = {"bbox": [35.60, 35.85, 51.20, 51.60], "country": "IR", "label_local": "تهران"}
+        nominatim = {"bbox": [35.705, 35.715, 51.414, 51.416], "label": "خیابان ولیعصر، تهران"}
+        boxes = [[35.700, 35.710, 51.410, 51.416], [35.710, 35.720, 51.410, 51.416],
+                 [35.720, 35.730, 51.410, 51.416]]
+        overpass = {"bbox": [35.700, 35.730, 51.410, 51.416], "ways": 3, "boxes": boxes}
+
+        with mock.patch.object(pipeline.config, "OSM_AREA_LOOKUP", True), \
+                mock.patch.object(pipeline.config, "_looks_like_unittest", return_value=False), \
+                mock.patch("leadgen.providers.osm.lookup_area", return_value=dict(nominatim)), \
+                mock.patch("leadgen.providers.osm.overpass_street_bbox", return_value=overpass):
+            pipeline.refine_area_bbox(request, city, allow_network=True)
+        self.assertEqual(len(request.street_boxes), 3, "تکه‌های خیابان باید در درخواست بمانند")
+        self.assertEqual(request.street_boxes[0], [35.700, 35.710, 51.410, 51.416])
+
+    def test_city_level_runs_get_no_corridor_filter(self):
+        request = pipeline.ScrapeRequest.from_dict({
+            "niche_query": "کافه", "city_query": "تهران", "city_key": "tehran",
+            "area_level": "city", "engine_mode": "osm"})
+        box = pipeline.refine_area_bbox(request, {"bbox": [35.6, 35.85, 51.2, 51.6]},
+                                       allow_network=False)
+        self.assertEqual(box, [])
+        self.assertEqual(request.street_boxes, [])

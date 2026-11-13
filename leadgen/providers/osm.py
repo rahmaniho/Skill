@@ -585,7 +585,11 @@ def overpass_street_bbox(names: list[str], *, bbox: list[float], timeout: float 
             continue
         merged = [min(b[0] for b in chosen), max(b[1] for b in chosen),
                   min(b[2] for b in chosen), max(b[3] for b in chosen)]
-        found = {"bbox": [round(x, 6) for x in merged], "ways": len(chosen), "via": via}
+        # جعبهٔ هر تکه را هم می‌دهیم: پایپ‌لاین با آن‌ها فقط مغازه‌های «روی خیابان» را
+        # نگه می‌دارد (جعبهٔ کل خیابان یک مستطیل بزرگ است، خودِ خیابان یک نوار باریک).
+        boxes_out = [[round(float(x), 5) for x in b] for b in chosen][:400]
+        found = {"bbox": [round(x, 6) for x in merged], "ways": len(chosen),
+                 "via": via, "boxes": boxes_out}
         break
     if found and ttl > 0:
         with _OVERPASS_CACHE_LOCK:

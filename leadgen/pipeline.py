@@ -82,6 +82,7 @@ class ScrapeRequest:
     resume_state: dict = field(default_factory=dict)  # بخش‌های انجام‌شده + شمارهٔ بخش
     watch_id: str = ""               # اگر اجرا از «دیدبان» آمده، شناسهٔ آن دیدبان
     area_applied: bool = False       # آیا نقطهٔ منطقه یک‌بار محاسبه شده؟
+    street_boxes: list = field(default_factory=list)  # تکه‌های واقعی خیابان (فیلتر «روی خیابان»)
     zoom_set: bool = False           # zoom صریحاً داده شده؟ وگرنه از سطح منطقه می‌آید
 
     @classmethod
@@ -109,6 +110,16 @@ class ScrapeRequest:
                     clean.pop("bbox")
             except (TypeError, ValueError):
                 clean.pop("bbox")
+        if clean.get("street_boxes"):
+            boxes: list = []
+            for item in clean["street_boxes"]:
+                try:
+                    box = [float(x) for x in item]
+                except (TypeError, ValueError):
+                    continue
+                if len(box) == 4 and box[1] > box[0] and box[3] > box[2]:
+                    boxes.append(box)
+            clean["street_boxes"] = boxes[:400]
         for bool_key in ("fast_mode", "emails", "deep_emails", "socials", "signals",
                          "keep_full_columns", "all_niches", "area_applied", "scan_full"):
             if bool_key in clean and clean[bool_key] is not None:
@@ -323,7 +334,8 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
                 wider = False
             if wider:
                 found = {"bbox": wide_box, "label": (found.get("label") or ""),
-                         "streets": int(wide.get("ways") or 0)}
+                         "streets": int(wide.get("ways") or 0),
+                         "boxes": wide.get("boxes") or []}
     if not found:
         if warnings is not None:
             if last_error:
@@ -338,6 +350,9 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
     box = list(found.get("bbox") or [])
     if len(box) != 4:
         return list(request.bbox or [])
+    # «فقط مغازه‌های روی خیابان»: جعبهٔ کل خیابان مستطیل بزرگی است؛ تکه‌های واقعی
+    # خیابان را نگه می‌داریم تا نتایجِ چند خیابان آن‌طرف‌تر هم داخل نیایند.
+    request.street_boxes = list(found.get("boxes") or []) if request.area_level == "street" else []
     if city_box and len(city_box) == 4:
         # برش به محدودهٔ شهر — خیابان هم‌نام در شهر دیگر نباید وارد شود
         box = [max(float(box[0]), float(city_box[0])), min(float(box[1]), float(city_box[1])),
@@ -498,7 +513,8 @@ def _scan_report(engine, plan_labels: list[str], done_boxes: set, resume_state: 
             "niche_query", "keywords", "city_query", "city_key", "province", "district",
             "street", "area_level", "area_label", "lang", "depth", "limit", "max_time",
             "radius", "socials", "emails", "profile", "engine_mode", "bbox", "scan_full",
-            "price_range", "country", "campaign_channel", "watch_id") if hasattr(request, k)},
+            "price_range", "country", "campaign_channel", "watch_id", "street_boxes")
+            if hasattr(request, k)},
     }
     if tile_rows and len(tile_rows) > 1:
         scan_info["tiles_with_data"] = len([t for t in tile_rows if t["rows"]])
@@ -513,6 +529,26 @@ def _scan_report(engine, plan_labels: list[str], done_boxes: set, resume_state: 
         continuation = {"request": cont, "remaining": len(scan_remaining),
                         "chunk": chunk + 1, "run_id": this_run}
     return scan_info, scan_done, scan_remaining, continuation
+
+
+# پهنای نوار «روی خیابان»: ~۱۳۰ متر از محور تکه‌ها (مغازه‌های دو طرف + کمی حاشیه)
+STREET_CORRIDOR_PAD = 0.0012
+
+
+def _near_street(row: dict, boxes: list, pad: float = STREET_CORRIDOR_PAD) -> bool:
+    """آیا این کسب‌وکار روی/کنار خیابان است؟ (بدون مختصات → قبول، نه حذف)"""
+    try:
+        lat, lon = float(row.get("latitude")), float(row.get("longitude"))
+    except (TypeError, ValueError):
+        return True
+    for box in boxes or []:
+        try:
+            if (float(box[0]) - pad <= lat <= float(box[1]) + pad and
+                    float(box[2]) - pad <= lon <= float(box[3]) + pad):
+                return True
+        except (TypeError, ValueError, IndexError):
+            continue
+    return False
 
 
 def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) -> ScrapeResult:
@@ -907,6 +943,22 @@ def run_scrape(request: ScrapeRequest, on_progress: ProgressFn | None = None) ->
             region_box = list(city["bbox"])          # جعبهٔ کل استان
         elif city.get("bbox"):
             region_box = list(city["bbox"])          # مرز شهر
+        # «فقط مغازه‌های روی خیابان»: اگر تکه‌های واقعی خیابان را داریم، هر ردیفی که
+        # از نوار خیابان (تکه‌ها + ~۱۳۰ متر) دورتر است حذف می‌شود. جعبهٔ کل خیابان
+        # یک مستطیل بزرگ مایل است و بدون این سد، محله‌های همسایه هم می‌آیند.
+        street_boxes = getattr(request, "street_boxes", None) or []
+        if request.area_level == "street" and street_boxes and rows:
+            kept = [r for r in rows if _near_street(r, street_boxes)]
+            dropped = len(rows) - len(kept)
+            if dropped and kept:
+                warnings.append(
+                    f"{dropped} ردیف بیرون از نوار «{request.area_label or request.street}» بود "
+                    f"و حذف شد (فقط مغازه‌های روی همان خیابان).")
+                rows = kept
+            elif dropped and not kept:
+                warnings.append(
+                    f"هیچ کسب‌وکاری دقیقاً روی «{request.area_label or request.street}» پیدا نشد؛ "
+                    "نزدیک‌ترین‌ها نگه داشته شدند.")
         if region_box:
             kept = [r for r in rows if geo.in_bbox(r, region_box, margin=0.02)]
             dropped = len(rows) - len(kept)
