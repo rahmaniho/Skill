@@ -160,6 +160,7 @@ create table if not exists public.street_cache (
     boxes      jsonb not null default '[]'::jsonb,   -- نوار هر تکهٔ خیابان
     ways       integer not null default 0,
     length_km  double precision not null default 0,
+    siblings   integer not null default 0,        -- چند نام هم‌خانواده ادغام شد
     source     text not null default 'overpass',     -- overpass | nominatim
     updated_at double precision not null default extract(epoch from now())
 );

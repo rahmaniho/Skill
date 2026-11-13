@@ -184,6 +184,7 @@ CREATE TABLE IF NOT EXISTS street_cache (
     boxes         TEXT NOT NULL,
     ways          INTEGER DEFAULT 0,
     length_km     REAL DEFAULT 0,
+    siblings      INTEGER DEFAULT 0,
     source        TEXT DEFAULT 'overpass',
     updated_at    REAL NOT NULL
 );
@@ -1036,23 +1037,24 @@ def get_street_cache(city_key: str, street: str) -> dict | None:
 
 def put_street_cache(city_key: str, street: str, *, bbox: list, boxes: list,
                      ways: int = 0, length_km: float = 0.0,
-                     source: str = "overpass") -> bool:
+                     source: str = "overpass", siblings: int = 0) -> bool:
     """نوار یک خیابان را ذخیره/به‌روز می‌کند (بی‌صدا در صورت خطا)."""
     if not (normalize_street_name(street) and bbox and len(bbox) == 4 and boxes):
         return False
     cloud = _cloud_backend()
     if cloud is not None:
         return cloud.put_street_cache(city_key, street, bbox=bbox, boxes=boxes, ways=ways,
-                                      length_km=length_km, source=source)
+                                      length_km=length_km, source=source, siblings=siblings)
     key = street_cache_key(city_key, street)
     try:
         with _LOCK, _connect() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO street_cache (key, city_key, street, bbox, boxes,"
-                " ways, length_km, source, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                " ways, length_km, siblings, source, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (key, (city_key or "").strip().lower(), street, _dumps(list(bbox)),
                  _dumps(list(boxes)), int(ways or 0), float(length_km or 0.0),
-                 source or "overpass", time.time()))
+                 int(siblings or 0), source or "overpass", time.time()))
     except Exception:                                   # noqa: BLE001 — کش نباید اجرا را بشکند
         return False
     _maybe_prune_street_cache()

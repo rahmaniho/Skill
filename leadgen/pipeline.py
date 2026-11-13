@@ -404,7 +404,8 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
             wide = {"bbox": list(cached.get("bbox") or []),
                     "boxes": list(cached.get("boxes") or []),
                     "ways": int(cached.get("ways") or len(cached.get("boxes") or [])),
-                    "length_km": float(cached.get("length_km") or 0.0), "via": "cache"}
+                    "length_km": float(cached.get("length_km") or 0.0), "via": "cache",
+                    "siblings": int(cached.get("siblings") or 0)}
             cache_used = "fresh"
         else:
             probe_names = [street_name, request.street or request.district or ""]
@@ -427,7 +428,8 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
                         boxes=list(wide.get("boxes") or []),
                         ways=int(wide.get("ways") or 0),
                         length_km=float(wide.get("length_km") or 0.0),
-                        source=str(wide.get("via") or "overpass"))
+                        source=str(wide.get("via") or "overpass"),
+                        siblings=int(wide.get("siblings") or 0))
                 except Exception:             # noqa: BLE001 — ذخیرهٔ کش اختیاری است
                     pass
             if not (wide.get("bbox") and wide.get("boxes")) and cached.get("bbox") \
@@ -437,7 +439,8 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
                 wide = {"bbox": list(cached.get("bbox") or []),
                         "boxes": list(cached.get("boxes") or []),
                         "ways": int(cached.get("ways") or len(cached.get("boxes") or [])),
-                        "length_km": float(cached.get("length_km") or 0.0), "via": "cache"}
+                        "length_km": float(cached.get("length_km") or 0.0), "via": "cache",
+                        "siblings": int(cached.get("siblings") or 0)}
                 cache_used = f"stale:{float(cached.get('age_days') or 0):.0f}"
         street_partial = not wide
         wide_box = list(wide.get("bbox") or [])
@@ -454,7 +457,8 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
             if wider:
                 found = {"bbox": wide_box, "label": (found.get("label") or ""),
                          "streets": int(wide.get("ways") or 0),
-                         "boxes": wide.get("boxes") or []}
+                         "boxes": wide.get("boxes") or [],
+                         "siblings": int(wide.get("siblings") or 0)}
             elif wide.get("boxes") and _boxes_overlap(wide_box, found.get("bbox")):
                 # Overpass همان محدودهٔ Nominatim را داد؛ جعبه بزرگ‌تر نشد، ولی
                 # تکه‌های واقعی خیابان را داریم — بدون آن‌ها فیلتر «روی خیابان»
@@ -462,6 +466,7 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
                 found = dict(found)
                 found["boxes"] = list(wide.get("boxes") or [])
                 found["streets"] = int(wide.get("ways") or 0)
+                found["siblings"] = int(wide.get("siblings") or 0)
     if not found:
         if warnings is not None:
             if last_error:
@@ -542,6 +547,10 @@ def refine_area_bbox(request: "ScrapeRequest", city: dict, *, allow_network: boo
         if cache_used.startswith("stale"):
             extra += (f" — نوار خیابان از حافظه ({cache_used.split(':', 1)[1]} روز پیش) "
                       f"خوانده شد؛ Overpass الان جواب نداد")
+        siblings = int(found.get("siblings") or 0)
+        if siblings:
+            extra += (f" — {siblings} نام هم‌خانواده (مثل «{street_name or label} بالا/پایین») "
+                      f"نیز به همان محور اضافه شد")
         warnings.append(
             f"محدودهٔ دقیق «{label}» از OSM گرفته شد "
             f"(در حدود {span_km:.1f} کیلومتر){extra} — کل این محدوده اسکراب می‌شود.")

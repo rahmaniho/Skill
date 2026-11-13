@@ -515,7 +515,7 @@ def get_street_cache(city_key: str, street: str) -> dict | None:
 
 def put_street_cache(city_key: str, street: str, *, bbox: list, boxes: list,
                      ways: int = 0, length_km: float = 0.0,
-                     source: str = "overpass") -> bool:
+                     source: str = "overpass", siblings: int = 0) -> bool:
     storage = _storage()
     key = storage.street_cache_key(city_key, street)
     if key.endswith("|") or not bbox or len(bbox) != 4 or not boxes:
@@ -524,6 +524,7 @@ def put_street_cache(city_key: str, street: str, *, bbox: list, boxes: list,
         "key": key, "city_key": (city_key or "").strip().lower(), "street": street,
         "bbox": [float(x) for x in bbox], "boxes": [[float(y) for y in b] for b in boxes],
         "ways": int(ways or 0), "length_km": float(length_km or 0.0),
+        "siblings": int(siblings or 0),
         "source": source or "overpass", "updated_at": time.time(),
     }
     try:

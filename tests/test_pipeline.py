@@ -1399,6 +1399,27 @@ class StreetCorridorTests(unittest.TestCase):
         self.assertEqual(len(request.street_boxes), 3, "تکه‌های خیابان باید در درخواست بمانند")
         self.assertEqual(request.street_boxes[0], [35.700, 35.710, 51.410, 51.416])
 
+    def test_sibling_names_are_reported_in_the_warning(self):
+        """«چهارباغ» در اصفهان چند نام دارد؛ کاربر باید بداند کل محور آمده."""
+        request = pipeline.ScrapeRequest.from_dict({
+            "niche_query": "کافه", "city_query": "اصفهان", "city_key": "isfahan",
+            "street": "خیابان چهارباغ", "area_level": "street", "engine_mode": "osm"})
+        request.area_label = "خیابان چهارباغ، اصفهان"
+        nominatim = {"bbox": [32.6467, 32.6574, 51.6675, 51.6694],
+                     "label": "خیابان چهارباغ عباسی، اصفهان، ایران"}
+        overpass = {"bbox": [32.6400, 32.6700, 51.6660, 51.6700], "ways": 11,
+                    "boxes": [[32.6400, 32.6700, 51.6660, 51.6700]], "siblings": 3}
+        warnings: list = []
+        with mock.patch.object(pipeline.config, "OSM_AREA_LOOKUP", True), \
+                mock.patch.object(pipeline.config, "_looks_like_unittest", return_value=False), \
+                mock.patch("leadgen.providers.osm.lookup_area", return_value=dict(nominatim)), \
+                mock.patch("leadgen.providers.osm.overpass_street_bbox", return_value=overpass):
+            pipeline.refine_area_bbox(request, {"bbox": [32.55, 32.75, 51.55, 51.80],
+                                                "country": "IR", "label_local": "اصفهان"},
+                                      allow_network=True, warnings=warnings)
+        self.assertTrue(any("۳ نام هم‌خانواده" in w or "3 نام هم‌خانواده" in w for w in warnings),
+                        warnings)
+
     def test_overpass_corridor_boxes_survive_a_same_size_bbox(self):
         """اگر Overpass همان جعبهٔ Nominatim را داد، تکه‌های خیابان نباید دور ریخته شوند."""
         request = pipeline.ScrapeRequest.from_dict({
